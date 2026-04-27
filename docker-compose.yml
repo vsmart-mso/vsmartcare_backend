@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  bff-vsmartcare:
+    build:
+      context: ./bff-vsmartcare
+    environment:
+      - PORT=8000
+      - CASE_SERVICE_URL=http://case-service:8000
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8000
+      - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - case-service
+      - notification-service
+      - thaid-auth-service
+
+  case-service:
+    build:
+      context: ./case-service
+    environment:
+      - PORT=8000
+    ports:
+      - "8001:8000"
+
+  notification-service:
+    build:
+      context: ./notification-service
+    environment:
+      - PORT=8000
+    ports:
+      - "8002:8000"
+
+  thaid-auth-service:
+    build:
+      context: ./thaid-auth-service
+    environment:
+      - PORT=8000
+    ports:
+      - "8003:8000"
+
