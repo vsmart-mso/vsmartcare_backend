@@ -2,7 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# ให้ subprocess ของ uvicorn --reload หา package `app` ได้ (มิฉะนั้น SpawnProcess แตกตอน import app.main)
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 COPY requirements.txt .

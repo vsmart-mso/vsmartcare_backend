@@ -7,9 +7,11 @@ This folder contains starter microservices for the selfservice system.
 - `bff`: Backend-for-Frontend (single entrypoint for the frontend)
 - `case-service`: create and track requests/cases
 - `notification-service`: queue + send notifications (starter)
-- `thaid-auth-service`: adapter for ThaiD login (starter/mock)
+- `thaid-auth-service`: adapter for ThaiD login (real OIDC or mock; see `thaid-auth-service/.env.example`)
 
 ### Run locally
+
+Copy `thaid-auth-service/.env.example` to `thaid-auth-service/.env` and set ThaiD credentials (Docker Compose loads that file into `thaid-auth-service`).
 
 From this folder:
 
