@@ -1,0 +1,77 @@
+# ใช้คู่กับ docker-compose.yml เพื่อให้แก้โค้ดแล้วสะท้อนใน container ทันที (ไม่ต้อง rebuild)
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+#
+# PYTHONPATH: uvicorn --reload สปอว์น subprocess ถ้าไม่มีค่านี้มักได้ ModuleNotFoundError: No module named 'app'
+services:
+  bff-vsmartcare:
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./bff-vsmartcare/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+
+  case-service:
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./case-service/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+
+  notification-service:
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./notification-service/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+
+  thaid-auth-service:
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./thaid-auth-service/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]

@@ -1,11 +1,14 @@
+# พัฒนาแบบ hot-reload: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 version: "3.9"
 
 services:
   bff-vsmartcare:
+    image: service-bff-vsmartcare:latest
     build:
       context: ./bff-vsmartcare
     environment:
       - PORT=8000
+      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
@@ -17,6 +20,7 @@ services:
       - thaid-auth-service
 
   case-service:
+    image: service-case-service:latest
     build:
       context: ./case-service
     environment:
@@ -25,6 +29,7 @@ services:
       - "8001:8000"
 
   notification-service:
+    image: service-notification-service:latest
     build:
       context: ./notification-service
     environment:
@@ -33,8 +38,12 @@ services:
       - "8002:8000"
 
   thaid-auth-service:
+    image: service-thaid-auth-service:latest
     build:
       context: ./thaid-auth-service
+    env_file:
+      # ค่า THAID_* / THAID_USE_MOCK — ต้องมีไฟล์นี้ (คัดลอกจาก .env.example ในโฟลเดอร์ service เดียวกัน)
+      - ./thaid-auth-service/.env
     environment:
       - PORT=8000
     ports:
