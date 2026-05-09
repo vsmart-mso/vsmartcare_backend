@@ -1,5 +1,8 @@
 """initial schema - 28 tables (ER ใหม่: persons, screening, consents, ...)
 
+Includes DDL that was previously in revisions 0008 (geo/person fields),
+0009 (audit timestamps + triggers), and 0010 (address / applicants / status / evidences).
+
 Revision ID: 0001_initial_schema
 Revises:
 Create Date: 2026-05-08 00:00:00.000000
@@ -16,6 +19,21 @@ revision: str = "0001_initial_schema"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+# Tables with created_at + updated_at and trigger trg_set_updated_at_{table}
+TABLES_AUDIT_TRIGGERS = [
+    "applicants",
+    "dependency_loads",
+    "economic_infos",
+    "economic_income_sources",
+    "welfare_request_types",
+    "welfare_evidences",
+    "welfare_histories",
+    "welfare_histories_detail",
+    "persons",
+    "screening_logs",
+    "welfare_request_consents",
+]
 
 
 def upgrade() -> None:
@@ -104,6 +122,7 @@ def upgrade() -> None:
         "districts",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("code", sa.String(length=50), nullable=True),
         sa.Column("province_id", sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(
             ["province_id"],
@@ -115,11 +134,13 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_districts_province_id"), "districts", ["province_id"], unique=False
     )
+    op.create_index(op.f("ix_districts_code"), "districts", ["code"], unique=False)
 
     op.create_table(
         "sub_districts",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("code", sa.String(length=50), nullable=True),
         sa.Column("district_id", sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(
             ["district_id"],
@@ -133,6 +154,9 @@ def upgrade() -> None:
         "sub_districts",
         ["district_id"],
         unique=False,
+    )
+    op.create_index(
+        op.f("ix_sub_districts_code"), "sub_districts", ["code"], unique=False
     )
 
     op.create_table(
@@ -179,15 +203,42 @@ def upgrade() -> None:
             comment="เลขบัตรประจำตัวประชาชน 13 หลัก",
         ),
         sa.Column("birth_date", sa.Date(), nullable=False),
+        sa.Column("sub_district_postcode_id", sa.Integer(), nullable=True),
+        sa.Column("gender", sa.String(length=50), nullable=True),
+        sa.Column("adr_moo", sa.String(length=50), nullable=True),
+        sa.Column("adr_house_num", sa.String(length=100), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["prefix_id"],
             ["prefix_type.id"],
             name=op.f("fk_persons_prefix_id_prefix_type"),
         ),
+        sa.ForeignKeyConstraint(
+            ["sub_district_postcode_id"],
+            ["sub_districts_postcode.id"],
+            name=op.f("fk_persons_sub_district_postcode_id_sub_districts_postcode"),
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_persons")),
         sa.UniqueConstraint("cid", name=op.f("uq_persons_cid")),
     )
     op.create_index(op.f("ix_persons_cid"), "persons", ["cid"], unique=False)
+    op.create_index(
+        op.f("ix_persons_sub_district_postcode_id"),
+        "persons",
+        ["sub_district_postcode_id"],
+        unique=False,
+    )
 
     op.create_table(
         "applicants",
@@ -221,6 +272,26 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("false"),
         ),
+        sa.Column("age", sa.Integer(), nullable=True),
+        sa.Column(
+            "approve",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+        sa.Column("user_sdshv_approve", sa.String(length=255), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["persons_id"],
             ["persons.id"],
@@ -253,6 +324,18 @@ def upgrade() -> None:
         sa.Column("input_data_snapshot", sa.JSON(), nullable=True),
         sa.Column("ip_address", sa.String(length=45), nullable=True),
         sa.Column("user_agent", sa.String(length=500), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["person_id"],
             ["persons.id"],
@@ -296,6 +379,18 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("false"),
         ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["person_id"],
             ["persons.id"],
@@ -317,9 +412,12 @@ def upgrade() -> None:
         sa.Column("sub_district_postcode_id", sa.Integer(), nullable=False),
         sa.Column("applicant_id", sa.Integer(), nullable=False),
         sa.Column("address_type_id", sa.Integer(), nullable=False),
-        sa.Column("address_detail", sa.String(length=500), nullable=True),
+        sa.Column("house_name", sa.String(length=255), nullable=True),
+        sa.Column("road", sa.String(length=255), nullable=True),
+        sa.Column("house_moo", sa.String(length=50), nullable=True),
+        sa.Column("house_number", sa.String(length=50), nullable=True),
         sa.Column(
-            "sub_lane_road",
+            "sub_lane",
             sa.String(length=255),
             nullable=True,
             comment="ซอย/ถนน",
@@ -373,6 +471,18 @@ def upgrade() -> None:
             comment="จำนวนสมาชิกในครัวเรือน",
         ),
         sa.Column("family_occupation", sa.String(length=255), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["applicant_id"],
             ["applicants.id"],
@@ -402,6 +512,18 @@ def upgrade() -> None:
             nullable=True,
             comment="กรอกเพิ่มเมื่อเลือกประเภท 'อื่น ๆ'",
         ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["economic_id"],
             ["economic_infos.id"],
@@ -430,6 +552,18 @@ def upgrade() -> None:
             sa.String(length=500),
             nullable=True,
             comment="ระบุรายละเอียดเมื่อเลือก dependency แบบ 'อื่น ๆ'",
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         sa.ForeignKeyConstraint(
             ["applicant_id"],
@@ -462,6 +596,18 @@ def upgrade() -> None:
         sa.Column(
             "total_received_amount", sa.Numeric(precision=12, scale=2), nullable=True
         ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["applicant_id"],
             ["applicants.id"],
@@ -479,6 +625,18 @@ def upgrade() -> None:
             sa.String(length=500),
             nullable=True,
             comment="ระบุสวัสดิการเพิ่มเติมเมื่อเลือก 'อื่น ๆ'",
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         sa.ForeignKeyConstraint(
             ["received_welfare_type_id"],
@@ -505,6 +663,18 @@ def upgrade() -> None:
         "welfare_request_types",
         sa.Column("applicant_id", sa.Integer(), nullable=False),
         sa.Column("request_type_id", sa.Integer(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["applicant_id"],
             ["applicants.id"],
@@ -526,6 +696,24 @@ def upgrade() -> None:
         sa.Column("attachment_type_id", sa.Integer(), nullable=False),
         sa.Column("applicant_id", sa.Integer(), nullable=False),
         sa.Column("file_path", sa.String(length=1024), nullable=False),
+        sa.Column("file_original_name", sa.String(length=255), nullable=True),
+        sa.Column("file_stored_name", sa.String(length=255), nullable=True),
+        sa.Column("file_size", sa.BigInteger(), nullable=True),
+        sa.Column("file_width", sa.Integer(), nullable=True),
+        sa.Column("file_height", sa.Integer(), nullable=True),
+        sa.Column("file_other_type_name", sa.String(length=255), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.ForeignKeyConstraint(
             ["attachment_type_id"],
             ["attachment_types.id"],
@@ -551,13 +739,18 @@ def upgrade() -> None:
         sa.Column("applicant_id", sa.Integer(), nullable=False),
         sa.Column("current_status_id", sa.Integer(), nullable=False),
         sa.Column(
-            "updated_at",
-            sa.DateTime(),
+            "created_at",
+            sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.func.now(),
+            server_default=sa.text("now()"),
         ),
-        sa.Column("updated_by_firstname", sa.String(length=255), nullable=True),
-        sa.Column("updated_by_lastname", sa.String(length=255), nullable=True),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column("update_by_sdshv", sa.String(length=255), nullable=True),
         sa.Column("remarks", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(
             ["applicant_id"],
@@ -578,8 +771,39 @@ def upgrade() -> None:
         unique=False,
     )
 
+    op.execute(
+        sa.text(
+            """
+            CREATE OR REPLACE FUNCTION set_updated_at_column()
+            RETURNS trigger AS $$
+            BEGIN
+              NEW.updated_at = now();
+              RETURN NEW;
+            END;
+            $$ language 'plpgsql';
+            """
+        )
+    )
+
+    for t in TABLES_AUDIT_TRIGGERS + ["welfare_request_status"]:
+        op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_set_updated_at_{t} ON {t};"))
+        op.execute(
+            sa.text(
+                f"""
+                CREATE TRIGGER trg_set_updated_at_{t}
+                BEFORE UPDATE ON {t}
+                FOR EACH ROW
+                EXECUTE FUNCTION set_updated_at_column();
+                """
+            )
+        )
+
 
 def downgrade() -> None:
+    for t in TABLES_AUDIT_TRIGGERS + ["welfare_request_status"]:
+        op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_set_updated_at_{t} ON {t};"))
+    op.execute(sa.text("DROP FUNCTION IF EXISTS set_updated_at_column();"))
+
     op.drop_index(
         op.f("ix_welfare_request_status_applicant_id"),
         table_name="welfare_request_status",
@@ -619,6 +843,9 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_applicants_persons_id"), table_name="applicants")
     op.drop_table("applicants")
 
+    op.drop_index(
+        op.f("ix_persons_sub_district_postcode_id"), table_name="persons"
+    )
     op.drop_index(op.f("ix_persons_cid"), table_name="persons")
     op.drop_table("persons")
 
@@ -632,9 +859,11 @@ def downgrade() -> None:
     )
     op.drop_table("sub_districts_postcode")
 
+    op.drop_index(op.f("ix_sub_districts_code"), table_name="sub_districts")
     op.drop_index(op.f("ix_sub_districts_district_id"), table_name="sub_districts")
     op.drop_table("sub_districts")
 
+    op.drop_index(op.f("ix_districts_code"), table_name="districts")
     op.drop_index(op.f("ix_districts_province_id"), table_name="districts")
     op.drop_table("districts")
 

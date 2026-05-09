@@ -10,8 +10,11 @@ class AddressBase(BaseModel):
     applicant_id: int
     address_type_id: int
 
-    address_detail: str | None = Field(None, max_length=500)
-    sub_lane_road: str | None = Field(None, max_length=255)
+    sub_lane: str | None = Field(None, max_length=255)
+    house_name: str | None = Field(None, max_length=255)
+    road: str | None = Field(None, max_length=255)
+    house_moo: str | None = Field(None, max_length=50)
+    house_number: str | None = Field(None, max_length=50)
     mobile_phone: str | None = Field(None, max_length=20)
 
     latitude: str | None = Field(None, max_length=50)
@@ -25,8 +28,11 @@ class AddressCreate(AddressBase):
 class AddressUpdate(BaseModel):
     sub_district_postcode_id: int | None = None
     address_type_id: int | None = None
-    address_detail: str | None = Field(None, max_length=500)
-    sub_lane_road: str | None = Field(None, max_length=255)
+    sub_lane: str | None = Field(None, max_length=255)
+    house_name: str | None = Field(None, max_length=255)
+    road: str | None = Field(None, max_length=255)
+    house_moo: str | None = Field(None, max_length=50)
+    house_number: str | None = Field(None, max_length=50)
     mobile_phone: str | None = Field(None, max_length=20)
     latitude: str | None = Field(None, max_length=50)
     longitude: str | None = Field(None, max_length=50)

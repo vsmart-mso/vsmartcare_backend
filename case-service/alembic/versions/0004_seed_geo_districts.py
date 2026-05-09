@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0004_seed_geo_districts"
-down_revision: str | Sequence[str] | None = "0008_geo_person_fields"
+down_revision: str | Sequence[str] | None = "0003_seed_master_geo_data"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

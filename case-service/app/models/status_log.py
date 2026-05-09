@@ -38,8 +38,7 @@ class WelfareRequestStatus(Base):
         nullable=False,
         server_default=func.now(),
     )
-    updated_by_firstname: Mapped[str | None] = mapped_column(String(255))
-    updated_by_lastname: Mapped[str | None] = mapped_column(String(255))
+    update_by_sdshv: Mapped[str | None] = mapped_column(String(255))
 
     remarks: Mapped[str | None] = mapped_column(Text)
 

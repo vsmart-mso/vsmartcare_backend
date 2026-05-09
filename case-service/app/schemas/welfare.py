@@ -61,6 +61,12 @@ class WelfareEvidenceBase(BaseModel):
     attachment_type_id: int
     applicant_id: int
     file_path: str = Field(..., max_length=1024)
+    file_original_name: str | None = Field(None, max_length=255)
+    file_stored_name: str | None = Field(None, max_length=255)
+    file_size: int | None = Field(None, ge=0)
+    file_width: int | None = Field(None, ge=0)
+    file_height: int | None = Field(None, ge=0)
+    file_other_type_name: str | None = Field(None, max_length=255)
 
 
 class WelfareEvidenceCreate(WelfareEvidenceBase):

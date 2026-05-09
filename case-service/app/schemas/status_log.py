@@ -10,8 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class WelfareRequestStatusBase(BaseModel):
     applicant_id: int
     current_status_id: int
-    updated_by_firstname: str | None = Field(None, max_length=255)
-    updated_by_lastname: str | None = Field(None, max_length=255)
+    update_by_sdshv: str | None = Field(None, max_length=255)
     remarks: str | None = None
 
 

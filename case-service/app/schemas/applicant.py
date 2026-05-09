@@ -32,6 +32,10 @@ class ApplicantBase(BaseModel):
     is_emergency: bool = False
     is_existing_case: bool = False
 
+    age: int | None = Field(None, ge=0)
+    approve: bool = False
+    user_sdshv_approve: str | None = Field(None, max_length=255)
+
 
 class ApplicantCreate(ApplicantBase):
     pass
@@ -52,6 +56,9 @@ class ApplicantUpdate(BaseModel):
     is_emergency: bool | None = None
     is_existing_case: bool | None = None
     problem_details: str | None = None
+    age: int | None = Field(None, ge=0)
+    approve: bool | None = None
+    user_sdshv_approve: str | None = Field(None, max_length=255)
 
 
 class ApplicantRead(ApplicantBase):

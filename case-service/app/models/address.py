@@ -39,11 +39,14 @@ class Address(Base):
         nullable=False,
     )
 
-    address_detail: Mapped[str | None] = mapped_column(String(500))
-    sub_lane_road: Mapped[str | None] = mapped_column(
+    sub_lane: Mapped[str | None] = mapped_column(
         String(255),
         comment="ซอย/ถนน",
     )
+    house_name: Mapped[str | None] = mapped_column(String(255))
+    road: Mapped[str | None] = mapped_column(String(255))
+    house_moo: Mapped[str | None] = mapped_column(String(50))
+    house_number: Mapped[str | None] = mapped_column(String(50))
     mobile_phone: Mapped[str | None] = mapped_column(
         String(20),
         comment="เบอร์ติดต่อตามที่อยู่นี้",

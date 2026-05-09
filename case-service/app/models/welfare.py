@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Numeric, String, func
+from sqlalchemy import BigInteger, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -117,6 +117,12 @@ class WelfareEvidence(Base):
     )
 
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_original_name: Mapped[str | None] = mapped_column(String(255))
+    file_stored_name: Mapped[str | None] = mapped_column(String(255))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    file_width: Mapped[int | None] = mapped_column(Integer)
+    file_height: Mapped[int | None] = mapped_column(Integer)
+    file_other_type_name: Mapped[str | None] = mapped_column(String(255))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_evidences")
     attachment_type: Mapped["AttachmentType"] = relationship(lazy="selectin")

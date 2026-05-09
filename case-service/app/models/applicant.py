@@ -71,6 +71,10 @@ class Applicant(Base):
     is_emergency: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_existing_case: Mapped[bool] = mapped_column(default=False, nullable=False)
 
+    age: Mapped[int | None] = mapped_column()
+    approve: Mapped[bool] = mapped_column(default=False, nullable=False)
+    user_sdshv_approve: Mapped[str | None] = mapped_column(String(255))
+
     person: Mapped["Person"] = relationship(back_populates="applicants", lazy="selectin")
     marital_status: Mapped["MaritalStatusType"] = relationship(lazy="selectin")
 
