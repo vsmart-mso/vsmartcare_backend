@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     service_name: str = "case-service"
     port: int = 8000
 
+    database_url: str = (
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/case_service"
+    )
+
 
 settings = Settings()
-

@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         description="Must match redirect URI registered with ThaiD exactly",
     )
     thaid_scope: str = Field(
-        default="openid pid title given_name family_name",
+        default="openid pid title given_name family_name address birthdate",
         description="Space-separated OAuth scopes",
     )
     # If true (or metadata URL empty), use mock authorize/callback for local dev without ThaiD

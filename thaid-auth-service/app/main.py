@@ -211,6 +211,7 @@ async def start_login_post(request: Request, body: LoginStartBody = LoginStartBo
         scope=settings.thaid_scope,
         state=state,
     )
+
     return LoginStartResponse(
         authorization_url=authorization_url,
         state=state,
@@ -241,6 +242,10 @@ class UserProfile(BaseModel):
     given_name: str = ""
     family_name: str = ""
     title_th: str = ""
+    address: str = ""
+    birthdate: str = ""
+    gender: str = ""
+
 
 
 class CallbackResponse(BaseModel):
@@ -326,6 +331,9 @@ def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse
             "given_name": profile.get("given_name", ""),
             "family_name": profile.get("family_name", ""),
             "title_th": profile.get("title_th", ""),
+            "address": profile.get("address", ""),
+            "birthdate": profile.get("birthdate", ""),
+            "gender": profile.get("gender", ""),
         }
     return CallbackResponse(
         access_token=token,
@@ -335,6 +343,9 @@ def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse
             given_name=profile.get("given_name", ""),
             family_name=profile.get("family_name", ""),
             title_th=profile.get("title_th", ""),
+            address=profile.get("address", ""),
+            birthdate=profile.get("birthdate", ""),
+            gender=profile.get("gender", ""),
         ),
     )
 
@@ -420,6 +431,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
         if isinstance(id_tok, str) and id_tok.strip():
             merged = {**ThaID.claims_from_id_token_unverified(id_tok), **raw_userinfo}
             raw_userinfo = merged
+        print("raw_userinfo", raw_userinfo)
         profile = ThaID.normalize_profile(raw_userinfo)
         if not profile.get("pid"):
             raise HTTPException(status_code=400, detail="missing_pid_in_userinfo")

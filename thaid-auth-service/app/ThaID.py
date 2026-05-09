@@ -98,6 +98,9 @@ def normalize_profile(userinfo: Dict[str, Any]) -> Dict[str, str]:
         "given_name": str(userinfo.get("given_name") or "").strip(),
         "family_name": str(userinfo.get("family_name") or "").strip(),
         "title_th": str(userinfo.get("titleTh") or userinfo.get("title") or "").strip(),
+        "address": str(userinfo.get("address") or "").strip(),
+        "birthdate": str(userinfo.get("birthdate") or "").strip(),
+        "gender": str(userinfo.get("gender") or "").strip(),
     }
 
 
@@ -119,6 +122,9 @@ def mint_app_access_token(
         "provider": "thaid",
         "iat": int(iat.timestamp()),
         "exp": int(exp.timestamp()),
+        "address": profile.get("address", ""),
+        "birthdate": profile.get("birthdate", ""),
+        "gender": profile.get("gender", ""),
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
