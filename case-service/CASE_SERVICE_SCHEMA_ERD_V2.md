@@ -145,8 +145,11 @@ Bridge table (M:N) ระหว่าง `sub_districts` และ `postcode`
 - `sub_district_postcode_id`: int, **FK → sub_districts_postcode.id**, NN, **IDX** (`ix_address_sub_district_postcode_id`)
 - `applicant_id`: int, **FK → applicants.id**, NN, **IDX** (`ix_address_applicant_id`)
 - `address_type_id`: int, **FK → address_type.id**, NN
-- `address_detail`: varchar(500), NULL
-- `sub_lane_road`: varchar(255), NULL
+- `sub_lane`: varchar(255), NULL
+- `house_name`: varchar(255), NULL
+- `road`: varchar(255), NULL
+- `house_moo`: varchar(50), NULL
+- `house_number`: varchar(50), NULL
 - `mobile_phone`: varchar(20), NULL
 - `latitude`: varchar(50), NULL
 - `longitude`: varchar(50), NULL
@@ -204,14 +207,19 @@ Junction ระหว่าง `applicants` และ `request_types`
 - `attachment_type_id`: int, **FK → attachment_types.id**, NN
 - `applicant_id`: int, **FK → applicants.id**, NN, **IDX** (`ix_welfare_evidences_applicant_id`)
 - `file_path`: varchar(1024), NN
+- `file_original_name`: varchar(255), NULL
+- `file_stored_name`: varchar(255), NULL
+- `file_size`: bigint, NULL
+- `file_width`: int, NULL
+- `file_height`: int, NULL
+- `file_other_type_name`: varchar(255), NULL
 
 ### `welfare_request_status`
 - `id`: int, **PK**, NN
 - `applicant_id`: int, **FK → applicants.id**, NN, **IDX** (`ix_welfare_request_status_applicant_id`)
 - `current_status_id`: int, **FK → current_status.id**, NN
 - `updated_at`: datetime, NN, server_default=now()
-- `updated_by_firstname`: varchar(255), NULL
-- `updated_by_lastname`: varchar(255), NULL
+- `update_by_sdshv`: varchar(255), NULL
 - `remarks`: text, NULL
 
 ---
