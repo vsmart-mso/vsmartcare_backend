@@ -8,7 +8,7 @@ services:
       context: ./bff-vsmartcare
     environment:
       - PORT=8000
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
+      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-1234567890}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
@@ -23,10 +23,11 @@ services:
     image: service-case-service:latest
     build:
       context: ./case-service
-    # environment:
-    #   - SERVICE_NAME=case-service
-    #   - PORT=8000
-    #   - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+    environment:
+      # ทับค่าใน .env เวลารันด้วย compose — host ต้องเป็น `postgres` ไม่ใช่ localhost
+      - SERVICE_NAME=case-service
+      - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
     ports:
       - "8001:8000"
     depends_on:

@@ -8,6 +8,8 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from .api.v1.geo import router as geo_router
+from .api.v1.lookups import router as lookups_router
 from .settings import settings
 
 
@@ -42,6 +44,9 @@ class Case(BaseModel):
 db: Dict[str, Case] = {}
 
 app = FastAPI(title=settings.service_name, version="0.1.0")
+
+app.include_router(lookups_router)
+app.include_router(geo_router)
 
 
 @app.get("/")

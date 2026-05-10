@@ -30,6 +30,7 @@ class DistrictCreate(DistrictBase):
 
 class DistrictRead(DistrictBase):
     id: int
+    code: str | None = Field(None, max_length=50)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -44,6 +45,7 @@ class SubDistrictCreate(SubDistrictBase):
 
 class SubDistrictRead(SubDistrictBase):
     id: int
+    code: str | None = Field(None, max_length=50)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -57,6 +59,31 @@ class PostcodeCreate(PostcodeBase):
 
 class PostcodeRead(PostcodeBase):
     id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubDistrictPostcodeLinkRead(BaseModel):
+    """แถวตาราง sub_districts_postcode + postcode — ใช้ `id` ตอนบันทึกที่อยู่ (FK bridge)"""
+
+    id: int
+    sub_district_id: int
+    postcode_id: int
+    postcode: PostcodeRead
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubDistrictWithPostcodesRead(BaseModel):
+    """ตำบลพร้อมรหัสไปรษณีย์ (ผ่าน sub_districts_postcode — 1 ตำบลได้หลายรหัส)"""
+
+    id: int
+    code: str | None = Field(None, max_length=50)
+    name: str
+    district_id: int
+    postcodes: list[PostcodeRead] = Field(default_factory=list)
+    sub_districts_postcode: list[SubDistrictPostcodeLinkRead] = Field(
+        default_factory=list,
+        description="แถว bridge sub_districts_postcode ทั้งหมดของตำบลนี้ (ส่งกลับเพื่อใช้ตอนบันทึก)",
+    )
     model_config = ConfigDict(from_attributes=True)
 
 

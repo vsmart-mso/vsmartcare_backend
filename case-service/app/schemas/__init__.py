@@ -31,8 +31,10 @@ from .geo import (
     SubDistrictCreate,
     SubDistrictPostcodeBase,
     SubDistrictPostcodeCreate,
+    SubDistrictPostcodeLinkRead,
     SubDistrictPostcodeRead,
     SubDistrictRead,
+    SubDistrictWithPostcodesRead,
 )
 from .lookup import (
     AddressTypeCreate,
@@ -146,8 +148,10 @@ __all__ = [
     "SubDistrictCreate",
     "SubDistrictPostcodeBase",
     "SubDistrictPostcodeCreate",
+    "SubDistrictPostcodeLinkRead",
     "SubDistrictPostcodeRead",
     "SubDistrictRead",
+    "SubDistrictWithPostcodesRead",
     "validate_thai_cid",
     "WelfareEvidenceBase",
     "WelfareEvidenceCreate",

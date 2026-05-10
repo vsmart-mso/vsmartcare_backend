@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.utils import get_openapi
@@ -33,6 +33,8 @@ _v1_api_key = [Depends(require_bff_api_key)]
 _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
     {"name": "cases", "description": "การบันทึกข้อมูล case"},
+    {"name": "lookups", "description": "ข้อมูล master / lookup จาก case-service"},
+    {"name": "geo", "description": "ข้อมูลจังหวัด อำเภอ ตำบล รหัสไปรษณีย์ จาก case-service"},
     {"name": "notifications", "description": "การแจ้งเตือน"},
     {"name": "auth", "description": "Login ThaiD"},
 ]
@@ -114,8 +116,8 @@ async def _post(url: str, json: Dict[str, Any]) -> Dict[str, Any]:
         return r.json()
 
 
-async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON; ถ้า status >= 400 จะยก HTTPException."""
+async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
+    """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(url, headers=headers)
         if r.status_code >= 400:
@@ -202,6 +204,288 @@ async def create_case(body: CreateCaseRequest):
 async def get_case(case_id: str):
     """ดึงรายละเอียด case ตาม id โดยส่งต่อ GET ไป case-service."""
     return await _get(f"{settings.case_service_url}/v1/cases/{case_id}")
+
+
+def _case_lookup_url(path_under_v1: str) -> str:
+    """path_under_v1 เช่น 'v1/lookups/prefix-types' — path parameter ต้องตรงกับ case-service ทุกตัว"""
+    base = settings.case_service_url.rstrip("/")
+    return f"{base}/{path_under_v1.lstrip('/')}"
+
+
+# --- lookups: เส้นและชื่อพารามิเตอร์ตรงกับ case-service (ไม่ใช้ query บอกประเภท master) ---
+
+
+@app.get(
+    "/v1/lookups/prefix-types",
+    tags=["lookups"],
+    summary="รายการคำนำหน้าชื่อ",
+    description="ส่งต่อ `GET .../v1/lookups/prefix-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_prefix_types():
+    return await _get(_case_lookup_url("v1/lookups/prefix-types"))
+
+
+@app.get(
+    "/v1/lookups/prefix-types/{prefix_type_id}",
+    tags=["lookups"],
+    summary="ดึงคำนำหน้าชื่อตาม id",
+    description="ส่งต่อ `GET .../v1/lookups/prefix-types/{prefix_type_id}`",
+    dependencies=_v1_api_key,
+)
+async def bff_get_prefix_type(prefix_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/prefix-types/{prefix_type_id}"))
+
+
+@app.get(
+    "/v1/lookups/received-welfare-types",
+    tags=["lookups"],
+    summary="ประเภทสวัสดิการที่เคยได้รับ",
+    description="ส่งต่อ `GET .../v1/lookups/received-welfare-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_received_welfare_types():
+    return await _get(_case_lookup_url("v1/lookups/received-welfare-types"))
+
+
+@app.get(
+    "/v1/lookups/received-welfare-types/{received_welfare_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทสวัสดิการที่เคยได้รับตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_received_welfare_type(received_welfare_type_id: int):
+    return await _get(
+        _case_lookup_url(f"v1/lookups/received-welfare-types/{received_welfare_type_id}")
+    )
+
+
+@app.get(
+    "/v1/lookups/attachment-types",
+    tags=["lookups"],
+    summary="ประเภทรูปภาพ / เอกสารแนบ",
+    dependencies=_v1_api_key,
+)
+async def bff_list_attachment_types():
+    return await _get(_case_lookup_url("v1/lookups/attachment-types"))
+
+
+@app.get(
+    "/v1/lookups/attachment-types/{attachment_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทเอกสารแนบตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_attachment_type(attachment_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/attachment-types/{attachment_type_id}"))
+
+
+@app.get(
+    "/v1/lookups/attachment_types",
+    tags=["lookups"],
+    summary="ประเภทรูปภาพ / เอกสารแนบ (alias ชื่อตาราง)",
+    dependencies=_v1_api_key,
+)
+async def bff_list_attachment_types_snake():
+    return await _get(_case_lookup_url("v1/lookups/attachment_types"))
+
+
+@app.get(
+    "/v1/lookups/attachment_types/{attachment_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทเอกสารแนบตาม id (alias ชื่อตาราง)",
+    dependencies=_v1_api_key,
+)
+async def bff_get_attachment_type_snake(attachment_type_id: int):
+    return await _get(
+        _case_lookup_url(f"v1/lookups/attachment_types/{attachment_type_id}")
+    )
+
+
+@app.get(
+    "/v1/lookups/current-status",
+    tags=["lookups"],
+    summary="สถานะคำร้อง",
+    dependencies=_v1_api_key,
+)
+async def bff_list_current_status():
+    return await _get(_case_lookup_url("v1/lookups/current-status"))
+
+
+@app.get(
+    "/v1/lookups/current-status/{current_status_id}",
+    tags=["lookups"],
+    summary="ดึงสถานะคำร้องตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_current_status(current_status_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/current-status/{current_status_id}"))
+
+
+@app.get(
+    "/v1/lookups/request-types",
+    tags=["lookups"],
+    summary="ประเภทความช่วยเหลือ / คำร้อง",
+    dependencies=_v1_api_key,
+)
+async def bff_list_request_types():
+    return await _get(_case_lookup_url("v1/lookups/request-types"))
+
+
+@app.get(
+    "/v1/lookups/request-types/{request_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทคำร้องตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_request_type(request_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/request-types/{request_type_id}"))
+
+
+@app.get(
+    "/v1/lookups/marital-status-types",
+    tags=["lookups"],
+    summary="สถานภาพสมรส",
+    dependencies=_v1_api_key,
+)
+async def bff_list_marital_status_types():
+    return await _get(_case_lookup_url("v1/lookups/marital-status-types"))
+
+
+@app.get(
+    "/v1/lookups/marital-status-types/{marital_status_type_id}",
+    tags=["lookups"],
+    summary="ดึงสถานภาพสมรสตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_marital_status_type(marital_status_type_id: int):
+    return await _get(
+        _case_lookup_url(f"v1/lookups/marital-status-types/{marital_status_type_id}")
+    )
+
+
+@app.get(
+    "/v1/lookups/housing-types",
+    tags=["lookups"],
+    summary="สภาพที่อยู่อาศัย",
+    dependencies=_v1_api_key,
+)
+async def bff_list_housing_types():
+    return await _get(_case_lookup_url("v1/lookups/housing-types"))
+
+
+@app.get(
+    "/v1/lookups/housing-types/{housing_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทที่อยู่อาศัยตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_housing_type(housing_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/housing-types/{housing_type_id}"))
+
+
+@app.get(
+    "/v1/lookups/income-source-types",
+    tags=["lookups"],
+    summary="ประเภทของรายได้",
+    dependencies=_v1_api_key,
+)
+async def bff_list_income_source_types():
+    return await _get(_case_lookup_url("v1/lookups/income-source-types"))
+
+
+@app.get(
+    "/v1/lookups/income-source-types/{income_source_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทแหล่งรายได้ตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_income_source_type(income_source_type_id: int):
+    return await _get(
+        _case_lookup_url(f"v1/lookups/income-source-types/{income_source_type_id}")
+    )
+
+
+@app.get(
+    "/v1/lookups/dependency-types",
+    tags=["lookups"],
+    summary="ประเภทผู้อุปการะ",
+    dependencies=_v1_api_key,
+)
+async def bff_list_dependency_types():
+    return await _get(_case_lookup_url("v1/lookups/dependency-types"))
+
+
+@app.get(
+    "/v1/lookups/dependency-types/{dependency_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทผู้อุปการะตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_dependency_type(dependency_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/dependency-types/{dependency_type_id}"))
+
+
+@app.get(
+    "/v1/lookups/address-types",
+    tags=["lookups"],
+    summary="ประเภทที่อยู่",
+    dependencies=_v1_api_key,
+)
+async def bff_list_address_types():
+    return await _get(_case_lookup_url("v1/lookups/address-types"))
+
+
+@app.get(
+    "/v1/lookups/address-types/{address_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทที่อยู่ตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_address_type(address_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/address-types/{address_type_id}"))
+
+
+@app.get(
+    "/v1/geo/provinces",
+    tags=["geo"],
+    summary="รายการจังหวัด",
+    dependencies=_v1_api_key,
+)
+async def bff_list_provinces():
+    return await _get(_case_lookup_url("v1/geo/provinces"))
+
+
+@app.get(
+    "/v1/geo/provinces/{province_id}",
+    tags=["geo"],
+    summary="ดึงจังหวัดตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_province(province_id: int):
+    return await _get(_case_lookup_url(f"v1/geo/provinces/{province_id}"))
+
+
+@app.get(
+    "/v1/geo/districts",
+    tags=["geo"],
+    summary="รายการอำเภอในจังหวัด",
+    description="ต้องส่ง query `province_id` — ส่งต่อไป case-service",
+    dependencies=_v1_api_key,
+)
+async def bff_list_districts(province_id: int = Query(..., description="รหัสจังหวัด")):
+    return await _get(_case_lookup_url(f"v1/geo/districts?province_id={province_id}"))
+
+
+@app.get(
+    "/v1/geo/sub-districts",
+    tags=["geo"],
+    summary="รายการตำบลในอำเภอ พร้อมรหัสไปรษณีย์และแถว sub_districts_postcode",
+    description="ต้องส่ง query `district_id` — response มี `sub_districts_postcode` (id bridge) สำหรับบันทึกที่อยู่",
+    dependencies=_v1_api_key,
+)
+async def bff_list_sub_districts(district_id: int = Query(..., description="รหัสอำเภอ")):
+    return await _get(_case_lookup_url(f"v1/geo/sub-districts?district_id={district_id}"))
 
 
 class CreateNotificationRequest(BaseModel):
