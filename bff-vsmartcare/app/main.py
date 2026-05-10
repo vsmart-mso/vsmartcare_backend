@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.utils import get_openapi
@@ -33,6 +34,10 @@ _v1_api_key = [Depends(require_bff_api_key)]
 _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
     {"name": "cases", "description": "การบันทึกข้อมูล case"},
+    {
+        "name": "eligibility",
+        "description": "บันทึก screening_logs / welfare_request_consents (คัดกรองเบื้องต้น ความยินยอม) ผ่าน case-service",
+    },
     {"name": "lookups", "description": "ข้อมูล master / lookup จาก case-service"},
     {"name": "geo", "description": "ข้อมูลจังหวัด อำเภอ ตำบล รหัสไปรษณีย์ จาก case-service"},
     {"name": "notifications", "description": "การแจ้งเตือน"},
@@ -181,6 +186,61 @@ class CreateCaseRequest(BaseModel):
     requester_user_id: Optional[str] = None
     payload: Dict[str, Any] = {}
 
+
+class ScreeningLogCreateRequest(BaseModel):
+    """Body สำหรับ `POST /v1/screening-logs` — ตรงกับ case-service ScreeningLogCreate."""
+
+    person_id: int
+    criteria_version: Optional[str] = Field(None, max_length=50)
+    screening_result: Optional[str] = Field(None, max_length=100)
+    failure_reason_code: Optional[str] = Field(None, max_length=100)
+    screening_status: bool = False
+    input_data_snapshot: Optional[Dict[str, Any]] = None
+    ip_address: Optional[str] = Field(None, max_length=45)
+    user_agent: Optional[str] = Field(None, max_length=500)
+
+
+class ScreeningLogReadResponse(BaseModel):
+    """ผลลัพธ์หลังบันทึก screening_logs — ตรงกับ case-service ScreeningLogRead."""
+
+    id: int
+    person_id: int
+    criteria_version: Optional[str] = None
+    screening_result: Optional[str] = None
+    failure_reason_code: Optional[str] = None
+    screening_status: bool
+    input_data_snapshot: Optional[Dict[str, Any]] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WelfareRequestConsentCreateRequest(BaseModel):
+    """Body สำหรับ `POST /v1/welfare-request-consents` — ตรงกับ case-service WelfareRequestConsentCreate."""
+
+    person_id: int
+    consent_type: Optional[str] = Field(None, max_length=100)
+    initial_pdpa_accepted: bool = False
+    initial_terms_accepted: bool = False
+    initial_warning_accepted: bool = False
+    final_data_correct_accepted: bool = False
+
+
+class WelfareRequestConsentReadResponse(BaseModel):
+    """ผลลัพธ์หลังบันทึก welfare_request_consents — ตรงกับ case-service WelfareRequestConsentRead."""
+
+    id: int
+    person_id: int
+    consent_type: Optional[str] = None
+    initial_pdpa_accepted: bool
+    initial_terms_accepted: bool
+    initial_warning_accepted: bool
+    final_data_correct_accepted: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 # บันทึกข้อมูล case ที่สร้างได้ลง database
 @app.post(
     "/v1/cases",
@@ -204,6 +264,44 @@ async def create_case(body: CreateCaseRequest):
 async def get_case(case_id: str):
     """ดึงรายละเอียด case ตาม id โดยส่งต่อ GET ไป case-service."""
     return await _get(f"{settings.case_service_url}/v1/cases/{case_id}")
+
+
+@app.post(
+    "/v1/screening-logs",
+    tags=["eligibility"],
+    summary="บันทึก screening_logs",
+    description="ส่งต่อไปยัง case-service `POST /v1/screening-logs` (คัดกรองสิทธิ์เบื้องต้น)",
+    response_model=ScreeningLogReadResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_v1_api_key,
+)
+async def bff_create_screening_log(body: ScreeningLogCreateRequest) -> ScreeningLogReadResponse:
+    """รับข้อมูลคัดกรองแล้วส่งต่อ POST ไป case-service."""
+    data = await _post(
+        f"{settings.case_service_url.rstrip('/')}/v1/screening-logs",
+        json=body.model_dump(),
+    )
+    return ScreeningLogReadResponse.model_validate(data)
+
+
+@app.post(
+    "/v1/welfare-request-consents",
+    tags=["eligibility"],
+    summary="บันทึก welfare_request_consents",
+    description="ส่งต่อไปยัง case-service `POST /v1/welfare-request-consents` (ความยินยอมเบื้องต้น)",
+    response_model=WelfareRequestConsentReadResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_v1_api_key,
+)
+async def bff_create_welfare_request_consent(
+    body: WelfareRequestConsentCreateRequest,
+) -> WelfareRequestConsentReadResponse:
+    """รับความยินยอมแล้วส่งต่อ POST ไป case-service."""
+    data = await _post(
+        f"{settings.case_service_url.rstrip('/')}/v1/welfare-request-consents",
+        json=body.model_dump(),
+    )
+    return WelfareRequestConsentReadResponse.model_validate(data)
 
 
 def _case_lookup_url(path_under_v1: str) -> str:
