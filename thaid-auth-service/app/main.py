@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote
@@ -12,11 +13,29 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import ThaID
+from . import db
+from .db import configure_database, shutdown_database
+from .person_persist import persist_new_person_if_absent
 from .settings import cors_origin_list, settings
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.service_name, version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    configure_database(settings.database_url)
+    if not db.is_database_configured():
+        logger.warning(
+            "DATABASE_URL is empty — login will succeed but no row will be written to table `persons`. "
+            "Set DATABASE_URL (e.g. postgresql+asyncpg://postgres:postgres@localhost:5436/case_service from host)."
+        )
+    else:
+        logger.info("DATABASE_URL configured — new logins will insert into `persons` when cid is new.")
+    yield
+    await shutdown_database()
+
+
+app = FastAPI(title=settings.service_name, version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +80,8 @@ def root():
         "ok": True,
         "mock_thaid": _use_mock_oidc(),
         "oidc_mode": "mock" if _use_mock_oidc() else "thaid",
+        "persons_persist_enabled": db.is_database_configured(),
+        "persons_table_name": "persons",
     }
 
 
@@ -142,12 +163,16 @@ def _consume_state(state: str) -> Dict[str, Any]:
 
 
 def _mock_user_profile() -> Dict[str, str]:
-    """ค่าเดียวกับ normalize_profile จาก userinfo จริง (pid, given_name, family_name, title_th)"""
+    """ค่าเดียวกับ normalize_profile จาก userinfo จริง (รวมฟิลด์สำหรับบันทึก persons)"""
     return {
         "pid": settings.thaid_mock_pid,
         "given_name": settings.thaid_mock_given_name,
         "family_name": settings.thaid_mock_family_name,
         "title_th": settings.thaid_mock_title_th,
+        "birthdate": settings.thaid_mock_birthdate,
+        "gender": "",
+        "address": "",
+        "address_postcode": "",
     }
 
 
@@ -314,6 +339,14 @@ def login_status(state: str):
     return LoginStatusResponse(status="gone")
 
 
+async def _persist_person_safe(profile: Dict[str, str]) -> None:
+    """บันทึก persons ถ้าตั้ง DATABASE_URL — ล้มเหลวไม่ทำให้ล็อกอินล้ม"""
+    try:
+        await persist_new_person_if_absent(profile)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_persist_failed_after_login")
+
+
 def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse:
     expires_in = settings.thaid_jwt_expire_minutes * 60
     if settings.thaid_jwt_secret.strip():
@@ -401,7 +434,9 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     
     # ถ้าใช้ mock oidc จะสร้าง access token และ store session
     if _use_mock_oidc():
-        payload = _issue_access_and_store_session(_mock_user_profile())
+        mock_profile = _mock_user_profile()
+        payload = _issue_access_and_store_session(mock_profile)
+        await _persist_person_safe(mock_profile)
         _store_login_completion(state, payload)
         _consume_state(state)
         return _respond_after_thaid_login(state_rec, payload)
@@ -431,7 +466,6 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
         if isinstance(id_tok, str) and id_tok.strip():
             merged = {**ThaID.claims_from_id_token_unverified(id_tok), **raw_userinfo}
             raw_userinfo = merged
-        print("raw_userinfo", raw_userinfo)
         profile = ThaID.normalize_profile(raw_userinfo)
         if not profile.get("pid"):
             raise HTTPException(status_code=400, detail="missing_pid_in_userinfo")
@@ -440,8 +474,9 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     except Exception as exc:  # noqa: BLE001
         logger.exception("thaid_callback_failed: %s", exc)
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
+    await _persist_person_safe(profile)
     # สร้าง access token และ store session
-    payload = _issue_access_and_store_session(profile) 
+    payload = _issue_access_and_store_session(profile)
     # บันทึกสถานะการ login ไว้ใน memory
     _store_login_completion(state, payload)
     # ลบ state ออกจาก memory กรณีใช้ login สำเร็จเเล้วในรอบนั้น 

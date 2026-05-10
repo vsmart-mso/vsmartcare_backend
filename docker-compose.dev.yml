@@ -57,6 +57,8 @@ services:
   thaid-auth-service:
     environment:
       - PYTHONPATH=/app
+      # กัน merge compose ทำให้ค่าจาก docker-compose.yml หาย — ต้องตรงกับ case-service / postgres
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
     volumes:
       - ./thaid-auth-service/app:/app/app
     command:

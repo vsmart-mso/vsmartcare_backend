@@ -69,8 +69,12 @@ services:
       - ./thaid-auth-service/.env
     environment:
       - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
     ports:
       - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

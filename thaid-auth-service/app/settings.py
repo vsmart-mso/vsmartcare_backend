@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     service_name: str = "thaid-auth-service"
     port: int = 8000
 
+    # ถ้ามี — หลังล็อกอินสำเร็จจะพยายาม insert `persons` เมื่อยังไม่มี cid (เดียวกับ case-service / postgres)
+    database_url: str = Field(
+        default="",
+        description="postgresql+asyncpg://... — ว่าง = ไม่บันทึก persons (ตัวแปรแวดล้อม DATABASE_URL)",
+    )
+
     # ThaiD OIDC (see THAID_FASTAPI_INTEGRATION.md)
     thaid_client_id: str = Field(default="change-me", description="OAuth2 client_id")
     thaid_client_secret: str = Field(default="", description="OAuth2 client_secret")
@@ -44,6 +50,10 @@ class Settings(BaseSettings):
     thaid_mock_title_th: str = Field(default="นาย", description="Mock Thai title")
     thaid_mock_given_name: str = Field(default="ทดสอบ", description="Mock given_name")
     thaid_mock_family_name: str = Field(default="ระบบจำลอง", description="Mock family_name")
+    thaid_mock_birthdate: str = Field(
+        default="1990-01-01",
+        description="Mock birthdate (YYYY-MM-DD) สำหรับทดสอบบันทึก persons",
+    )
 
     # Optional: issue signed JWT access tokens (HS256). If empty, opaque in-memory tokens are used.
     thaid_jwt_secret: str = Field(default="", description="Secret for signing app access JWTs")
@@ -75,6 +85,8 @@ class Settings(BaseSettings):
         "thaid_mock_title_th",
         "thaid_mock_given_name",
         "thaid_mock_family_name",
+        "thaid_mock_birthdate",
+        "database_url",
         mode="before",
     )
     @classmethod
