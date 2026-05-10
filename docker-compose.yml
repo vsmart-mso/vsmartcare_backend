@@ -8,7 +8,7 @@ services:
       context: ./bff-vsmartcare
     environment:
       - PORT=8000
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
+      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-1234567890}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
@@ -24,9 +24,33 @@ services:
     build:
       context: ./case-service
     environment:
+      # ทับค่าใน .env เวลารันด้วย compose — host ต้องเป็น `postgres` ไม่ใช่ localhost
+      - SERVICE_NAME=case-service
       - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
     ports:
       - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./case-service/.env
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: case_service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d case_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   notification-service:
     image: service-notification-service:latest
@@ -42,10 +66,12 @@ services:
     build:
       context: ./thaid-auth-service
     env_file:
-      # ค่า THAID_* / THAID_USE_MOCK — ต้องมีไฟล์นี้ (คัดลอกจาก .env.example ในโฟลเดอร์ service เดียวกัน)
       - ./thaid-auth-service/.env
     environment:
       - PORT=8000
     ports:
       - "8003:8000"
+
+volumes:
+  postgres_data:
 
