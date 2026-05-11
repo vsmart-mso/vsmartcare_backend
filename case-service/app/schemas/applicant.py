@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class ApplicantBase(BaseModel):
     persons_id: int
-    requester_relation: str | None = Field(None, max_length=100)
+    case_number: str | None = Field(None, max_length=100)
+    requester_relation_id: int
     marital_status_id: int
 
     mobile_phone: str | None = Field(None, max_length=20)
@@ -33,8 +34,6 @@ class ApplicantBase(BaseModel):
     is_existing_case: bool = False
 
     age: int | None = Field(None, ge=0)
-    approve: bool = False
-    user_sdshv_approve: str | None = Field(None, max_length=255)
 
 
 class ApplicantCreate(ApplicantBase):
@@ -43,7 +42,8 @@ class ApplicantCreate(ApplicantBase):
 
 class ApplicantUpdate(BaseModel):
     persons_id: int | None = None
-    requester_relation: str | None = Field(None, max_length=100)
+    case_number: str | None = Field(None, max_length=100)
+    requester_relation_id: int | None = None
     marital_status_id: int | None = None
     mobile_phone: str | None = Field(None, max_length=20)
     home_phone: str | None = Field(None, max_length=20)
@@ -57,8 +57,6 @@ class ApplicantUpdate(BaseModel):
     is_existing_case: bool | None = None
     problem_details: str | None = None
     age: int | None = Field(None, ge=0)
-    approve: bool | None = None
-    user_sdshv_approve: str | None = Field(None, max_length=255)
 
 
 class ApplicantRead(ApplicantBase):

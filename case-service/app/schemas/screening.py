@@ -10,12 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ScreeningLogBase(BaseModel):
     person_id: int
-    criteria_version: str | None = Field(None, max_length=50)
-    screening_result: str | None = Field(None, max_length=100)
-    failure_reason_code: str | None = Field(None, max_length=100)
+    criteria_version: str | None = Field(None, max_length=255)
+    failure_reason_code: str | None = Field(None, max_length=255)
     screening_status: bool = False
     input_data_snapshot: dict[str, Any] | None = None
-    ip_address: str | None = Field(None, max_length=45)
+    ip_address: str | None = Field(None, max_length=255)
     user_agent: str | None = Field(None, max_length=500)
 
 
@@ -25,8 +24,6 @@ class ScreeningLogCreate(ScreeningLogBase):
 
 class ScreeningLogRead(ScreeningLogBase):
     id: int
-    created_at: datetime
-    updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 

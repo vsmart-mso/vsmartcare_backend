@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .lookup import CurrentStatusRead
+
 
 class WelfareRequestStatusBase(BaseModel):
     applicant_id: int
@@ -22,4 +24,5 @@ class WelfareRequestStatusRead(WelfareRequestStatusBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    current_status: CurrentStatusRead | None = None
     model_config = ConfigDict(from_attributes=True)

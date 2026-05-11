@@ -36,6 +36,14 @@ class MaritalStatusTypeRead(_LookupRead):
     pass
 
 
+class RequesterRelationTypeCreate(_LookupBase):
+    pass
+
+
+class RequesterRelationTypeRead(_LookupRead):
+    pass
+
+
 class RequestTypeCreate(_LookupBase):
     pass
 
@@ -93,8 +101,14 @@ class AddressTypeRead(_LookupRead):
 
 
 class CurrentStatusBase(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    description: str | None = None
+    description_public: str = Field(..., min_length=1)
+    description_staff: str = Field(..., min_length=1)
+    color: str = Field(..., min_length=1, max_length=32)
+    dropdown_to_change: str = Field(..., min_length=1, max_length=255)
+    dropdown_order: int = Field(..., ge=0)
+    dropdown_activate: bool = False
+    filter_order: int = Field(..., ge=0)
+    filter_activate: bool = True
 
 
 class CurrentStatusCreate(CurrentStatusBase):

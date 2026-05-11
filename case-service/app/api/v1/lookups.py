@@ -22,6 +22,7 @@ from ...models.lookup import (
     MaritalStatusType,
     PrefixType,
     ReceivedWelfareType,
+    RequesterRelationType,
     RequestType,
 )
 from ...schemas.lookup import (
@@ -34,6 +35,7 @@ from ...schemas.lookup import (
     MaritalStatusTypeRead,
     PrefixTypeRead,
     ReceivedWelfareTypeRead,
+    RequesterRelationTypeRead,
     RequestTypeRead,
 )
 
@@ -155,7 +157,10 @@ async def get_attachment_type_table_name(
 
 @router.get("/current-status", response_model=list[CurrentStatusRead])
 async def list_current_status(session: AsyncSession = Depends(get_session)) -> list[CurrentStatusRead]:
-    return await _list_rows(session, CurrentStatus, CurrentStatusRead)
+    result = await session.execute(
+        select(CurrentStatus).order_by(CurrentStatus.filter_order.asc(), CurrentStatus.id.asc()),
+    )
+    return [CurrentStatusRead.model_validate(r) for r in result.scalars().all()]
 
 
 @router.get("/current-status/{current_status_id}", response_model=CurrentStatusRead)
@@ -187,6 +192,33 @@ async def get_request_type(
 ) -> RequestTypeRead:
     return await _get_row(
         session, RequestType, RequestTypeRead, request_type_id, "request_type_not_found"
+    )
+
+
+# --- requester-relation-types ---
+
+
+@router.get("/requester-relation-types", response_model=list[RequesterRelationTypeRead])
+async def list_requester_relation_types(
+    session: AsyncSession = Depends(get_session),
+) -> list[RequesterRelationTypeRead]:
+    return await _list_rows(session, RequesterRelationType, RequesterRelationTypeRead)
+
+
+@router.get(
+    "/requester-relation-types/{requester_relation_type_id}",
+    response_model=RequesterRelationTypeRead,
+)
+async def get_requester_relation_type(
+    requester_relation_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> RequesterRelationTypeRead:
+    return await _get_row(
+        session,
+        RequesterRelationType,
+        RequesterRelationTypeRead,
+        requester_relation_type_id,
+        "requester_relation_type_not_found",
     )
 
 

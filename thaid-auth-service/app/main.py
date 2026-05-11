@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote
@@ -10,13 +11,32 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from . import ThaID
+from . import db
+from .db import configure_database, shutdown_database
+from .person_persist import _normalize_cid, persist_new_person_if_absent
 from .settings import cors_origin_list, settings
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.service_name, version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    configure_database(settings.database_url)
+    if not db.is_database_configured():
+        logger.warning(
+            "DATABASE_URL is empty — login will succeed but no row will be written to table `persons`. "
+            "Set DATABASE_URL (e.g. postgresql+asyncpg://postgres:postgres@localhost:5436/case_service from host)."
+        )
+    else:
+        logger.info("DATABASE_URL configured — new logins will insert into `persons` when cid is new.")
+    yield
+    await shutdown_database()
+
+
+app = FastAPI(title=settings.service_name, version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +81,8 @@ def root():
         "ok": True,
         "mock_thaid": _use_mock_oidc(),
         "oidc_mode": "mock" if _use_mock_oidc() else "thaid",
+        "persons_persist_enabled": db.is_database_configured(),
+        "persons_table_name": "persons",
     }
 
 
@@ -142,12 +164,16 @@ def _consume_state(state: str) -> Dict[str, Any]:
 
 
 def _mock_user_profile() -> Dict[str, str]:
-    """ค่าเดียวกับ normalize_profile จาก userinfo จริง (pid, given_name, family_name, title_th)"""
+    """ค่าเดียวกับ normalize_profile จาก userinfo จริง (รวมฟิลด์สำหรับบันทึก persons)"""
     return {
         "pid": settings.thaid_mock_pid,
         "given_name": settings.thaid_mock_given_name,
         "family_name": settings.thaid_mock_family_name,
         "title_th": settings.thaid_mock_title_th,
+        "birthdate": settings.thaid_mock_birthdate,
+        "gender": "",
+        "address": "",
+        "address_postcode": "",
     }
 
 
@@ -314,6 +340,14 @@ def login_status(state: str):
     return LoginStatusResponse(status="gone")
 
 
+async def _persist_person_safe(profile: Dict[str, str]) -> None:
+    """บันทึก persons ถ้าตั้ง DATABASE_URL — ล้มเหลวไม่ทำให้ล็อกอินล้ม"""
+    try:
+        await persist_new_person_if_absent(profile)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_persist_failed_after_login")
+
+
 def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse:
     expires_in = settings.thaid_jwt_expire_minutes * 60
     if settings.thaid_jwt_secret.strip():
@@ -386,7 +420,7 @@ def _respond_after_thaid_login(state_rec: Dict[str, Any], payload: CallbackRespo
     )
     return RedirectResponse(url=loc, status_code=302)
 
-
+# API Callback จาก ThaiD
 @app.get("/v1/auth/thaid/callback", response_model=None)
 async def callback(request: Request, state: str, code: Optional[str] = None) -> Union[RedirectResponse, HTMLResponse]:
     """
@@ -401,7 +435,9 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     
     # ถ้าใช้ mock oidc จะสร้าง access token และ store session
     if _use_mock_oidc():
-        payload = _issue_access_and_store_session(_mock_user_profile())
+        mock_profile = _mock_user_profile()
+        payload = _issue_access_and_store_session(mock_profile)
+        await _persist_person_safe(mock_profile)
         _store_login_completion(state, payload)
         _consume_state(state)
         return _respond_after_thaid_login(state_rec, payload)
@@ -431,7 +467,6 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
         if isinstance(id_tok, str) and id_tok.strip():
             merged = {**ThaID.claims_from_id_token_unverified(id_tok), **raw_userinfo}
             raw_userinfo = merged
-        print("raw_userinfo", raw_userinfo)
         profile = ThaID.normalize_profile(raw_userinfo)
         if not profile.get("pid"):
             raise HTTPException(status_code=400, detail="missing_pid_in_userinfo")
@@ -440,14 +475,14 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     except Exception as exc:  # noqa: BLE001
         logger.exception("thaid_callback_failed: %s", exc)
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
+    await _persist_person_safe(profile)
     # สร้าง access token และ store session
-    payload = _issue_access_and_store_session(profile) 
+    payload = _issue_access_and_store_session(profile)
     # บันทึกสถานะการ login ไว้ใน memory
     _store_login_completion(state, payload)
     # ลบ state ออกจาก memory กรณีใช้ login สำเร็จเเล้วในรอบนั้น 
     _consume_state(state)
     return _respond_after_thaid_login(state_rec, payload)
-
 
 class MeResponse(BaseModel):
     user_id: str
@@ -456,10 +491,26 @@ class MeResponse(BaseModel):
     given_name: str = ""
     family_name: str = ""
     title_th: str = ""
+    birthdate: str = ""
+    gender: str = ""
+    person_id: int = 0
 
+# หา person_id จาก pid
+async def _lookup_person_id_from_pid_claim(pid: str) -> int:
+    cid = _normalize_cid(pid or "")
+    if not cid or db.SessionLocal is None:
+        return 0
+    async with db.SessionLocal() as session:
+        r = await session.execute(
+            text("SELECT id FROM persons WHERE cid = :cid LIMIT 1"),
+            {"cid": cid},
+        )
+        row_id = r.scalar_one_or_none()
+        return int(row_id) if row_id is not None else 0
 
+#  API ข้อมูลบุคคล
 @app.get("/v1/me", response_model=MeResponse)
-def me(authorization: Optional[str] = Header(default=None)):
+async def me(authorization: Optional[str] = Header(default=None)):
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing_bearer_token")
     token = authorization.split(" ", 1)[1].strip()
@@ -468,23 +519,35 @@ def me(authorization: Optional[str] = Header(default=None)):
         claims = ThaID.decode_app_access_token(settings.thaid_jwt_secret, token)
         if not claims:
             raise HTTPException(status_code=401, detail="invalid_token")
+
+        person_id = await _lookup_person_id_from_pid_claim(str(claims.get("pid") or ""))
+
         return MeResponse(
             user_id=str(claims.get("sub") or claims.get("pid") or ""),
             provider=str(claims.get("provider") or "thaid"),
             pid=str(claims.get("pid") or ""),
             given_name=str(claims.get("given_name") or ""),
             family_name=str(claims.get("family_name") or ""),
+            birthdate=str(claims.get("birthdate") or ""),
             title_th=str(claims.get("title_th") or ""),
+            gender=str(claims.get("gender") or ""),
+            person_id=person_id,
         )
 
     s = _sessions.get(token)
     if not s:
         raise HTTPException(status_code=401, detail="invalid_token")
+
+    person_id = await _lookup_person_id_from_pid_claim(str(s.get("pid") or ""))
+
     return MeResponse(
         user_id=s.get("user_id", ""),
         provider=s.get("provider", "thaid"),
         pid=s.get("pid", ""),
         given_name=s.get("given_name", ""),
         family_name=s.get("family_name", ""),
+        birthdate=s.get("birthdate", ""),
         title_th=s.get("title_th", ""),
+        gender=s.get("gender", ""),
+        person_id=person_id,
     )

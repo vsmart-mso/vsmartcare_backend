@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from datetime import datetime, timedelta, timezone
@@ -90,6 +91,93 @@ async def fetch_userinfo(userinfo_endpoint: str, access_token: str) -> Dict[str,
         return r.json()
 
 
+def parse_dopa_formatted_address(formatted: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    แยกเลขที่ (adr_house_num) และหมู่ (adr_moo) จาก address.formatted ของ DOPA
+    เช่น "11 หมู่ที่ 7 ต.เมืองบางขลัง อ.สวรรคโลก จ.สุโขทัย"
+    """
+    s = (formatted or "").strip()
+    if not s:
+        return None, None
+
+    adr_moo: Optional[str] = None
+    m_moo = re.search(r"หมู่ที่\s*(\d+)", s)
+    if m_moo:
+        adr_moo = m_moo.group(1)
+        before = s[: m_moo.start()].strip()
+        before = re.sub(r"^บ้านเลขที่\s*", "", before, flags=re.IGNORECASE).strip()
+        adr_house = before or None
+    else:
+        m_house = re.match(r"^(\d+[A-Za-zก-๙\/\-]*)", s)
+        adr_house = m_house.group(1).strip() if m_house else None
+
+    if adr_house:
+        adr_house = re.sub(r"^บ้านเลขที่\s*", "", adr_house, flags=re.IGNORECASE).strip() or None
+
+    return adr_house, adr_moo
+
+
+def parse_thai_address_geo(formatted: str) -> Dict[str, Optional[str]]:
+    """
+    แยกชื่อตำบล / อำเภอ / จังหวัด / รหัสไปรษณีย์ จาก address.formatted แบบ DOPA
+    เช่น "... ต.เมืองบางขลัง อ.สวรรคโลก จ.สุโขทัย" หรือท้ายบรรทัดมีรหัส 5 หลัก
+    (ใช้ตำแหน่ง ต./อ./จ. ไม่ใช้ [^อ] เพราะชื่อตำบลอาจมีตัว อ)
+    """
+    s = (formatted or "").strip()
+    empty: Dict[str, Optional[str]] = {
+        "subdistrict": None,
+        "district": None,
+        "province": None,
+        "postcode": None,
+    }
+    if not s:
+        return dict(empty)
+
+    m_tambon = re.search(r"(?:ต\.|ตำบล)\s*", s)
+    m_amphoe = re.search(r"\sอ\.\s*", s)
+    m_prov = re.search(r"\sจ\.\s*", s)
+    if not (m_tambon and m_amphoe and m_prov):
+        return dict(empty)
+
+    sub = s[m_tambon.end() : m_amphoe.start()].strip()
+    dist = s[m_amphoe.end() : m_prov.start()].strip()
+    tail = s[m_prov.end() :].strip()
+
+    pc_m = re.search(r"(\d{5})\s*$", tail)
+    postcode = pc_m.group(1) if pc_m else None
+    prov = (tail[: pc_m.start()].strip() if pc_m else tail.strip())
+
+    out = dict(empty)
+    out["subdistrict"] = sub or None
+    out["district"] = dist or None
+    out["province"] = prov or None
+    out["postcode"] = postcode
+    return out
+
+
+def _address_postcode_from_userinfo(userinfo: Dict[str, Any]) -> str:
+    """ถ้า address เป็น object และมีรหัสไปรษณีย์แยกฟิลด์ — ใช้ประกอบ lookup sub_districts_postcode."""
+    addr = userinfo.get("address")
+    if not isinstance(addr, dict):
+        return ""
+    for k in ("postal_code", "postcode", "postalCode", "zip", "zipcode"):
+        v = addr.get(k)
+        if v is None or v == "":
+            continue
+        digits = re.sub(r"\D", "", str(v).strip())
+        if len(digits) == 5:
+            return digits
+    return ""
+
+
+def _address_formatted(userinfo: Dict[str, Any]) -> str:
+    """DOPA ส่ง address เป็น dict ที่มีคีย์ formatted หรือสตริงเดิม."""
+    addr = userinfo.get("address")
+    if isinstance(addr, dict):
+        return str(addr.get("formatted") or "").strip()
+    return str(addr or "").strip()
+
+
 def normalize_profile(userinfo: Dict[str, Any]) -> Dict[str, str]:
     """Map ThaiD userinfo to stable keys for JWT and /v1/me (see THAID_FASTAPI_INTEGRATION.md)."""
     pid = userinfo.get("pid") or userinfo.get("sub")
@@ -98,7 +186,8 @@ def normalize_profile(userinfo: Dict[str, Any]) -> Dict[str, str]:
         "given_name": str(userinfo.get("given_name") or "").strip(),
         "family_name": str(userinfo.get("family_name") or "").strip(),
         "title_th": str(userinfo.get("titleTh") or userinfo.get("title") or "").strip(),
-        "address": str(userinfo.get("address") or "").strip(),
+        "address": _address_formatted(userinfo),
+        "address_postcode": _address_postcode_from_userinfo(userinfo),
         "birthdate": str(userinfo.get("birthdate") or "").strip(),
         "gender": str(userinfo.get("gender") or "").strip(),
     }

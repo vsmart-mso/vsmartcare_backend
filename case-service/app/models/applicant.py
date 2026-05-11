@@ -1,6 +1,7 @@
 """ตารางหลัก `applicants` — ข้อมูลผู้ขอรับสวัสดิการ.
 
 ผูกกับ `persons` ผ่าน persons_id (ข้อมูลชื่อ/เลขบัตรอยู่ที่ persons)
+และ `requester_relation_type` ผ่าน requester_relation_id
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from .address import Address
     from .dependency import DependencyLoad
     from .economic import EconomicInfo
-    from .lookup import MaritalStatusType
+    from .lookup import MaritalStatusType, RequesterRelationType
     from .person import Person
     from .status_log import WelfareRequestStatus
     from .welfare import (
@@ -48,7 +49,13 @@ class Applicant(Base):
         index=True,
     )
 
-    requester_relation: Mapped[str | None] = mapped_column(String(100))
+    case_number: Mapped[str | None] = mapped_column(String(100))
+
+    requester_relation_id: Mapped[int] = mapped_column(
+        ForeignKey("requester_relation_type.id"),
+        nullable=False,
+        index=True,
+    )
     marital_status_id: Mapped[int] = mapped_column(
         ForeignKey("marital_status_types.id"),
         nullable=False,
@@ -72,10 +79,12 @@ class Applicant(Base):
     is_existing_case: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     age: Mapped[int | None] = mapped_column()
-    approve: Mapped[bool] = mapped_column(default=False, nullable=False)
-    user_sdshv_approve: Mapped[str | None] = mapped_column(String(255))
 
     person: Mapped["Person"] = relationship(back_populates="applicants", lazy="selectin")
+    requester_relation_type: Mapped["RequesterRelationType"] = relationship(
+        back_populates="applicants",
+        lazy="selectin",
+    )
     marital_status: Mapped["MaritalStatusType"] = relationship(lazy="selectin")
 
     addresses: Mapped[list["Address"]] = relationship(

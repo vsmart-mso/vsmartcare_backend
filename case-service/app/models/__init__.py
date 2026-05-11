@@ -15,6 +15,7 @@ from .lookup import (
     MaritalStatusType,
     PrefixType,
     ReceivedWelfareType,
+    RequesterRelationType,
     RequestType,
 )
 from .person import Person
@@ -47,6 +48,7 @@ __all__ = [
     "Province",
     "ReceivedWelfareType",
     "RequestType",
+    "RequesterRelationType",
     "ScreeningLog",
     "SubDistrict",
     "SubDistrictPostcode",
