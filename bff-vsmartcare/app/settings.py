@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     service_name: str = "bff"
     port: int = 8000
+    bff_api_prefix: str = Field(
+        default="/api-vsmartcare",
+        validation_alias=AliasChoices("BFF_API_PREFIX"),
+        description="URL prefix สำหรับ API สาธารณะของ BFF",
+    )
     bff_api_password: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("BFF_API_PASSWORD"),
@@ -47,6 +52,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BFF_CORS_ORIGINS"),
         description="ต้นทางที่อนุญาตให้เรียก BFF จากเบราว์เซอร์ (เช่น Vite)",
     )
+
+    @field_validator("bff_api_prefix", mode="after")
+    @classmethod
+    def normalize_bff_api_prefix(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("bff_api_prefix must not be empty")
+        if not s.startswith("/"):
+            s = f"/{s}"
+        return s.rstrip("/")
 
     @field_validator(
         "case_service_url",

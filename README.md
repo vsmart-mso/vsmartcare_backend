@@ -2,6 +2,10 @@
 
 This folder contains starter microservices for the selfservice system.
 
+### Deploy to Beta / demo (vsmart-demo)
+
+See [BETA_DEPLOYMENT.md](BETA_DEPLOYMENT.md) — step-by-step Beta deploy for `https://vsmart-demo.m-society.go.th` (prerequisites, env per service, **Beta Docker commands**, nginx, ThaiD, frontend `VITE_*`, post-deploy checks).
+
 ### Services
 
 - `bff`: Backend-for-Frontend (single entrypoint for the frontend)
@@ -13,10 +17,21 @@ This folder contains starter microservices for the selfservice system.
 
 Copy `thaid-auth-service/.env.example` to `thaid-auth-service/.env` and set ThaiD credentials (Docker Compose loads that file into `thaid-auth-service`).
 
-From this folder:
+Run from this folder (`service/`). Use both compose files: base [`docker-compose.yml`](docker-compose.yml) plus dev overlay [`docker-compose.dev.yml`](docker-compose.dev.yml) (hot-reload, `alembic upgrade head` on case-service).
+
+**Docker Compose (daily use)**
+
+| Task | Command |
+|------|---------|
+| Build images and start (detached) | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build` |
+| Start without rebuild | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` |
+| Stop and remove containers | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down` |
+
+Optional:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 ```
 
 Services will be available on:
