@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class ApplicantBase(BaseModel):
     persons_id: int
-    case_number: str | None = Field(None, max_length=100)
     requester_relation_id: int
     marital_status_id: int
 
@@ -42,7 +41,6 @@ class ApplicantCreate(ApplicantBase):
 
 class ApplicantUpdate(BaseModel):
     persons_id: int | None = None
-    case_number: str | None = Field(None, max_length=100)
     requester_relation_id: int | None = None
     marital_status_id: int | None = None
     mobile_phone: str | None = Field(None, max_length=20)

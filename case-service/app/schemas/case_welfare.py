@@ -26,7 +26,6 @@ from .welfare import (
 
 class WelfareApplicantUpsert(BaseModel):
     persons_id: int
-    case_number: str | None = Field(None, max_length=100)
     requester_relation_id: int
     marital_status_id: int
     mobile_phone: str | None = Field(None, max_length=20)

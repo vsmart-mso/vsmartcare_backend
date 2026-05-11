@@ -12,6 +12,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import BaseModel, Field
 
 from .settings import cors_origin_list, settings
+from .case_display_schema import CaseDisplayRead
 from .welfare_case_schema import WelfareCaseCreate
 
 _optional_bearer = HTTPBearer(auto_error=False)
@@ -298,6 +299,23 @@ async def upload_case_evidence(
         },
         file,
     )
+
+
+@router.get(
+    "/v1/cases/display",
+    tags=["cases"],
+    summary="ดึงรายการสรุปคำร้องตาม persons_id",
+    description=(
+        "ส่งต่อ `GET …/v1/cases/display?persons_id=…` — คืน list ของ applicant_id, case_number, "
+        "datetime_create, time_count_process, is_existing_case, current_status, description_public"
+    ),
+    response_model=list[CaseDisplayRead],
+    dependencies=_v1_api_key,
+)
+async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/cases/display?persons_id={persons_id}")
+    return [CaseDisplayRead.model_validate(item) for item in data]
 
 
 @router.get(
