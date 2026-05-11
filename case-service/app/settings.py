@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from pydantic import Field
+
+_SERVICE_ROOT_FOLDER = Path(__file__).resolve().parent.parent
+_DEFAULT_UPLOAD_ROOT = (_SERVICE_ROOT_FOLDER / "uploads" / "welfare-evidence").resolve()
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_SERVICE_ROOT = Path(__file__).resolve().parent.parent
+_SERVICE_ROOT = _SERVICE_ROOT_FOLDER
 _ENV_FILES: tuple[Path, ...] = tuple(
     p
     for p in (
@@ -26,5 +29,14 @@ class Settings(BaseSettings):
     port: int = Field(validation_alias="PORT")
     database_url: str = Field(validation_alias="DATABASE_URL")
 
+    upload_root: str = Field(default=str(_DEFAULT_UPLOAD_ROOT), validation_alias="UPLOAD_ROOT")
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="MAX_UPLOAD_BYTES")
+
 
 settings = Settings()
+
+
+def resolved_upload_root() -> Path:
+    """ค่า UPLOAD_ROOT — ถ้าเป็น path สัมพัทธ์จะอ้างอิงจากโฟลเดอร์ service (parent ของ `app/`)."""
+    p = Path(settings.upload_root)
+    return p.resolve() if p.is_absolute() else (_SERVICE_ROOT / p).resolve()

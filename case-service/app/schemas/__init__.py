@@ -56,6 +56,8 @@ from .lookup import (
     PrefixTypeRead,
     ReceivedWelfareTypeCreate,
     ReceivedWelfareTypeRead,
+    RequesterRelationTypeCreate,
+    RequesterRelationTypeRead,
     RequestTypeCreate,
     RequestTypeRead,
 )
@@ -141,6 +143,8 @@ __all__ = [
     "ReceivedWelfareTypeRead",
     "RequestTypeCreate",
     "RequestTypeRead",
+    "RequesterRelationTypeCreate",
+    "RequesterRelationTypeRead",
     "ScreeningLogBase",
     "ScreeningLogCreate",
     "ScreeningLogRead",

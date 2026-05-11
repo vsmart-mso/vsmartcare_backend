@@ -6,10 +6,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
+
+if TYPE_CHECKING:
+    from .applicant import Applicant
 
 
 class LookupMixin:
@@ -29,6 +34,16 @@ class MaritalStatusType(LookupMixin, Base):
     """สถานภาพสมรส — โสด, สมรส, หม้าย ฯลฯ"""
 
     __tablename__ = "marital_status_types"
+
+
+class RequesterRelationType(LookupMixin, Base):
+    """ความสัมพันธ์ผู้ยื่นคำร้องกับผู้รับสิทธิ์ — เช่น ตนเอง"""
+
+    __tablename__ = "requester_relation_type"
+
+    applicants: Mapped[list["Applicant"]] = relationship(
+        back_populates="requester_relation_type",
+    )
 
 
 class RequestType(LookupMixin, Base):
@@ -74,10 +89,16 @@ class AddressType(LookupMixin, Base):
 
 
 class CurrentStatus(Base):
-    """สถานะคำร้องปัจจุบัน — ตัวนี้ไม่ใช้ LookupMixin เพราะมี description เพิ่ม"""
+    """สถานะคำร้องปัจจุบัน — ข้อความแยก public/staff + สีและลำดับ dropdown/filter"""
 
     __tablename__ = "current_status"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description_public: Mapped[str] = mapped_column(Text, nullable=False)
+    description_staff: Mapped[str] = mapped_column(Text, nullable=False)
+    color: Mapped[str] = mapped_column(String(32), nullable=False)
+    dropdown_to_change: Mapped[str] = mapped_column(String(255), nullable=False)
+    dropdown_order: Mapped[int] = mapped_column(nullable=False)
+    dropdown_activate: Mapped[bool] = mapped_column(default=False, nullable=False)
+    filter_order: Mapped[int] = mapped_column(nullable=False)
+    filter_activate: Mapped[bool] = mapped_column(default=True, nullable=False)

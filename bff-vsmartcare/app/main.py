@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.openapi.utils import get_openapi
@@ -12,6 +12,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import BaseModel, Field
 
 from .settings import cors_origin_list, settings
+from .welfare_case_schema import WelfareCaseCreate
 
 _optional_bearer = HTTPBearer(auto_error=False)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -112,10 +113,35 @@ def readyz():
     return {"ok": True}
 
 
-async def _post(url: str, json: Dict[str, Any]) -> Dict[str, Any]:
-    """ยิง HTTP POST ไปยัง URL ที่กำหนด คืน JSON; ถ้า status >= 400 จะยก HTTPException."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+async def _post(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+    """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(url, json=json)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
+
+
+async def _post_evidence_multipart(
+    url: str,
+    form_fields: Dict[str, Any],
+    file: UploadFile,
+    *,
+    timeout: float = 120.0,
+) -> Dict[str, Any]:
+    """ส่ง multipart ไป case-service สำหรับหลักฐานรูป (ไฟล์จริง ไม่ใช่ Base64)."""
+    content = await file.read()
+    data: Dict[str, str] = {}
+    for k, v in form_fields.items():
+        if v is None:
+            continue
+        data[str(k)] = str(v)
+
+    fname = file.filename or "upload"
+    ct = file.content_type or "application/octet-stream"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        files = {"file": (fname, content, ct)}
+        r = await client.post(url, data=data, files=files)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -177,26 +203,15 @@ async def _post_thaid_auth_login(json_body: Dict[str, Any]) -> Dict[str, Any]:
         ) from exc
 
 
-class CreateCaseRequest(BaseModel):
-    """โครงสร้าง body สำหรับสร้าง case ที่ส่งต่อไป case-service."""
-
-    type: str
-    title: str
-    description: Optional[str] = None
-    requester_user_id: Optional[str] = None
-    payload: Dict[str, Any] = {}
-
-
 class ScreeningLogCreateRequest(BaseModel):
     """Body สำหรับ `POST /v1/screening-logs` — ตรงกับ case-service ScreeningLogCreate."""
 
     person_id: int
-    criteria_version: Optional[str] = Field(None, max_length=50)
-    screening_result: Optional[str] = Field(None, max_length=100)
-    failure_reason_code: Optional[str] = Field(None, max_length=100)
+    criteria_version: Optional[str] = Field(None, max_length=255)
+    failure_reason_code: Optional[str] = Field(None, max_length=255)
     screening_status: bool = False
     input_data_snapshot: Optional[Dict[str, Any]] = None
-    ip_address: Optional[str] = Field(None, max_length=45)
+    ip_address: Optional[str] = Field(None, max_length=255)
     user_agent: Optional[str] = Field(None, max_length=500)
 
 
@@ -206,14 +221,11 @@ class ScreeningLogReadResponse(BaseModel):
     id: int
     person_id: int
     criteria_version: Optional[str] = None
-    screening_result: Optional[str] = None
     failure_reason_code: Optional[str] = None
     screening_status: bool
     input_data_snapshot: Optional[Dict[str, Any]] = None
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 class WelfareRequestConsentCreateRequest(BaseModel):
@@ -241,29 +253,59 @@ class WelfareRequestConsentReadResponse(BaseModel):
     updated_at: datetime
 
 
-# บันทึกข้อมูล case ที่สร้างได้ลง database
 @app.post(
     "/v1/cases",
     tags=["cases"],
-    summary="สร้าง case",
-    description="ส่งต่อไปยัง case-service `POST /v1/cases`",
+    summary="สร้างคำร้อง (บันทึก applicants และตารางย่อย)",
+    description=(
+        "ส่งต่อ `POST …/v1/cases` ใน case-service — บันทึก applicant, address, "
+        "dependency_loads, economic_infos, welfare_request_types, welfare_histories, "
+        "welfare_request_status จาก body"
+    ),
     dependencies=_v1_api_key,
 )
-async def create_case(body: CreateCaseRequest):
-    """รับข้อมูล case จาก client แล้วส่งต่อ POST ไป case-service."""
-    return await _post(f"{settings.case_service_url}/v1/cases", json=body.model_dump())
+async def create_case(body: WelfareCaseCreate) -> Dict[str, Any]:
+    """รับ JSON ครบแล้วส่งต่อไปบันทึกฐานข้อมูล (ยังไม่รวมรูปหลักฐาน — ใช้ `/v1/cases/{applicant_id}/evidences`)."""
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(mode="json")
+    return await _post(f"{base}/v1/cases", json=payload, timeout=120.0)
 
-#ดึงข้อมูล case จาก database
-@app.get(
-    "/v1/cases/{case_id}",
+
+@app.post(
+    "/v1/cases/{applicant_id}/evidences",
     tags=["cases"],
-    summary="ดึง case ตาม id",
-    description="ส่งต่อไปยัง case-service `GET /v1/cases/{case_id}`",
+    summary="อัปโหลดรูปหลักฐาน (multipart)",
+    description="ส่งต่อ `POST …/v1/cases/{applicant_id}/evidences` — เก็บไฟล์รูปลงจานและ welfare_evidences",
     dependencies=_v1_api_key,
 )
-async def get_case(case_id: str):
-    """ดึงรายละเอียด case ตาม id โดยส่งต่อ GET ไป case-service."""
-    return await _get(f"{settings.case_service_url}/v1/cases/{case_id}")
+async def upload_case_evidence(
+    applicant_id: int,
+    attachment_type_id: int = Form(...),
+    file_other_type_name: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/cases/{applicant_id}/evidences"
+    return await _post_evidence_multipart(
+        url,
+        {
+            "attachment_type_id": attachment_type_id,
+            "file_other_type_name": file_other_type_name,
+        },
+        file,
+    )
+
+
+@app.get(
+    "/v1/cases/{applicant_id}",
+    tags=["cases"],
+    summary="ดึงคำร้องตาม applicant_id",
+    description="ส่งต่อ `GET …/v1/cases/{applicant_id}` (ตัวอ้างอิงคือ id จากตาราง applicants)",
+    dependencies=_v1_api_key,
+)
+async def get_case(applicant_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/cases/{applicant_id}")
 
 
 @app.post(
@@ -543,6 +585,25 @@ async def bff_list_address_types():
 async def bff_get_address_type(address_type_id: int):
     return await _get(_case_lookup_url(f"v1/lookups/address-types/{address_type_id}"))
 
+
+@app.get("/v1/lookups/requester-relation-types", 
+    tags=["lookups"], 
+    summary="ประเภทความสัมพันธ์ผู้ร้องขอ", 
+    description="ส่งต่อไปยัง case-service `GET /v1/lookups/requester-relation-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_requester_relation_types():
+    return await _get(_case_lookup_url("v1/lookups/requester-relation-types"))
+
+
+@app.get("/v1/lookups/requester-relation-types/{requester-relation_type_id}", 
+    tags=["lookups"], 
+    summary="ดึงประเภทความสัมพันธ์ผู้ร้องขอตาม id", 
+    description="ส่งต่อไปยัง case-service `GET /v1/lookups/requester-relation-types/{requester-relation_type_id}`",
+    dependencies=_v1_api_key,
+)
+async def bff_get_requester_relation_type(requester_relation_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/requester-relation-types/{requester_relation_type_id}"))
 
 @app.get(
     "/v1/geo/provinces",

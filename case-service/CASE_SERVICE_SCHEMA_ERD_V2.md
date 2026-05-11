@@ -55,8 +55,14 @@
 
 ### `current_status`
 - `id`: int, **PK**, NN
-- `name`: varchar(255), NN
-- `description`: text, NULL
+- `description_public`: text, NN — ข้อความแสดงต่อประชาชน
+- `description_staff`: text, NN — ข้อความภายใน (เจ้าหน้าที่)
+- `color`: varchar(32), NN — รหัสสี (เช่น `#009f75`)
+- `dropdown_to_change`: varchar(255), NN — ป้ายกำกับตัวเลือก dropdown (เช่น `none`, `รับเรื่อง*`)
+- `dropdown_order`: int, NN
+- `dropdown_activate`: bool, NN
+- `filter_order`: int, NN
+- `filter_activate`: bool, NN
 
 ---
 
