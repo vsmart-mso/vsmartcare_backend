@@ -31,11 +31,14 @@ from ...models.welfare import (
 )
 from ...schemas.address import AddressRead
 from ...schemas.applicant import ApplicantRead
+from ...schemas.case_display import CaseDisplayRead
 from ...schemas.case_welfare import (
     WelfareCaseCreate,
     WelfareCaseRead,
     WelfareEvidenceUploadRead,
 )
+from ...schemas.lookup import CurrentStatusRead
+from ...services.case_number import allocate_case_number
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
 from ...schemas.status_log import WelfareRequestStatusRead
@@ -83,6 +86,36 @@ def _applicant_load_options():  # noqa: ANN001
         selectinload(Applicant.welfare_evidences),
         selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.current_status),
     ]
+
+
+async def _load_applicants_for_display(
+    session: AsyncSession,
+    persons_id: int,
+) -> list[Applicant]:
+    stmt = (
+        select(Applicant)
+        .where(Applicant.persons_id == persons_id)
+        .order_by(Applicant.created_at.desc(), Applicant.id.desc())
+        .options(selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.current_status))
+    )
+    r = await session.execute(stmt)
+    return list(r.scalars().all())
+
+
+async def applicant_to_display_read(applicant: Applicant) -> CaseDisplayRead:
+    histories = sorted(applicant.status_logs, key=lambda s: (s.updated_at, s.id), reverse=True)
+    latest = histories[0] if histories else None
+    status = latest.current_status if latest is not None else None
+
+    return CaseDisplayRead(
+        applicant_id=applicant.id,
+        case_number=applicant.case_number,
+        datetime_create=applicant.created_at,
+        time_count_process=applicant.time_count_process,
+        is_existing_case=applicant.is_existing_case,
+        current_status=CurrentStatusRead.model_validate(status) if status is not None else None,
+        description_public=status.description_public if status is not None else None,
+    )
 
 
 async def _load_full_applicant(
@@ -172,7 +205,6 @@ async def create_welfare_case(
     a = body.applicant
     applicant_row = Applicant(
         persons_id=a.persons_id,
-        case_number=a.case_number,
         requester_relation_id=a.requester_relation_id,
         marital_status_id=a.marital_status_id,
         mobile_phone=a.mobile_phone,
@@ -187,6 +219,15 @@ async def create_welfare_case(
     )
 
     session.add(applicant_row)
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+
+    applicant_row.case_number = await allocate_case_number(
+        session,
+        reference=applicant_row.created_at,
+    )
     try:
         await session.flush()
     except IntegrityError as e:
@@ -287,6 +328,16 @@ async def create_welfare_case(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="reload_failed")
 
     return await applicant_to_case_read(reloaded)
+
+
+@router.get("/display", response_model=list[CaseDisplayRead])
+async def list_welfare_cases_display(
+    persons_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[CaseDisplayRead]:
+    await _ensure_person_exists(session, persons_id)
+    rows = await _load_applicants_for_display(session, persons_id)
+    return [await applicant_to_display_read(row) for row in rows]
 
 
 @router.get("/{applicant_id}", response_model=WelfareCaseRead)
