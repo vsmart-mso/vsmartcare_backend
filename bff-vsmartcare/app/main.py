@@ -803,7 +803,28 @@ async def thaid_mock_continue_proxy(request: Request):
     ),
 )
 async def thaid_callback_proxy(request: Request):
-    """รับ `code`/`state` จาก redirect ของ ThaiD แล้วโยงต่อไป auth service (JSON หรือ 302 ตาม upstream)."""
+    """รับ `code`/`state` จาก redirect ของ ThaiD แล้วโยงต่อไป auth service (JSON หรือ 302 ตาม upstream).
+
+    กรณี ThaiD ส่ง `error` กลับมา (เช่น ผู้ใช้กดปฏิเสธ) จะ redirect ไปหน้า return ของ
+    frontend ทันที โดยไม่โยงต่อ auth service เพื่อให้ frontend แสดง error message ได้ถูกต้อง
+    แทนที่จะแสดง JSON error ดิบในเบราว์เซอร์
+    """
+    params = dict(request.query_params)
+
+    # ThaiD ส่ง error กลับมา (เช่น error=User / access_denied / temporarily_unavailable)
+    # → redirect ตรงไปหน้า return ของ frontend พร้อมส่ง error param ต่อไป
+    # frontend (LoginThaIDReturnPage) จะแปลง error code เป็นข้อความไทยและพาไปหน้า login
+    if "error" in params:
+        from urllib.parse import urlencode
+        frontend_return = settings.frontend_url.rstrip("/") + "/login/thaid/return"
+        err_params: dict[str, str] = {"error": params["error"]}
+        if params.get("error_description"):
+            err_params["error_description"] = params["error_description"]
+        return RedirectResponse(
+            url=f"{frontend_return}?{urlencode(err_params)}",
+            status_code=302,
+        )
+
     base = f"{settings.thaid_auth_service_url}/v1/auth/thaid/callback"
     url = f"{base}?{request.query_params}" if request.query_params else base
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -815,13 +836,20 @@ async def thaid_callback_proxy(request: Request):
         return RedirectResponse(url=loc, status_code=r.status_code)
     ct = (r.headers.get("content-type") or "").lower()
     if r.status_code >= 400:
-        detail: object = r.text
+        # auth service คืน error — redirect กลับ frontend แทนการแสดง JSON ดิบ
+        from urllib.parse import urlencode
+        frontend_return = settings.frontend_url.rstrip("/") + "/login/thaid/return"
         try:
-            if "application/json" in ct:
-                detail = r.json()
+            body = r.json() if "application/json" in ct else {}
         except ValueError:
-            pass
-        raise HTTPException(status_code=r.status_code, detail=detail)
+            body = {}
+        err_code = body.get("detail") or "auth_error"
+        if isinstance(err_code, dict):
+            err_code = err_code.get("detail", "auth_error")
+        return RedirectResponse(
+            url=f"{frontend_return}?{urlencode({'error': str(err_code)})}",
+            status_code=302,
+        )
     if "application/json" in ct:
         return JSONResponse(content=r.json(), status_code=r.status_code)
     if "text/html" in ct:

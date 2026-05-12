@@ -46,6 +46,13 @@ class Settings(BaseSettings):
         default="http://localhost:8003",
         validation_alias=AliasChoices("THAID_AUTH_SERVICE_URL"),
     )
+    # URL ของ frontend app — ใช้ redirect กลับเมื่อ ThaiD callback ล้มเหลว
+    # Production: https://example.com | Dev: http://localhost:5173
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("FRONTEND_URL"),
+        description="Base URL ของ frontend (ใช้ redirect error กลับหน้า login)",
+    )
 
     bff_cors_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
