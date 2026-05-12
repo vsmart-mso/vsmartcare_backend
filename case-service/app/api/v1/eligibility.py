@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,26 @@ async def _ensure_person_exists(session: AsyncSession, person_id: int) -> None:
     result = await session.execute(select(Person.id).where(Person.id == person_id))
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
+
+
+@router.get("/screening-logs/latest-passed", response_model=ScreeningLogRead | None)
+async def get_latest_passed_screening_log(
+    person_id: int = Query(..., description="ID ของ person"),
+    session: AsyncSession = Depends(get_session),
+) -> ScreeningLogRead | None:
+    """คืน screening log ล่าสุดที่ผ่านเกณฑ์ (screening_status=true) หรือ null ถ้าไม่มี."""
+    stmt = (
+        select(ScreeningLog)
+        .where(ScreeningLog.person_id == person_id)
+        .where(ScreeningLog.screening_status == True)  # noqa: E712
+        .order_by(ScreeningLog.id.desc())
+        .limit(1)
+    )
+    r = await session.execute(stmt)
+    row = r.scalar_one_or_none()
+    if row is None:
+        return None
+    return ScreeningLogRead.model_validate(row)
 
 
 @router.post(
