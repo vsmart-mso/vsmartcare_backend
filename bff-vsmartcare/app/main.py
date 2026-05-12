@@ -628,6 +628,26 @@ async def bff_get_requester_relation_type(requester_relation_type_id: int):
     return await _get(_case_lookup_url(f"v1/lookups/requester-relation-types/{requester_relation_type_id}"))
 
 @router.get(
+    "/v1/lookups/bank-names",
+    tags=["lookups"],
+    summary="รายการชื่อธนาคาร",
+    dependencies=_v1_api_key,
+)
+async def bff_list_bank_names():
+    return await _get(_case_lookup_url("v1/lookups/bank-names"))
+
+
+@router.get(
+    "/v1/lookups/bank-names/{bank_name_id}",
+    tags=["lookups"],
+    summary="ดึงชื่อธนาคารตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_bank_name(bank_name_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/bank-names/{bank_name_id}"))
+
+
+@router.get(
     "/v1/geo/provinces",
     tags=["geo"],
     summary="รายการจังหวัด",

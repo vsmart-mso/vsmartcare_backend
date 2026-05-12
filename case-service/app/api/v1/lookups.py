@@ -15,6 +15,7 @@ from ...core.database import get_session
 from ...models.lookup import (
     AddressType,
     AttachmentType,
+    BankName,
     CurrentStatus,
     DependencyType,
     HousingType,
@@ -28,6 +29,7 @@ from ...models.lookup import (
 from ...schemas.lookup import (
     AddressTypeRead,
     AttachmentTypeRead,
+    BankNameRead,
     CurrentStatusRead,
     DependencyTypeRead,
     HousingTypeRead,
@@ -315,6 +317,24 @@ async def get_dependency_type(
         DependencyTypeRead,
         dependency_type_id,
         "dependency_type_not_found",
+    )
+
+
+# --- bank-names ---
+
+
+@router.get("/bank-names", response_model=list[BankNameRead])
+async def list_bank_names(session: AsyncSession = Depends(get_session)) -> list[BankNameRead]:
+    return await _list_rows(session, BankName, BankNameRead)
+
+
+@router.get("/bank-names/{bank_name_id}", response_model=BankNameRead)
+async def get_bank_name(
+    bank_name_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> BankNameRead:
+    return await _get_row(
+        session, BankName, BankNameRead, bank_name_id, "bank_name_not_found"
     )
 
 

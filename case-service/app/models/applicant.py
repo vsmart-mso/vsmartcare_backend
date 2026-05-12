@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .address import Address
     from .dependency import DependencyLoad
     from .economic import EconomicInfo
-    from .lookup import MaritalStatusType, RequesterRelationType
+    from .lookup import BankName, MaritalStatusType, RequesterRelationType
     from .person import Person
     from .status_log import WelfareRequestStatus
     from .welfare import (
@@ -70,7 +70,10 @@ class Applicant(Base):
 
     problem_details: Mapped[str | None] = mapped_column(Text)
 
-    bank_account_name: Mapped[str | None] = mapped_column(String(255))
+    bank_name_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_name.id"),
+        index=True,
+    )
     bank_account_no: Mapped[str | None] = mapped_column(String(50))
 
     time_count_process: Mapped[int | None] = mapped_column()
@@ -86,6 +89,10 @@ class Applicant(Base):
         lazy="selectin",
     )
     marital_status: Mapped["MaritalStatusType"] = relationship(lazy="selectin")
+    bank_name: Mapped["BankName | None"] = relationship(
+        back_populates="applicants",
+        lazy="selectin",
+    )
 
     addresses: Mapped[list["Address"]] = relationship(
         back_populates="applicant",

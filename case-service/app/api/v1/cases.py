@@ -20,7 +20,7 @@ from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo
-from ...models.lookup import CurrentStatus
+from ...models.lookup import BankName, CurrentStatus
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.welfare import (
@@ -76,6 +76,7 @@ def _applicant_load_options():  # noqa: ANN001
         selectinload(Applicant.person),
         selectinload(Applicant.requester_relation_type),
         selectinload(Applicant.marital_status),
+        selectinload(Applicant.bank_name),
         selectinload(Applicant.addresses).selectinload(Address.address_type),
         selectinload(Applicant.addresses).selectinload(Address.sub_district_postcode),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.income_sources),
@@ -192,6 +193,12 @@ async def _ensure_current_status_exists(session: AsyncSession, current_status_id
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
 
 
+async def _ensure_bank_name_exists(session: AsyncSession, bank_name_id: int) -> None:
+    r = await session.execute(select(BankName.id).where(BankName.id == bank_name_id))
+    if r.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bank_name_not_found")
+
+
 @router.post("", response_model=WelfareCaseRead, status_code=status.HTTP_201_CREATED)
 async def create_welfare_case(
     body: WelfareCaseCreate,
@@ -199,6 +206,8 @@ async def create_welfare_case(
 ) -> WelfareCaseRead:
     await _ensure_person_exists(session, body.applicant.persons_id)
     await _ensure_current_status_exists(session, body.initial_current_status_id)
+    if body.applicant.bank_name_id is not None:
+        await _ensure_bank_name_exists(session, body.applicant.bank_name_id)
 
     req_ids = _dedupe_preserve_order(body.request_type_ids)
 
@@ -212,7 +221,7 @@ async def create_welfare_case(
         fax_number=a.fax_number,
         email_address=str(a.email_address) if a.email_address is not None else None,
         problem_details=a.problem_details,
-        bank_account_name=a.bank_account_name,
+        bank_name_id=a.bank_name_id,
         bank_account_no=a.bank_account_no,
         age=a.age,
         # is_existing_case, is_emergency, time_count_process — ใช้ default จากโมเดล ไม่รับจาก client

@@ -17,7 +17,7 @@ class WelfareApplicantUpsert(BaseModel):
     fax_number: str | None = Field(None, max_length=20)
     email_address: EmailStr | None = None
     problem_details: str | None = None
-    bank_account_name: str | None = Field(None, max_length=255)
+    bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
     age: int | None = Field(None, ge=0)
 
