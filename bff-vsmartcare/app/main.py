@@ -330,6 +330,24 @@ async def get_case(applicant_id: int) -> Any:
     return await _get(f"{base}/v1/cases/{applicant_id}")
 
 
+@router.get(
+    "/v1/screening-logs/latest-passed",
+    tags=["eligibility"],
+    summary="ดึง screening log ล่าสุดที่ผ่านเกณฑ์",
+    response_model=Optional[ScreeningLogReadResponse],
+    dependencies=_v1_api_key,
+)
+async def bff_get_latest_passed_screening_log(
+    person_id: int = Query(..., description="ID ของ person"),
+) -> Optional[ScreeningLogReadResponse]:
+    """ส่งต่อไปยัง case-service — คืน null ถ้ายังไม่เคยผ่านเกณฑ์."""
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/screening-logs/latest-passed?person_id={person_id}")
+    if data is None:
+        return None
+    return ScreeningLogReadResponse.model_validate(data)
+
+
 @router.post(
     "/v1/screening-logs",
     tags=["eligibility"],
