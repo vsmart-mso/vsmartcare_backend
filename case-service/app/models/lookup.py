@@ -82,6 +82,16 @@ class IncomeSourceType(LookupMixin, Base):
     __tablename__ = "income_source_types"
 
 
+class BankName(LookupMixin, Base):
+    """ชื่อธนาคาร — อ้างอิงจาก applicants.bank_name_id"""
+
+    __tablename__ = "bank_name"
+
+    applicants: Mapped[list["Applicant"]] = relationship(
+        back_populates="bank_name",
+    )
+
+
 class AddressType(LookupMixin, Base):
     """ประเภทที่อยู่ — ตามทะเบียนบ้าน / ปัจจุบัน ฯลฯ"""
 

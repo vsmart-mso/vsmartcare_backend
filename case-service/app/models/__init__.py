@@ -8,6 +8,7 @@ from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from .lookup import (
     AddressType,
     AttachmentType,
+    BankName,
     CurrentStatus,
     DependencyType,
     HousingType,
@@ -33,6 +34,7 @@ __all__ = [
     "AddressType",
     "Applicant",
     "AttachmentType",
+    "BankName",
     "CurrentStatus",
     "DependencyLoad",
     "DependencyType",

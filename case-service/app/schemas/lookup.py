@@ -92,6 +92,14 @@ class IncomeSourceTypeRead(_LookupRead):
     pass
 
 
+class BankNameCreate(_LookupBase):
+    pass
+
+
+class BankNameRead(_LookupRead):
+    pass
+
+
 class AddressTypeCreate(_LookupBase):
     pass
 

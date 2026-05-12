@@ -24,7 +24,7 @@ class ApplicantBase(BaseModel):
 
     problem_details: str | None = None
 
-    bank_account_name: str | None = Field(None, max_length=255)
+    bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
 
     time_count_process: int | None = Field(None, ge=0)
@@ -48,7 +48,7 @@ class ApplicantUpdate(BaseModel):
     fax_number: str | None = Field(None, max_length=20)
     email_address: EmailStr | None = None
     is_government_officer: bool | None = None
-    bank_account_name: str | None = Field(None, max_length=255)
+    bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
     time_count_process: int | None = Field(None, ge=0)
     is_emergency: bool | None = None
