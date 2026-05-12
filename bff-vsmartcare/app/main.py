@@ -357,11 +357,18 @@ async def bff_get_latest_passed_screening_log(
     status_code=status.HTTP_201_CREATED,
     dependencies=_v1_api_key,
 )
-async def bff_create_screening_log(body: ScreeningLogCreateRequest) -> ScreeningLogReadResponse:
-    """รับข้อมูลคัดกรองแล้วส่งต่อ POST ไป case-service."""
+async def bff_create_screening_log(request: Request, body: ScreeningLogCreateRequest) -> ScreeningLogReadResponse:
+    """รับข้อมูลคัดกรองแล้วส่งต่อ POST ไป case-service พร้อม inject ip_address จาก request."""
+    # ดึง IP จาก X-Forwarded-For (กรณีผ่าน reverse proxy) หรือ client.host
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = forwarded or (request.client.host if request.client else None)
+
+    payload = body.model_dump()
+    payload["ip_address"] = client_ip  # override ค่าที่ frontend ส่งมา (มักเป็น null)
+
     data = await _post(
         f"{settings.case_service_url.rstrip('/')}/v1/screening-logs",
-        json=body.model_dump(),
+        json=payload,
     )
     return ScreeningLogReadResponse.model_validate(data)
 
