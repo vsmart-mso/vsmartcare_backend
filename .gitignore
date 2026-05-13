@@ -43,3 +43,5 @@ venv/
 ENV/
 env/
 
+docker-compose-beta.yml
+docker-compose-prod.yml

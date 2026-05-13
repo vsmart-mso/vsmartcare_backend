@@ -473,7 +473,6 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.exception("thaid_callback_failed: %s", exc)
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
     await _persist_person_safe(profile)
     # สร้าง access token และ store session
