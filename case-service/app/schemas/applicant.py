@@ -62,3 +62,14 @@ class ApplicantRead(ApplicantBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class ApplicantDeleteByCidResponse(BaseModel):
+    cid: str = Field(..., min_length=13, max_length=13)
+    person_id: int
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_count: int = Field(..., ge=0)
+    deleted_screening_log_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_ids: list[int] = Field(default_factory=list)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)

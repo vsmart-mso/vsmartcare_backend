@@ -35,6 +35,7 @@ _v1_api_key = [Depends(require_bff_api_key)]
 
 _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
+    {"name": "applicants", "description": "การจัดการข้อมูล applicant"},
     {"name": "cases", "description": "การบันทึกข้อมูล case"},
     {
         "name": "eligibility",
@@ -161,6 +162,29 @@ async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
         return r.json()
 
 
+async def _delete(url: str, *, timeout: float = 30.0) -> Any:
+    """ยิง HTTP DELETE; คืน JSON ถ้ามี body และถ้า status >= 400 จะยก HTTPException."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.delete(url)
+        if r.status_code >= 400:
+            detail: Any = r.text
+            ct = (r.headers.get("content-type") or "").lower()
+            try:
+                if "application/json" in ct:
+                    detail = r.json()
+            except ValueError:
+                pass
+            raise HTTPException(status_code=r.status_code, detail=detail)
+
+        if not r.content:
+            return None
+
+        try:
+            return r.json()
+        except ValueError:
+            return {"raw": r.text}
+
+
 async def _post_thaid_auth_login(json_body: Dict[str, Any]) -> Dict[str, Any]:
     """POST ไป thaid-auth-service พร้อมเช็ก URL, เครือข่าย, timeout และ JSON."""
     base = settings.thaid_auth_service_url.strip().rstrip("/")
@@ -258,6 +282,17 @@ class WelfareRequestConsentReadResponse(BaseModel):
     updated_at: datetime
 
 
+class ApplicantDeleteByCidResponse(BaseModel):
+    cid: str = Field(..., min_length=13, max_length=13)
+    person_id: int
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_count: int = Field(..., ge=0)
+    deleted_screening_log_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_ids: list[int] = Field(default_factory=list)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)
+
+
 @router.post(
     "/v1/cases",
     tags=["cases"],
@@ -328,6 +363,26 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
 async def get_case(applicant_id: int) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/cases/{applicant_id}")
+
+
+@router.delete(
+    "/v1/applicants/by-cid",
+    tags=["applicants"],
+    summary="ลบ applicants ตามเลขบัตรประชาชน",
+    description=(
+        "ส่งต่อ `DELETE …/v1/applicants/by-cid?cid=…` ใน case-service — "
+        "ลบ applicants, ข้อมูลตารางย่อยที่อ้าง applicant_id และข้อมูลใน "
+        "`screening_logs` / `welfare_request_consents` ของบุคคลนั้น"
+    ),
+    response_model=ApplicantDeleteByCidResponse,
+    dependencies=_v1_api_key,
+)
+async def delete_applicants_by_cid(
+    cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
+) -> ApplicantDeleteByCidResponse:
+    base = settings.case_service_url.rstrip("/")
+    data = await _delete(f"{base}/v1/applicants/by-cid?cid={cid}", timeout=120.0)
+    return ApplicantDeleteByCidResponse.model_validate(data)
 
 
 @router.get(
