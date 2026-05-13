@@ -1,4 +1,4 @@
-"""สร้างเลขคำร้องรูปแบบ case-YYYYMM-000001 แบบรายเดือน (next index)."""
+"""สร้างเลขคำร้องรูปแบบ CASE-YYYYMM-000001 แบบรายเดือน (next index)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.applicant import Applicant
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
-_PREFIX = "case-"
+_PREFIX = "CASE-"
 
 
 def _month_key(reference: datetime | None = None) -> str:
@@ -27,7 +27,7 @@ async def _next_monthly_index(session: AsyncSession, month_key: str) -> int:
     rows = await session.scalars(
         select(Applicant.case_number).where(
             Applicant.case_number.is_not(None),
-            Applicant.case_number.like(f"{prefix}%"),
+            Applicant.case_number.ilike(f"{prefix}%"),
         )
     )
 
