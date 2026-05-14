@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
@@ -11,8 +12,9 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from .settings import cors_origin_list, settings
+from .case_for_staff_schema import CaseForStaffListResponse, CaseForStaffRead as CaseForStaffListItem
 from .case_display_schema import CaseDisplayRead
+from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
 
 _optional_bearer = HTTPBearer(auto_error=False)
@@ -37,6 +39,7 @@ _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
     {"name": "applicants", "description": "การจัดการข้อมูล applicant"},
     {"name": "cases", "description": "การบันทึกข้อมูล case"},
+    {"name": "case_for_staff", "description": "รายการคำร้องสำหรับการใช้งานฝั่งเจ้าหน้าที่"},
     {
         "name": "eligibility",
         "description": "บันทึก screening_logs / welfare_request_consents (คัดกรองเบื้องต้น ความยินยอม) ผ่าน case-service",
@@ -351,6 +354,62 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
     base = settings.case_service_url.rstrip("/")
     data = await _get(f"{base}/v1/cases/display?persons_id={persons_id}")
     return [CaseDisplayRead.model_validate(item) for item in data]
+
+
+@router.get(
+    "/v1/case_for_staff",
+    tags=["case_for_staff"],
+    summary="ดึงรายการคำร้องสำหรับเจ้าหน้าที่",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff` ใน case-service โดยบังคับ `province_id` "
+        "และรองรับ filter เพิ่มเติมจาก case_number, current_status, firstname, lastname, cid, "
+        "datetime_create, district/subdistrict/postcode พร้อมคืน is_emergency, "
+        "is_existing_case, time_count_process"
+    ),
+    response_model=CaseForStaffListResponse,
+    dependencies=_v1_api_key,
+)
+async def list_cases_for_staff(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    case_number: Optional[str] = Query(None, description="ค้นหาจากเลข case"),
+    current_status: Optional[str] = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    firstname: Optional[str] = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: Optional[str] = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: Optional[str] = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: Optional[date] = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: Optional[str] = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: Optional[int] = Query(None, description="กรองตามอำเภอ"),
+    district_name: Optional[str] = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: Optional[int] = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: Optional[str] = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: Optional[int] = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
+    postcode: Optional[str] = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+) -> CaseForStaffListResponse:
+    base = settings.case_service_url.rstrip("/")
+    params = {
+        "province_id": province_id,
+        "case_number": case_number,
+        "current_status": current_status,
+        "firstname": firstname,
+        "lastname": lastname,
+        "cid": cid,
+        "datetime_create": datetime_create.isoformat() if datetime_create is not None else None,
+        "province_name": province_name,
+        "district_id": district_id,
+        "district_name": district_name,
+        "subdistrict_id": subdistrict_id,
+        "subdistrict_name": subdistrict_name,
+        "subdistrict_postcode_id": subdistrict_postcode_id,
+        "postcode": postcode,
+    }
+    query_string = urlencode({k: v for k, v in params.items() if v is not None})
+    data = await _get(f"{base}/v1/case_for_staff?{query_string}")
+    return CaseForStaffListResponse.model_validate(
+        {
+            **data,
+            "items": [CaseForStaffListItem.model_validate(item) for item in data.get("items", [])],
+        }
+    )
 
 
 @router.get(
