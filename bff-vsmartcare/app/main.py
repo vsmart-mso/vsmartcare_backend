@@ -801,6 +801,65 @@ async def create_notification(body: CreateNotificationRequest):
     return await _post(f"{settings.notification_service_url}/v1/notifications", json=body.model_dump())
 
 
+@router.get(
+    "/v1/auth/thaid/login",
+    tags=["auth"],
+    summary="ThaiD login (เบราว์เซอร์เปิดตรง → 302 redirect)",
+    description=(
+        "สำหรับให้เบราว์เซอร์ navigate มาตรงๆ — ส่งต่อ GET ไป thaid-auth-service "
+        "แล้ว proxy 302 redirect ไป ThaiD authorization URL ให้เบราว์เซอร์ follow ต่อ "
+        "(ไม่ต้อง X-API-Key เพราะเบราว์เซอร์เปิดโดยตรง เหมือน callback)"
+    ),
+)
+async def thaid_login_redirect(
+    post_login_redirect: Optional[str] = None,
+    browser_oauth_base: Optional[str] = None,
+):
+    """
+    รับ query params แล้วโยงต่อ GET /v1/auth/thaid/login ของ thaid-auth-service
+    ซึ่งจะ 302 → ThaiD authorization URL — BFF proxy 302 นั้นกลับให้เบราว์เซอร์ follow ต่อ
+    (ไม่ follow_redirects เองเพราะจะทำให้ BFF ดึงหน้า ThaiD ฝั่ง server แทน)
+    """
+    from urllib.parse import urlencode
+
+    base = settings.thaid_auth_service_url.strip().rstrip("/")
+    if not base:
+        raise HTTPException(status_code=500, detail="thaid_auth_service_url_not_configured")
+
+    params: dict[str, str] = {}
+    if post_login_redirect:
+        params["post_login_redirect"] = post_login_redirect
+    if browser_oauth_base:
+        params["browser_oauth_base"] = browser_oauth_base
+
+    url = f"{base}/v1/auth/thaid/login"
+    if params:
+        url = f"{url}?{urlencode(params)}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(url, follow_redirects=False)
+
+    if r.status_code in (301, 302, 303, 307, 308):
+        loc = r.headers.get("location")
+        if not loc:
+            raise HTTPException(status_code=502, detail="upstream_redirect_without_location")
+        return RedirectResponse(url=loc, status_code=r.status_code)
+
+    ct = (r.headers.get("content-type") or "").lower()
+    if r.status_code >= 400:
+        detail: Any = r.text
+        try:
+            if "application/json" in ct:
+                detail = r.json()
+        except ValueError:
+            pass
+        raise HTTPException(status_code=r.status_code, detail=detail)
+
+    if "application/json" in ct:
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    return JSONResponse(content={"raw": r.text}, status_code=r.status_code)
+
+
 @router.post(
     "/v1/auth/thaid/login",
     tags=["auth"],
