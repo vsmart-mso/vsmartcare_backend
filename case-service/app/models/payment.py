@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -27,7 +27,7 @@ class ApproveCase(Base):
         index=True,
     )
     approve_status: Mapped[bool] = mapped_column(default=False, nullable=False)
-    esignature: Mapped[str | None] = mapped_column(String(1024))
+    esignature: Mapped[str | None] = mapped_column(Text)
     user_sdshv: Mapped[str | None] = mapped_column(String(255))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="approve_cases")

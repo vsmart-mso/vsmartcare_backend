@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ApproveCaseBase(BaseModel):
     applicant_id: int
     approve_status: bool = False
-    esignature: str | None = Field(None, max_length=1024)
+    esignature: str | None = None
     user_sdshv: str | None = Field(None, max_length=255)
 
 

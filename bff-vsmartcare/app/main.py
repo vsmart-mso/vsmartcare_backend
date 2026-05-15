@@ -359,6 +359,13 @@ class CaseForStaffApplicantStaffFieldsUpdateBody(BaseModel):
     )
 
 
+class ApproveCaseCreateBody(BaseModel):
+    applicant_id: int = Field(..., ge=1)
+    approve_status: bool = False
+    esignature: Optional[str] = None
+    user_sdshv: Optional[str] = Field(None, max_length=255)
+
+
 @router.post(
     "/v1/cases",
     tags=["cases"],
@@ -567,6 +574,32 @@ async def create_case_for_staff_welfare_request_status(body: CaseForStaffWelfare
 async def get_case_for_staff_por_kor_1_detail(applicant_id: int = Query(..., ge=1)) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/case_for_staff/por-kor-1-detail?applicant_id={applicant_id}")
+
+
+@router.post(
+    "/v1/case_for_staff/approve-case",
+    tags=["case_for_staff"],
+    summary="บันทึกการอนุมัติเคส (approve_case)",
+    description="ส่งต่อ `POST …/v1/case_for_staff/approve-case` — บันทึกข้อมูลประวัติ ลายเซ็นอิเล็กทรอนิกส์",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_approve_case_for_staff(body: ApproveCaseCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(f"{base}/v1/case_for_staff/approve-case", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/approve-case",
+    tags=["case_for_staff"],
+    summary="ดึงประวัติการอนุมัติเคส",
+    description="ส่งต่อ `GET …/v1/case_for_staff/approve-case?applicant_id=…` — คืนประวัติล่าสุดของเคส",
+    dependencies=_v1_api_key,
+)
+async def list_approve_case_for_staff(applicant_id: int = Query(..., ge=1)) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/approve-case?applicant_id={applicant_id}")
 
 
 @router.get(

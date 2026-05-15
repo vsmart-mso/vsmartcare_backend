@@ -17,7 +17,9 @@ from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrict
 from ...models.lookup import CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
+from ...models.payment import ApproveCase
 from ...schemas.address import AddressRead
+from ...schemas.payment import ApproveCaseCreate, ApproveCaseRead
 from ...schemas.case_for_staff import (
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffApplicantStaffFieldsUpdate,
@@ -561,3 +563,51 @@ async def get_por_kor_1_case_detail_for_staff(
 
     case_read = await applicant_to_case_read(row)
     return _build_por_kor_1_detail(case_read, row)
+
+
+@router.post(
+    "/approve-case",
+    response_model=ApproveCaseRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึกการอนุมัติเคส (approve_case)",
+    description="บันทึกประวัติการอนุมัติเคส ลายเซ็น และสถานะการอนุมัติของแต่ละ applicant",
+)
+async def create_approve_case_for_staff(
+    body: ApproveCaseCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ApproveCaseRead:
+    applicant = await session.get(Applicant, body.applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    row = ApproveCase(
+        applicant_id=body.applicant_id,
+        approve_status=body.approve_status,
+        esignature=body.esignature,
+        user_sdshv=body.user_sdshv,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return ApproveCaseRead.model_validate(row)
+
+
+@router.get(
+    "/approve-case",
+    response_model=list[ApproveCaseRead],
+    summary="ดึงประวัติการอนุมัติเคส",
+    description="ดึงประวัติการอนุมัติของเคสตาม applicant_id เรียงตามเวลาล่าสุด",
+)
+async def list_approve_case_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    session: AsyncSession = Depends(get_session),
+) -> list[ApproveCaseRead]:
+    stmt = (
+        select(ApproveCase)
+        .where(ApproveCase.applicant_id == applicant_id)
+        .order_by(ApproveCase.id.desc())
+    )
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    return [ApproveCaseRead.model_validate(r) for r in rows]
+
