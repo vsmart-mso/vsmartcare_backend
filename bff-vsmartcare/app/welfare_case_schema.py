@@ -19,6 +19,8 @@ class WelfareApplicantUpsert(BaseModel):
     problem_details: str | None = None
     bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
+    type_money_category_id: int | None = Field(None, ge=1)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
     age: int | None = Field(None, ge=0)
 
 

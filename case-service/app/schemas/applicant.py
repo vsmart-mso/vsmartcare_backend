@@ -26,6 +26,8 @@ class ApplicantBase(BaseModel):
 
     bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
+    type_money_category_id: int | None = Field(None, ge=1)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
 
     time_count_process: int | None = Field(None, ge=0)
 
@@ -50,6 +52,8 @@ class ApplicantUpdate(BaseModel):
     is_government_officer: bool | None = None
     bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)
+    type_money_category_id: int | None = Field(None, ge=1)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
     time_count_process: int | None = Field(None, ge=0)
     is_emergency: bool | None = None
     is_existing_case: bool | None = None

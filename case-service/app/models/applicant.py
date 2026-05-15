@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from .address import Address
     from .dependency import DependencyLoad
     from .economic import EconomicInfo
-    from .lookup import BankName, MaritalStatusType, RequesterRelationType
+    from .lookup import BankName, MaritalStatusType, RequesterRelationType, TypeMoneyCategory
+    from .payment import ApproveCase, WelfarePayment
     from .person import Person
     from .status_log import WelfareRequestStatus
     from .welfare import (
@@ -75,6 +76,11 @@ class Applicant(Base):
         index=True,
     )
     bank_account_no: Mapped[str | None] = mapped_column(String(50))
+    type_money_category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("type_money_category.id"),
+        index=True,
+    )
+    sw_explorer_sdshv: Mapped[str | None] = mapped_column(String(255))
 
     time_count_process: Mapped[int | None] = mapped_column()
 
@@ -90,6 +96,10 @@ class Applicant(Base):
     )
     marital_status: Mapped["MaritalStatusType"] = relationship(lazy="selectin")
     bank_name: Mapped["BankName | None"] = relationship(
+        back_populates="applicants",
+        lazy="selectin",
+    )
+    type_money_category: Mapped["TypeMoneyCategory | None"] = relationship(
         back_populates="applicants",
         lazy="selectin",
     )
@@ -123,4 +133,12 @@ class Applicant(Base):
         back_populates="applicant",
         cascade="all, delete-orphan",
         order_by="WelfareRequestStatus.updated_at.desc()",
+    )
+    approve_cases: Mapped[list["ApproveCase"]] = relationship(
+        back_populates="applicant",
+        cascade="all, delete-orphan",
+    )
+    welfare_payments: Mapped[list["WelfarePayment"]] = relationship(
+        back_populates="applicant",
+        cascade="all, delete-orphan",
     )

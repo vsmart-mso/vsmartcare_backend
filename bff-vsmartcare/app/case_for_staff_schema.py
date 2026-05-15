@@ -8,8 +8,15 @@ from pydantic import BaseModel, Field
 
 
 class CaseForStaffRead(BaseModel):
+    applicant_id: int
     case_number: str | None = Field(None, max_length=100)
+    current_status_id: int | None = None
     current_status: str | None = None
+    type_money_id: int | None = None
+    type_money_id_name: str | None = Field(None, max_length=255)
+    type_money_id_color: str | None = Field(None, max_length=32)
+    type_money_name_acronym: str | None = Field(None, max_length=255)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
     firstname: str = Field(..., min_length=1, max_length=255)
     lastname: str = Field(..., min_length=1, max_length=255)
     cid: str = Field(..., min_length=13, max_length=13)

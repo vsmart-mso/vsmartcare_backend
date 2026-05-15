@@ -354,3 +354,4 @@ async def get_address_type(
     return await _get_row(
         session, AddressType, AddressTypeRead, address_type_id, "address_type_not_found"
     )
+

@@ -4,10 +4,12 @@ from datetime import date, datetime
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
+import json
+
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -122,6 +124,29 @@ def readyz():
     return {"ok": True}
 
 
+def _http_error_detail_from_response(r: httpx.Response) -> Any:
+    """ดึง detail จาก body JSON ของ downstream — ลดกรณี detail เป็น string JSON ซ้อน."""
+    detail: Any = r.text
+    ct = (r.headers.get("content-type") or "").lower()
+    if "application/json" not in ct:
+        return detail
+    try:
+        body = r.json()
+    except ValueError:
+        return detail
+    if not isinstance(body, dict):
+        return body
+    d = body.get("detail", body)
+    if isinstance(d, str) and d.strip().startswith("{"):
+        try:
+            inner = json.loads(d)
+            if isinstance(inner, dict) and "detail" in inner:
+                return inner["detail"]
+        except json.JSONDecodeError:
+            pass
+    return d
+
+
 async def _post(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
     """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -161,8 +186,17 @@ async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.get(url, headers=headers)
         if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
+
+
+async def _get_raw(url: str, *, timeout: float = 60.0) -> httpx.Response:
+    """GET แบบคืน Response ดิบ (ใช้โหลดไฟล์ไบนารี)."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.get(url)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
+        return r
 
 
 async def _delete(url: str, *, timeout: float = 30.0) -> Any:
@@ -296,6 +330,13 @@ class ApplicantDeleteByCidResponse(BaseModel):
     deleted_welfare_request_consent_count: int = Field(..., ge=0)
 
 
+class CaseForStaffWelfareRequestStatusBody(BaseModel):
+    applicant_id: int = Field(..., ge=1)
+    current_status_id: int = Field(..., ge=1)
+    remarks: Optional[str] = None
+    update_by_sdshv: Optional[str] = Field(None, max_length=255)
+
+
 @router.post(
     "/v1/cases",
     tags=["cases"],
@@ -363,7 +404,7 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff` ใน case-service โดยบังคับ `province_id` "
         "และรองรับ filter เพิ่มเติมจาก case_number, current_status, firstname, lastname, cid, "
-        "datetime_create, district/subdistrict/postcode พร้อมคืน is_emergency, "
+        "datetime_create, district/subdistrict/postcode, type_money_id (type_money_category) พร้อมคืน is_emergency, "
         "is_existing_case, time_count_process"
     ),
     response_model=CaseForStaffListResponse,
@@ -384,6 +425,7 @@ async def list_cases_for_staff(
     subdistrict_name: Optional[str] = Query(None, description="ค้นหาจากชื่อตำบล"),
     subdistrict_postcode_id: Optional[int] = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
     postcode: Optional[str] = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    type_money_id: Optional[int] = Query(None, description="กรองตาม type_money_category.id"),
 ) -> CaseForStaffListResponse:
     base = settings.case_service_url.rstrip("/")
     params = {
@@ -401,6 +443,7 @@ async def list_cases_for_staff(
         "subdistrict_name": subdistrict_name,
         "subdistrict_postcode_id": subdistrict_postcode_id,
         "postcode": postcode,
+        "type_money_id": type_money_id,
     }
     query_string = urlencode({k: v for k, v in params.items() if v is not None})
     data = await _get(f"{base}/v1/case_for_staff?{query_string}")
@@ -413,6 +456,76 @@ async def list_cases_for_staff(
 
 
 @router.get(
+    "/v1/case_for_staff/type-money-categories",
+    tags=["case_for_staff"],
+    summary="ประเภทเงินช่วยเหลือสำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def list_type_money_categories_for_staff():
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/type-money-categories")
+
+
+@router.get(
+    "/v1/case_for_staff/type-money-categories/{type_money_category_id}",
+    tags=["case_for_staff"],
+    summary="ดึงประเภทเงินช่วยเหลือตาม id สำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def get_type_money_category_for_staff(type_money_category_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/type-money-categories/{type_money_category_id}")
+
+
+@router.get(
+    "/v1/case_for_staff/current-status",
+    tags=["case_for_staff"],
+    summary="สถานะคำร้องสำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def list_current_status_for_staff():
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/current-status")
+
+
+@router.get(
+    "/v1/case_for_staff/current-status/{current_status_id}",
+    tags=["case_for_staff"],
+    summary="ดึงสถานะคำร้องตาม id สำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def get_current_status_for_staff(current_status_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/current-status/{current_status_id}")
+
+
+@router.post(
+    "/v1/case_for_staff/welfare-request-status",
+    tags=["case_for_staff"],
+    summary="บันทึกสถานะคำร้อง (welfare_request_status)",
+    description="ส่งต่อ `POST …/v1/case_for_staff/welfare-request-status` — รับ applicant_id และ current_status_id",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_case_for_staff_welfare_request_status(body: CaseForStaffWelfareRequestStatusBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(f"{base}/v1/case_for_staff/welfare-request-status", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/por-kor-1-detail",
+    tags=["case_for_staff"],
+    summary="รายละเอียดคำร้อง ปศค 1 (รวม path ดึงรูปหลักฐาน)",
+    description="ส่งต่อ `GET …/v1/case_for_staff/por-kor-1-detail?applicant_id=…` — ข้อมูลจัดกลุ่ม (บุคคล ที่อยู่ ฯลฯ) พร้อม evidences + view_path",
+    dependencies=_v1_api_key,
+)
+async def get_case_for_staff_por_kor_1_detail(applicant_id: int = Query(..., ge=1)) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/por-kor-1-detail?applicant_id={applicant_id}")
+
+
+@router.get(
     "/v1/cases/{applicant_id}",
     tags=["cases"],
     summary="ดึงคำร้องตาม applicant_id",
@@ -422,6 +535,26 @@ async def list_cases_for_staff(
 async def get_case(applicant_id: int) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/cases/{applicant_id}")
+
+
+@router.get(
+    "/v1/cases/{applicant_id}/evidences/{evidence_id}/file",
+    tags=["cases"],
+    summary="ดาวน์โหลดไฟล์หลักฐาน (รูป)",
+    description="ส่งต่อ `GET …/v1/cases/{applicant_id}/evidences/{evidence_id}/file` ใน case-service",
+    dependencies=_v1_api_key,
+)
+async def get_case_evidence_file(applicant_id: int, evidence_id: int) -> Response:
+    base = settings.case_service_url.rstrip("/")
+    r = await _get_raw(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}/file")
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "application/octet-stream"),
+        headers=out_headers,
+    )
 
 
 @router.delete(
