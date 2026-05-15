@@ -9,6 +9,11 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import base64
+import uuid
+from pathlib import Path
+
+from ...settings import resolved_upload_root
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
 from ...core.database import get_session
 from ...models.address import Address
@@ -51,6 +56,65 @@ from ...schemas.welfare import (
     WelfareHistoryDetailRead,
     WelfareRequestTypeRead,
 )
+
+
+def _save_esignature_base64(applicant_id: int, base64_str: str | None) -> str | None:
+    """แปลง Base64 data URL ของลายเซ็นให้กลายเป็นไฟล์รูปภาพเก็บลง Disk และคืนค่า Relative Path (Prototype)"""
+    if not base64_str or not base64_str.startswith("data:image/"):
+        return base64_str
+
+    try:
+        header, encoded = base64_str.split(",", 1)
+        ext = ".png"
+        if "image/jpeg" in header:
+            ext = ".jpg"
+        elif "image/webp" in header:
+            ext = ".webp"
+
+        image_data = base64.b64decode(encoded)
+        
+        base_path = resolved_upload_root()
+        dest_dir = (base_path / "signatures" / str(applicant_id)).resolve()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{uuid.uuid4().hex}{ext}"
+        file_path = dest_dir / filename
+        file_path.write_bytes(image_data)
+
+        # เก็บเฉพาะ relative path จาก upload root ลงในฐานข้อมูล
+        return f"signatures/{applicant_id}/{filename}"
+    except Exception:
+        # Fallback: หากเกิดปัญหา ให้ยอมเก็บ Base64 ตัวเดิมลง DB เพื่อไม่ให้ระบบล่ม
+        return base64_str
+
+
+def _load_esignature_base64(esignature_path: str | None) -> str | None:
+    """อ่านไฟล์ภาพลายเซ็นและแปลงกลับเป็น Base64 data URL ส่งให้ frontend (Transparent Wrapper)"""
+    if not esignature_path or esignature_path.startswith("data:image/"):
+        return esignature_path
+
+    try:
+        base_path = resolved_upload_root()
+        full_path = (base_path / esignature_path).resolve()
+        
+        # ตรวจเช็ค Path Traversal ป้องกันด้านความปลอดภัย
+        full_path.relative_to(base_path.resolve())
+
+        if full_path.exists() and full_path.is_file():
+            ext = full_path.suffix.lower()
+            mime_type = "image/png"
+            if ext in [".jpg", ".jpeg"]:
+                mime_type = "image/jpeg"
+            elif ext == ".webp":
+                mime_type = "image/webp"
+
+            binary_data = full_path.read_bytes()
+            encoded = base64.b64encode(binary_data).decode("utf-8")
+            return f"data:{mime_type};base64,{encoded}"
+    except Exception:
+        pass
+    return esignature_path
+
 
 router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
 
@@ -580,16 +644,36 @@ async def create_approve_case_for_staff(
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
+    # 1. บันทึกลายเซ็นลง Disk แทนการยัด Base64 ลง DB โดยตรง เพื่อแก้ปัญหา DB Bloat
+    final_esign = _save_esignature_base64(body.applicant_id, body.esignature)
+
     row = ApproveCase(
         applicant_id=body.applicant_id,
         approve_status=body.approve_status,
-        esignature=body.esignature,
+        esignature=final_esign,
         user_sdshv=body.user_sdshv,
     )
     session.add(row)
+
+    # 2. อัปเดตประวัติสถานะ (Workflow Auto-transition)
+    # อนุมัติ (True) -> ID 3: อยู่ระหว่างการเบิก
+    # ปฏิเสธ (False) -> ID 8: ดำเนินการแก้ไขข้อมูล
+    new_status_id = 3 if body.approve_status else 8
+    status_log = WelfareRequestStatus(
+        applicant_id=body.applicant_id,
+        current_status_id=new_status_id,
+        remarks="บันทึกผลการอนุมัติเคสสำเร็จ" if body.approve_status else "ปฏิเสธคำร้องขอสวัสดิการ",
+        update_by_sdshv=body.user_sdshv,
+    )
+    session.add(status_log)
+
     await session.commit()
     await session.refresh(row)
-    return ApproveCaseRead.model_validate(row)
+
+    # ดึงข้อมูลและแปลง File Path กลับไปเป็น Base64 เพื่อรักษาความเข้ากันได้หน้าบ้านเดิม
+    res_data = ApproveCaseRead.model_validate(row)
+    res_data.esignature = _load_esignature_base64(res_data.esignature)
+    return res_data
 
 
 @router.get(
@@ -609,5 +693,12 @@ async def list_approve_case_for_staff(
     )
     result = await session.execute(stmt)
     rows = result.scalars().all()
-    return [ApproveCaseRead.model_validate(r) for r in rows]
+
+    # วนลูปแปลง File Path กลับเป็น Base64 ให้แอปส่วนหน้าที่เป็น Legacy ใช้งานต่อได้โดยไม่ต้องแก้โค้ดดึงภาพ
+    res_list = []
+    for r in rows:
+        d = ApproveCaseRead.model_validate(r)
+        d.esignature = _load_esignature_base64(d.esignature)
+        res_list.append(d)
+    return res_list
 
