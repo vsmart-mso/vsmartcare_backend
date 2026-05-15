@@ -134,6 +134,7 @@ class CurrentStatusBase(BaseModel):
     dropdown_activate: bool = False
     filter_order: int = Field(..., ge=0)
     filter_activate: bool = True
+    vsmart_id: int = Field(..., ge=1)
 
 
 class CurrentStatusCreate(CurrentStatusBase):
