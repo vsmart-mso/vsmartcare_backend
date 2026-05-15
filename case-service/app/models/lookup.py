@@ -129,3 +129,4 @@ class CurrentStatus(Base):
     dropdown_activate: Mapped[bool] = mapped_column(default=False, nullable=False)
     filter_order: Mapped[int] = mapped_column(nullable=False)
     filter_activate: Mapped[bool] = mapped_column(default=True, nullable=False)
+    vsmart_id: Mapped[int] = mapped_column(nullable=False)

@@ -178,7 +178,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # ลบเฉพาะ id ที่ seed ไว้ (กันกระทบข้อมูลอื่นที่เพิ่มภายหลัง)
-    op.execute(sa.text("DELETE FROM current_status WHERE id IN (1,2,3,4,5)"))
+    op.execute(sa.text("DELETE FROM current_status WHERE id IN (1,2,3,4,5,6,7,8,9)"))
     op.execute(sa.text("DELETE FROM address_type WHERE id IN (1)"))
     op.execute(sa.text("DELETE FROM income_source_types WHERE id IN (1,2,3,99)"))
     op.execute(sa.text("DELETE FROM housing_types WHERE id IN (1,2,3,99)"))
