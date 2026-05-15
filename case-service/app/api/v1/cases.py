@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
+from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo
 from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
@@ -40,6 +41,7 @@ from ...schemas.case_welfare import (
 )
 from ...schemas.lookup import CurrentStatusRead
 from ...services.case_number import allocate_case_number
+from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
 from ...schemas.status_log import WelfareRequestStatusRead
@@ -75,16 +77,26 @@ def _dedupe_preserve_order(ids: list[int]) -> list[int]:
 def _applicant_load_options():  # noqa: ANN001
     return [
         selectinload(Applicant.person),
+        selectinload(Applicant.type_money_category),
         selectinload(Applicant.requester_relation_type),
         selectinload(Applicant.marital_status),
         selectinload(Applicant.bank_name),
         selectinload(Applicant.addresses).selectinload(Address.address_type),
-        selectinload(Applicant.addresses).selectinload(Address.sub_district_postcode),
+        selectinload(Applicant.addresses)
+        .selectinload(Address.sub_district_postcode)
+        .selectinload(SubDistrictPostcode.sub_district)
+        .selectinload(SubDistrict.district)
+        .selectinload(District.province),
+        selectinload(Applicant.addresses)
+        .selectinload(Address.sub_district_postcode)
+        .selectinload(SubDistrictPostcode.postcode),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.income_sources),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.housing_type),
         selectinload(Applicant.dependency_loads),
         selectinload(Applicant.welfare_request_types),
-        selectinload(Applicant.welfare_history).selectinload(WelfareHistory.history_details),
+        selectinload(Applicant.welfare_history)
+        .selectinload(WelfareHistory.history_details)
+        .selectinload(WelfareHistoryDetail.received_welfare_type),
         selectinload(Applicant.welfare_evidences).selectinload(WelfareEvidence.attachment_type),
         selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.current_status),
     ]
@@ -433,6 +445,12 @@ async def upload_welfare_evidence_image(
     if row_check.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
 
+    normalized_other_name = await validate_welfare_evidence_upload(
+        session,
+        attachment_type_id,
+        file_other_type_name,
+    )
+
     raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
     if raw_content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
@@ -467,7 +485,7 @@ async def upload_welfare_evidence_image(
         file_original_name=file.filename,
         file_stored_name=stored,
         file_size=len(blob),
-        file_other_type_name=file_other_type_name,
+        file_other_type_name=normalized_other_name,
     )
     session.add(evidence)
     try:

@@ -181,6 +181,15 @@ async def _post_evidence_multipart(
         return r.json()
 
 
+async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+    """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.patch(url, json=json)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
+        return r.json()
+
+
 async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -335,6 +344,19 @@ class CaseForStaffWelfareRequestStatusBody(BaseModel):
     current_status_id: int = Field(..., ge=1)
     remarks: Optional[str] = None
     update_by_sdshv: Optional[str] = Field(None, max_length=255)
+
+
+class CaseForStaffApplicantStaffFieldsUpdateBody(BaseModel):
+    type_money_category_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="ประเภทเงินช่วยเหลือ — ส่ง null เพื่อล้างค่า",
+    )
+    sw_explorer_sdshv: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="รหัส/ชื่อผู้สำรวจ SDSHV — ส่ง null เพื่อล้างค่า",
+    )
 
 
 @router.post(
@@ -497,6 +519,28 @@ async def list_current_status_for_staff():
 async def get_current_status_for_staff(current_status_id: int):
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/case_for_staff/current-status/{current_status_id}")
+
+
+@router.patch(
+    "/v1/case_for_staff/applicant-staff-fields",
+    tags=["case_for_staff"],
+    summary="อัปเดตประเภทเงิน / ผู้สำรวจ SDSHV (applicants)",
+    description=(
+        "ส่งต่อ `PATCH …/v1/case_for_staff/applicant-staff-fields?applicant_id=…` — "
+        "อัปเดต `type_money_category_id` และ/หรือ `sw_explorer_sdshv` ในตาราง applicants"
+    ),
+    dependencies=_v1_api_key,
+)
+async def update_case_for_staff_applicant_staff_fields(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: CaseForStaffApplicantStaffFieldsUpdateBody = ...,
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True)
+    return await _patch(
+        f"{base}/v1/case_for_staff/applicant-staff-fields?applicant_id={applicant_id}",
+        json=payload,
+    )
 
 
 @router.post(
