@@ -53,7 +53,7 @@ class RequestType(LookupMixin, Base):
 
 
 class AttachmentType(LookupMixin, Base):
-    """ประเภทเอกสารแนบ — บัตรประชาชน, ทะเบียนบ้าน ฯลฯ"""
+    """ประเภทเอกสารแนบ — รูปหน้าสมุดบัญชี, รูปสมาชิกในครอบครัว (8), รูปอื่น ๆ (99) ฯลฯ"""
 
     __tablename__ = "attachment_types"
 

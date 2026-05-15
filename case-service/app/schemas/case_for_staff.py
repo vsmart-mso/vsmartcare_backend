@@ -14,6 +14,7 @@ from .person import PersonRead
 from .status_log import WelfareRequestStatusRead
 from .welfare import (
     WelfareEvidenceRead,
+    WelfareHistoryDetailRead,
     WelfareHistoryRead,
     WelfareRequestTypeRead,
 )
@@ -63,6 +64,33 @@ class CaseForStaffWelfareRequestStatusCreate(BaseModel):
     update_by_sdshv: str | None = Field(None, max_length=255)
 
 
+class CaseForStaffApplicantStaffFieldsUpdate(BaseModel):
+    """อัปเดตฟิลด์ฝั่งเจ้าหน้าที่บนตาราง applicants — ส่งเฉพาะฟิลด์ที่ต้องการเปลี่ยน."""
+
+    type_money_category_id: int | None = Field(
+        None,
+        ge=1,
+        description="ประเภทเงินช่วยเหลือ — ส่ง null เพื่อล้างค่า",
+    )
+    sw_explorer_sdshv: str | None = Field(
+        None,
+        max_length=255,
+        description="รหัส/ชื่อผู้สำรวจ SDSHV — ส่ง null เพื่อล้างค่า",
+    )
+
+
+class CaseForStaffApplicantStaffFieldsRead(BaseModel):
+    """ผลลัพธ์หลังอัปเดต type_money_category_id / sw_explorer_sdshv."""
+
+    applicant_id: int
+    type_money_category_id: int | None = None
+    type_money_name: str | None = Field(None, max_length=255)
+    type_money_name_acronym: str | None = Field(None, max_length=255)
+    type_money_color: str | None = Field(None, max_length=32)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
+    updated_at: datetime
+
+
 class PorKor1TypeMoney(BaseModel):
     """ประเภทเงินช่วยเหลือจาก applicants.type_money_category_id + master — ไม่ใช้เมื่อ FK ว่าง."""
 
@@ -110,6 +138,13 @@ class PorKor1AddressItem(BaseModel):
 
     address: AddressRead
     address_type_name: str | None = Field(None, max_length=255)
+    province_id: int | None = Field(None, description="รหัสจังหวัดจาก master (ผ่าน sub_districts_postcode)")
+    province_name: str | None = Field(None, max_length=255)
+    district_id: int | None = Field(None, description="รหัสอำเภอจาก master")
+    district_name: str | None = Field(None, max_length=255)
+    subdistrict_id: int | None = Field(None, description="รหัสตำบลจาก master")
+    subdistrict_name: str | None = Field(None, max_length=255)
+    postcode: str | None = Field(None, max_length=10, description="รหัสไปรษณีย์ (ค่าจากตาราง postcode.name)")
 
 
 class PorKor1DependencyItem(BaseModel):
@@ -131,6 +166,22 @@ class PorKor1WelfareRequestTypeItem(BaseModel):
 
     item: WelfareRequestTypeRead
     request_type_name: str | None = Field(None, max_length=255)
+
+
+class PorKor1WelfareHistoryDetailRead(WelfareHistoryDetailRead):
+    """รายการประวัติสวัสดิการ — ฟิลด์เดิมของ WelfareHistoryDetailRead + ชื่อ master."""
+
+    received_welfare_type_name: str | None = Field(
+        None,
+        max_length=255,
+        description="ชื่อจากตาราง received_welfare_types",
+    )
+
+
+class PorKor1WelfareHistoryRead(WelfareHistoryRead):
+    """ประวัติการรับสวัสดิการในอดีต — history_details มี received_welfare_type_name."""
+
+    history_details: list[PorKor1WelfareHistoryDetailRead] = Field(default_factory=list)
 
 
 class PorKor1WelfareRequestStatusSection(BaseModel):
@@ -173,9 +224,9 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
         default_factory=list,
         description="ประเภทคำร้องที่ขอ",
     )
-    welfare_history: WelfareHistoryRead | None = Field(
+    welfare_history: PorKor1WelfareHistoryRead | None = Field(
         None,
-        description="ประวัติการรับสวัสดิการในอดีต",
+        description="ประวัติการรับสวัสดิการในอดีต — แต่ละ history_details มี received_welfare_type_name",
     )
     welfare_request_status: PorKor1WelfareRequestStatusSection = Field(
         ...,

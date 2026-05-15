@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
 from ...core.database import get_session
-from ...settings import settings
 from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
@@ -20,6 +19,8 @@ from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...schemas.address import AddressRead
 from ...schemas.case_for_staff import (
+    CaseForStaffApplicantStaffFieldsRead,
+    CaseForStaffApplicantStaffFieldsUpdate,
     CaseForStaffListResponse,
     CaseForStaffPorKor1DetailResponse,
     CaseForStaffRead,
@@ -32,6 +33,8 @@ from ...schemas.case_for_staff import (
     PorKor1PersonSection,
     PorKor1Summary,
     PorKor1TypeMoney,
+    PorKor1WelfareHistoryDetailRead,
+    PorKor1WelfareHistoryRead,
     PorKor1WelfareRequestStatusSection,
     PorKor1WelfareRequestTypeItem,
 )
@@ -41,23 +44,45 @@ from ...schemas.economic import EconomicInfoRead
 from ...schemas.lookup import CurrentStatusRead, TypeMoneyCategoryRead
 from ...schemas.person import PersonRead
 from ...schemas.status_log import WelfareRequestStatusRead
-from ...schemas.welfare import WelfareEvidenceRead, WelfareRequestTypeRead
+from ...schemas.welfare import (
+    WelfareEvidenceRead,
+    WelfareHistoryDetailRead,
+    WelfareRequestTypeRead,
+)
 
 router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
 
-def _normalize_type_money_acronym(value: str | None) -> str:
-    """ตัดช่องว่างหัวท้ายและรวมช่องว่างภายในสำหรับเทียบ name_acronym (เช่น 'ปศค  1' ≈ 'ปศค 1')."""
-    if not value:
-        return ""
-    return "".join(value.split())
-
-
-def _type_money_category_is_por_kor_1(category: TypeMoneyCategory | None) -> bool:
-    if category is None:
-        return False
-    expected = _normalize_type_money_acronym(settings.por_kor_1_name_acronym)
-    actual = _normalize_type_money_acronym(category.name_acronym)
-    return actual.casefold() == expected.casefold()
+def _por_kor_1_address_geo(a: Address) -> tuple[
+    int | None,
+    str | None,
+    int | None,
+    str | None,
+    int | None,
+    str | None,
+    str | None,
+]:
+    """ดึงจังหวัด/อำเภอ/ตำบล/รหัสไปรษณีย์จากความสัมพันธ์ sub_district_postcode (ต้อง selectinload แล้ว)."""
+    sdp = a.sub_district_postcode
+    if sdp is None:
+        return (None, None, None, None, None, None, None)
+    sub = sdp.sub_district
+    if sub is None:
+        pc = sdp.postcode
+        postcode_str = pc.name if pc is not None else None
+        return (None, None, None, None, None, None, postcode_str)
+    dist = sub.district
+    prov = dist.province if dist is not None else None
+    pc = sdp.postcode
+    postcode_str = pc.name if pc is not None else None
+    return (
+        prov.id if prov is not None else None,
+        prov.name if prov is not None else None,
+        dist.id if dist is not None else None,
+        dist.name if dist is not None else None,
+        sub.id,
+        sub.name,
+        postcode_str,
+    )
 
 
 def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForStaffPorKor1DetailResponse:
@@ -98,13 +123,22 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         bank_name=orm.bank_name.name if orm.bank_name else None,
     )
 
-    addresses = [
-        PorKor1AddressItem(
-            address=AddressRead.model_validate(a),
-            address_type_name=a.address_type.name if a.address_type else None,
+    addresses = []
+    for a in sorted(orm.addresses, key=lambda x: x.id):
+        pid, pname, did, dname, sid, sname, pcode = _por_kor_1_address_geo(a)
+        addresses.append(
+            PorKor1AddressItem(
+                address=AddressRead.model_validate(a),
+                address_type_name=a.address_type.name if a.address_type else None,
+                province_id=pid,
+                province_name=pname,
+                district_id=did,
+                district_name=dname,
+                subdistrict_id=sid,
+                subdistrict_name=sname,
+                postcode=pcode,
+            )
         )
-        for a in sorted(orm.addresses, key=lambda x: x.id)
-    ]
 
     dependency_loads = [
         PorKor1DependencyItem(
@@ -135,6 +169,30 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         history=case.welfare_request_status_logs,
     )
 
+    welfare_history_section: PorKor1WelfareHistoryRead | None = None
+    if case.welfare_history is not None and orm.welfare_history is not None:
+        wh_orm = orm.welfare_history
+        welfare_history_section = PorKor1WelfareHistoryRead(
+            applicant_id=case.welfare_history.applicant_id,
+            received_count=case.welfare_history.received_count,
+            has_received_welfare=case.welfare_history.has_received_welfare,
+            total_received_amount=case.welfare_history.total_received_amount,
+            created_at=case.welfare_history.created_at,
+            updated_at=case.welfare_history.updated_at,
+            history_details=[
+                PorKor1WelfareHistoryDetailRead(
+                    **WelfareHistoryDetailRead.model_validate(d).model_dump(),
+                    received_welfare_type_name=(
+                        d.received_welfare_type.name if d.received_welfare_type else None
+                    ),
+                )
+                for d in sorted(
+                    wh_orm.history_details,
+                    key=lambda x: (x.received_welfare_type_id, x.welfare_history_id),
+                )
+            ],
+        )
+
     evidences = [
         PorKor1EvidenceItem(
             evidence=WelfareEvidenceRead.model_validate(ev),
@@ -152,7 +210,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         dependency_loads=dependency_loads,
         economic_infos=economic_infos,
         welfare_request_types=welfare_request_types,
-        welfare_history=case.welfare_history,
+        welfare_history=welfare_history_section,
         welfare_request_status=welfare_request_status,
         evidences=evidences,
     )
@@ -376,6 +434,69 @@ async def get_current_status_for_staff(
     return CurrentStatusRead.model_validate(row)
 
 
+@router.patch(
+    "/applicant-staff-fields",
+    response_model=CaseForStaffApplicantStaffFieldsRead,
+    summary="อัปเดตประเภทเงิน / ผู้สำรวจ SDSHV (applicants)",
+    description=(
+        "ใช้ `applicant_id` (query) หาแถวใน `applicants` แล้วอัปเดตเฉพาะฟิลด์ที่ส่งใน body "
+        "(`type_money_category_id`, `sw_explorer_sdshv`) — ส่ง null เพื่อล้างค่า FK/ข้อความ"
+    ),
+)
+async def update_applicant_staff_fields_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: CaseForStaffApplicantStaffFieldsUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffApplicantStaffFieldsRead:
+    payload = body.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="at_least_one_field_required",
+        )
+
+    applicant = await session.get(
+        Applicant,
+        applicant_id,
+        options=[selectinload(Applicant.type_money_category)],
+    )
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    if "type_money_category_id" in payload:
+        tmc_id = payload["type_money_category_id"]
+        if tmc_id is not None:
+            if await _get_row(session, TypeMoneyCategory, tmc_id) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="type_money_category_not_found",
+                )
+        applicant.type_money_category_id = tmc_id
+
+    if "sw_explorer_sdshv" in payload:
+        applicant.sw_explorer_sdshv = payload["sw_explorer_sdshv"]
+
+    applicant.updated_at = datetime.now()
+    await session.commit()
+    result = await session.execute(
+        select(Applicant)
+        .where(Applicant.id == applicant_id)
+        .options(selectinload(Applicant.type_money_category)),
+    )
+    applicant = result.scalar_one()
+
+    tmc = applicant.type_money_category
+    return CaseForStaffApplicantStaffFieldsRead(
+        applicant_id=applicant.id,
+        type_money_category_id=applicant.type_money_category_id,
+        type_money_name=tmc.name if tmc else None,
+        type_money_name_acronym=tmc.name_acronym if tmc else None,
+        type_money_color=tmc.color if tmc else None,
+        sw_explorer_sdshv=applicant.sw_explorer_sdshv,
+        updated_at=applicant.updated_at,
+    )
+
+
 @router.post(
     "/welfare-request-status",
     response_model=WelfareRequestStatusRead,
@@ -418,8 +539,8 @@ async def create_welfare_request_status_for_staff(
     response_model=CaseForStaffPorKor1DetailResponse,
     summary="รายละเอียดคำร้อง ปศค 1 สำหรับระบบอื่น (จัดกลุ่มข้อมูล)",
     description=(
-        "ดึงข้อมูลคำร้องครบถ้วน — `summary.type_money` เป็น null เมื่อ applicants.type_money_category_id ว่าง "
-        "ถ้ามีประเภทเงินต้องเป็น ปศค 1 ตาม `POR_KOR_1_NAME_ACRONYM` (หลัง normalize ช่องว่าง) "
+        "ดึงข้อมูลคำร้องครบถ้วน (รูปแบบจัดกลุ่มสำหรับ vsmartcare / ปศค 1) — "
+        "`summary.type_money` เป็น null เมื่อ applicants.type_money_category_id ว่าง "
         "จัดเป็นกลุ่ม: สรุปคำร้อง, ข้อมูลบุคคล, ข้อมูลผู้ขอ, ที่อยู่, ภาระเลี้ยงดู, เศรษฐกิจ, "
         "ประเภทคำร้อง, ประวัติสวัสดิการ, สถานะ, หลักฐานพร้อม path สำหรับ GET รูป"
     ),
@@ -432,16 +553,11 @@ async def get_por_kor_1_case_detail_for_staff(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
-    category = row.type_money_category
-
-    if row.type_money_category_id is not None:
-        if category is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="type_money_category_not_found_for_applicant",
-            )
-        if not _type_money_category_is_por_kor_1(category):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_por_kor_1_case")
+    if row.type_money_category_id is not None and row.type_money_category is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="type_money_category_not_found_for_applicant",
+        )
 
     case_read = await applicant_to_case_read(row)
     return _build_por_kor_1_detail(case_read, row)

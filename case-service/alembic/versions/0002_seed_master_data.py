@@ -98,7 +98,8 @@ def upgrade() -> None:
             {"id": 5, "name": "รูปสภาพปัญหาที่ต้องการให้ความช่วยเหลือ"},
             {"id": 6, "name": "รูปทะเบียนบ้าน (รายการเกี่ยวกับบ้าน)"},
             {"id": 7, "name": "รูปทะเบียนบ้าน (รายการเกี่ยวกับบุคคล)"},
-            {"id": 8, "name": "รูปอื่น ๆ"},
+            {"id": 8, "name": "รูปสมาชิกในครอบครัว"},
+            {"id": 99, "name": "รูปอื่น ๆ"},
         ],
     )
 
@@ -183,7 +184,7 @@ def downgrade() -> None:
     op.execute(sa.text("DELETE FROM housing_types WHERE id IN (1,2,3,99)"))
     op.execute(sa.text("DELETE FROM dependency_types WHERE id IN (1,2,3,4,99)"))
     op.execute(sa.text("DELETE FROM received_welfare_types WHERE id IN (1,2,3,4,5,6,7,8,9,10,11,99)"))
-    op.execute(sa.text("DELETE FROM attachment_types WHERE id IN (1,2,3,4)"))
+    op.execute(sa.text("DELETE FROM attachment_types WHERE id IN (1,2,3,4,5,6,7,8,99)"))
     op.execute(sa.text("DELETE FROM request_types WHERE id IN (1,2,3)"))
     op.execute(sa.text("DELETE FROM marital_status_types WHERE id IN (1,2,3,4,5,6)"))
     op.execute(sa.text("DELETE FROM prefix_type WHERE id IN (1,2,3)"))
