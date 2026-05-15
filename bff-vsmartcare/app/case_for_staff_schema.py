@@ -12,6 +12,7 @@ class CaseForStaffRead(BaseModel):
     case_number: str | None = Field(None, max_length=100)
     current_status_id: int | None = None
     current_status: str | None = None
+    current_status_color: str | None = Field(None, max_length=32)
     type_money_id: int | None = None
     type_money_id_name: str | None = Field(None, max_length=255)
     type_money_id_color: str | None = Field(None, max_length=32)
