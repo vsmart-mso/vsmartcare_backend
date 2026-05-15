@@ -18,7 +18,9 @@ from .lookup import (
     ReceivedWelfareType,
     RequesterRelationType,
     RequestType,
+    TypeMoneyCategory,
 )
+from .payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from .person import Person
 from .screening import ScreeningLog, WelfareRequestConsent
 from .status_log import WelfareRequestStatus
@@ -48,15 +50,20 @@ __all__ = [
     "Postcode",
     "PrefixType",
     "Province",
+    "ApproveCase",
+    "FilePayment",
     "ReceivedWelfareType",
     "RequestType",
     "RequesterRelationType",
     "ScreeningLog",
     "SubDistrict",
     "SubDistrictPostcode",
+    "TypeMoneyCategory",
+    "WelfareDdaRef",
     "WelfareEvidence",
     "WelfareHistory",
     "WelfareHistoryDetail",
+    "WelfarePayment",
     "WelfareRequestConsent",
     "WelfareRequestStatus",
     "WelfareRequestType",

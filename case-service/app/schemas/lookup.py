@@ -108,6 +108,23 @@ class AddressTypeRead(_LookupRead):
     pass
 
 
+class TypeMoneyCategoryBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    name_acronym: str = Field(..., min_length=1, max_length=255)
+    color: str = Field(..., min_length=1, max_length=32)
+    name_acrovym_eng: str = Field(..., min_length=1, max_length=255)
+    activate: bool = True
+
+
+class TypeMoneyCategoryCreate(TypeMoneyCategoryBase):
+    pass
+
+
+class TypeMoneyCategoryRead(TypeMoneyCategoryBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CurrentStatusBase(BaseModel):
     description_public: str = Field(..., min_length=1)
     description_staff: str = Field(..., min_length=1)

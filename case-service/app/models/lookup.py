@@ -98,6 +98,23 @@ class AddressType(LookupMixin, Base):
     __tablename__ = "address_type"
 
 
+class TypeMoneyCategory(Base):
+    """ประเภทเงินช่วยเหลือสำหรับ applicants.type_money_category_id"""
+
+    __tablename__ = "type_money_category"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name_acronym: Mapped[str] = mapped_column(String(255), nullable=False)
+    color: Mapped[str] = mapped_column(String(32), nullable=False)
+    name_acrovym_eng: Mapped[str] = mapped_column(String(255), nullable=False)
+    activate: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+    applicants: Mapped[list["Applicant"]] = relationship(
+        back_populates="type_money_category",
+    )
+
+
 class CurrentStatus(Base):
     """สถานะคำร้องปัจจุบัน — ข้อความแยก public/staff + สีและลำดับ dropdown/filter"""
 

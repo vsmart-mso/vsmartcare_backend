@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo
-from ...models.lookup import BankName, CurrentStatus
+from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.welfare import (
@@ -84,7 +85,7 @@ def _applicant_load_options():  # noqa: ANN001
         selectinload(Applicant.dependency_loads),
         selectinload(Applicant.welfare_request_types),
         selectinload(Applicant.welfare_history).selectinload(WelfareHistory.history_details),
-        selectinload(Applicant.welfare_evidences),
+        selectinload(Applicant.welfare_evidences).selectinload(WelfareEvidence.attachment_type),
         selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.current_status),
     ]
 
@@ -199,6 +200,20 @@ async def _ensure_bank_name_exists(session: AsyncSession, bank_name_id: int) -> 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bank_name_not_found")
 
 
+async def _ensure_type_money_category_exists(
+    session: AsyncSession,
+    type_money_category_id: int,
+) -> None:
+    r = await session.execute(
+        select(TypeMoneyCategory.id).where(TypeMoneyCategory.id == type_money_category_id)
+    )
+    if r.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="type_money_category_not_found",
+        )
+
+
 @router.post("", response_model=WelfareCaseRead, status_code=status.HTTP_201_CREATED)
 async def create_welfare_case(
     body: WelfareCaseCreate,
@@ -208,6 +223,8 @@ async def create_welfare_case(
     await _ensure_current_status_exists(session, body.initial_current_status_id)
     if body.applicant.bank_name_id is not None:
         await _ensure_bank_name_exists(session, body.applicant.bank_name_id)
+    if body.applicant.type_money_category_id is not None:
+        await _ensure_type_money_category_exists(session, body.applicant.type_money_category_id)
 
     req_ids = _dedupe_preserve_order(body.request_type_ids)
 
@@ -223,6 +240,8 @@ async def create_welfare_case(
         problem_details=a.problem_details,
         bank_name_id=a.bank_name_id,
         bank_account_no=a.bank_account_no,
+        type_money_category_id=a.type_money_category_id,
+        sw_explorer_sdshv=a.sw_explorer_sdshv,
         age=a.age,
         # is_existing_case, is_emergency, time_count_process — ใช้ default จากโมเดล ไม่รับจาก client
     )
@@ -358,6 +377,44 @@ async def get_welfare_case(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
     return await applicant_to_case_read(row)
+
+
+@router.get(
+    "/{applicant_id}/evidences/{evidence_id}/file",
+    summary="ดาวน์โหลดไฟล์หลักฐาน (รูป)",
+    response_class=FileResponse,
+)
+async def get_welfare_evidence_file(
+    applicant_id: int,
+    evidence_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    root = resolved_upload_root().resolve()
+    path = (root / ev.file_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="evidence_file_invalid_path",
+        ) from e
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_file_missing")
+
+    suffix = path.suffix.lower()
+    media = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(suffix, "application/octet-stream")
+    download_name = ev.file_original_name or ev.file_stored_name or path.name
+    return FileResponse(path, media_type=media, filename=download_name)
 
 
 @router.post(
