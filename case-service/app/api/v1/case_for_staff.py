@@ -322,6 +322,7 @@ async def list_cases_for_staff(
             WelfareRequestStatus.applicant_id.label("applicant_id"),
             WelfareRequestStatus.current_status_id.label("current_status_id"),
             CurrentStatus.description_staff.label("current_status"),
+            CurrentStatus.color.label("current_status_color"),
             func.row_number()
             .over(
                 partition_by=WelfareRequestStatus.applicant_id,
@@ -358,6 +359,7 @@ async def list_cases_for_staff(
             Applicant.case_number.label("case_number"),
             latest_status_sq.c.current_status_id.label("current_status_id"),
             latest_status_sq.c.current_status.label("current_status"),
+            latest_status_sq.c.current_status_color.label("current_status_color"),
             Applicant.type_money_category_id.label("type_money_id"),
             TypeMoneyCategory.name.label("type_money_id_name"),
             TypeMoneyCategory.color.label("type_money_id_color"),
