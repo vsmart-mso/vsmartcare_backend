@@ -109,9 +109,9 @@ CURRENT_STATUS_ROWS: list[dict] = [
         "color": "#ff0000",
         "dropdown_to_change": "แก้ไขข้อมูล",
         "dropdown_order": 6,
-        "dropdown_activate": False,
+        "dropdown_activate": True,
         "filter_order": 6,
-        "filter_activate": False,
+        "filter_activate": True,
         "vsmart_id": 8,
     },
     {
@@ -121,9 +121,9 @@ CURRENT_STATUS_ROWS: list[dict] = [
         "color": "#48ff00",
         "dropdown_to_change": "อยู่ระหว่างการหาข้อมูลเพิ่มเติม",
         "dropdown_order": 7,
-        "dropdown_activate": False,
+        "dropdown_activate": True,
         "filter_order": 7,
-        "filter_activate": False,
+        "filter_activate": True,
         "vsmart_id": 9,
     },
 ]
