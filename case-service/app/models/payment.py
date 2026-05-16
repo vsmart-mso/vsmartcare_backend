@@ -63,7 +63,7 @@ class WelfarePayment(Base):
         nullable=False,
         index=True,
     )
-    is_037_or_038: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_037_or_038: Mapped[bool | None] = mapped_column(default=None, nullable=True)
     dda_ref_id: Mapped[int] = mapped_column(
         ForeignKey("welfare_dda_ref.id"),
         nullable=False,

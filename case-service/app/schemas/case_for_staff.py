@@ -56,6 +56,30 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CaseForStaffFinanceRead(CaseForStaffRead):
+    """แถวตารางการเงิน — ข้อมูลพื้นฐานเหมือน CaseForStaffRead + DDA และสรุป welfare_payment."""
+
+    dda_ref: str | None = Field(None, max_length=255, description="dda_ref ล่าสุดจาก welfare_dda_ref (ผ่าน welfare_payment)")
+    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false")
+    count_038: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = true")
+    is_037_or_038: bool | None = Field(
+        None,
+        description="null เมื่อยังไม่มี welfare_payment; มิฉะนั้น true ถ้ามีแถวใด is_037_or_038 = true",
+    )
+
+
+class CaseForStaffFinanceListResponse(BaseModel):
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_applicants: int = Field(
+        ...,
+        ge=0,
+        description="จำนวน Applicant ในจังหวัดที่มี approve_case.approve_status = true",
+    )
+    filtered_applicants: int = Field(..., ge=0, description="จำนวน Applicant หลังใช้ filter")
+    items: list[CaseForStaffFinanceRead] = Field(default_factory=list)
+
+
 class CaseForStaffWelfareRequestStatusCreate(BaseModel):
     """บันทึกสถานะใหม่ใน welfare_request_status (อ้างอิง applicant + current_status)."""
 

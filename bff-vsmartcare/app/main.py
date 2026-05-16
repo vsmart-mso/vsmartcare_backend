@@ -7,14 +7,19 @@ from urllib.parse import urlencode
 import json
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from .case_for_staff_schema import CaseForStaffListResponse, CaseForStaffRead as CaseForStaffListItem
+from .case_for_staff_schema import (
+    CaseForStaffFinanceListResponse,
+    CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
+    CaseForStaffListResponse,
+    CaseForStaffRead as CaseForStaffListItem,
+)
 from .case_display_schema import CaseDisplayRead
 from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
@@ -366,6 +371,80 @@ class ApproveCaseCreateBody(BaseModel):
     user_sdshv: Optional[str] = Field(None, max_length=255)
 
 
+class WelfareDdaRefDetailCreateBody(BaseModel):
+    applicant_id: int = Field(..., ge=1)
+
+
+class WelfareDdaRefBundleCreateBody(BaseModel):
+    dda_ref: str = Field(..., min_length=1, max_length=255)
+    dda_ref_detail: list[WelfareDdaRefDetailCreateBody] = Field(..., min_length=1)
+    user_sdshv: Optional[str] = Field(None, max_length=255)
+
+
+class WelfarePaymentUpdateBody(BaseModel):
+    is_037_or_038: Optional[bool] = None
+    payment_number: Optional[str] = Field(None, max_length=255)
+    payment_038_reason: Optional[str] = Field(None, max_length=255)
+    transaction_date: Optional[date] = None
+    effective_date: Optional[date] = None
+    user_sdshv: Optional[str] = Field(None, max_length=255)
+
+
+def _case_for_staff_finance_query_pairs(
+    *,
+    province_id: int,
+    case_number: Optional[str],
+    current_status: Optional[str],
+    current_status_id: Optional[list[int]],
+    firstname: Optional[str],
+    lastname: Optional[str],
+    cid: Optional[str],
+    datetime_create: Optional[date],
+    province_name: Optional[str],
+    district_id: Optional[int],
+    district_name: Optional[str],
+    subdistrict_id: Optional[int],
+    subdistrict_name: Optional[str],
+    subdistrict_postcode_id: Optional[int],
+    postcode: Optional[str],
+    type_money_id: Optional[list[int]],
+) -> list[tuple[str, Any]]:
+    pairs: list[tuple[str, Any]] = [("province_id", province_id)]
+    if case_number is not None:
+        pairs.append(("case_number", case_number))
+    if current_status is not None:
+        pairs.append(("current_status", current_status))
+    if current_status_id:
+        for cs in current_status_id:
+            pairs.append(("current_status_id", cs))
+    if firstname is not None:
+        pairs.append(("firstname", firstname))
+    if lastname is not None:
+        pairs.append(("lastname", lastname))
+    if cid is not None:
+        pairs.append(("cid", cid))
+    if datetime_create is not None:
+        pairs.append(("datetime_create", datetime_create.isoformat()))
+    if province_name is not None:
+        pairs.append(("province_name", province_name))
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if district_name is not None:
+        pairs.append(("district_name", district_name))
+    if subdistrict_id is not None:
+        pairs.append(("subdistrict_id", subdistrict_id))
+    if subdistrict_name is not None:
+        pairs.append(("subdistrict_name", subdistrict_name))
+    if subdistrict_postcode_id is not None:
+        pairs.append(("subdistrict_postcode_id", subdistrict_postcode_id))
+    if postcode is not None:
+        pairs.append(("postcode", postcode))
+    if type_money_id:
+        for tm in type_money_id:
+            pairs.append(("type_money_id", tm))
+    return pairs
+
+
 @router.post(
     "/v1/cases",
     tags=["cases"],
@@ -485,6 +564,191 @@ async def list_cases_for_staff(
 
 
 @router.get(
+    "/v1/case_for_staff/finance",
+    tags=["case_for_staff"],
+    summary="รายการคำร้องสำหรับตารางการเงิน",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff/finance` — บังคับ `province_id`, เฉพาะเคสที่ approve_case.approve_status = true, "
+        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, count_037, count_038, is_037_or_038"
+    ),
+    response_model=CaseForStaffFinanceListResponse,
+    dependencies=_v1_api_key,
+)
+async def list_cases_for_staff_finance(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    case_number: Optional[str] = Query(None, description="ค้นหาจากเลข case"),
+    current_status: Optional[str] = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: Optional[list[int]] = Query(
+        None,
+        description="กรองตาม current_status_id ได้หลายค่า",
+    ),
+    firstname: Optional[str] = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: Optional[str] = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: Optional[str] = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: Optional[date] = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: Optional[str] = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: Optional[int] = Query(None, description="กรองตามอำเภอ"),
+    district_name: Optional[str] = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: Optional[int] = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: Optional[str] = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: Optional[int] = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
+    postcode: Optional[str] = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    type_money_id: Optional[list[int]] = Query(
+        None,
+        description="กรองตาม type_money_category.id ได้หลายค่า",
+    ),
+) -> CaseForStaffFinanceListResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs = _case_for_staff_finance_query_pairs(
+        province_id=province_id,
+        case_number=case_number,
+        current_status=current_status,
+        current_status_id=current_status_id,
+        firstname=firstname,
+        lastname=lastname,
+        cid=cid,
+        datetime_create=datetime_create,
+        province_name=province_name,
+        district_id=district_id,
+        district_name=district_name,
+        subdistrict_id=subdistrict_id,
+        subdistrict_name=subdistrict_name,
+        subdistrict_postcode_id=subdistrict_postcode_id,
+        postcode=postcode,
+        type_money_id=type_money_id,
+    )
+    query_string = urlencode(pairs)
+    data = await _get(f"{base}/v1/case_for_staff/finance?{query_string}")
+    return CaseForStaffFinanceListResponse.model_validate(
+        {
+            **data,
+            "items": [CaseForStaffFinanceListItem.model_validate(item) for item in data.get("items", [])],
+        }
+    )
+
+
+@router.get(
+    "/v1/case_for_staff/finance/with-dda-ref",
+    tags=["case_for_staff"],
+    summary="รายการคำร้องการเงิน (มี welfare_payment + welfare_dda_ref)",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff/finance/with-dda-ref` — เหมือน /finance แต่ดึงเฉพาะ applicant "
+        "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว"
+    ),
+    response_model=CaseForStaffFinanceListResponse,
+    dependencies=_v1_api_key,
+)
+async def list_cases_for_staff_finance_with_dda_ref(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    case_number: Optional[str] = Query(None),
+    current_status: Optional[str] = Query(None),
+    current_status_id: Optional[list[int]] = Query(None),
+    firstname: Optional[str] = Query(None),
+    lastname: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    datetime_create: Optional[date] = Query(None),
+    province_name: Optional[str] = Query(None),
+    district_id: Optional[int] = Query(None),
+    district_name: Optional[str] = Query(None),
+    subdistrict_id: Optional[int] = Query(None),
+    subdistrict_name: Optional[str] = Query(None),
+    subdistrict_postcode_id: Optional[int] = Query(None),
+    postcode: Optional[str] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+) -> CaseForStaffFinanceListResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs = _case_for_staff_finance_query_pairs(
+        province_id=province_id,
+        case_number=case_number,
+        current_status=current_status,
+        current_status_id=current_status_id,
+        firstname=firstname,
+        lastname=lastname,
+        cid=cid,
+        datetime_create=datetime_create,
+        province_name=province_name,
+        district_id=district_id,
+        district_name=district_name,
+        subdistrict_id=subdistrict_id,
+        subdistrict_name=subdistrict_name,
+        subdistrict_postcode_id=subdistrict_postcode_id,
+        postcode=postcode,
+        type_money_id=type_money_id,
+    )
+    query_string = urlencode(pairs)
+    data = await _get(f"{base}/v1/case_for_staff/finance/with-dda-ref?{query_string}")
+    return CaseForStaffFinanceListResponse.model_validate(
+        {
+            **data,
+            "items": [CaseForStaffFinanceListItem.model_validate(item) for item in data.get("items", [])],
+        }
+    )
+
+
+@router.patch(
+    "/v1/case_for_staff/welfare-payment",
+    tags=["case_for_staff"],
+    summary="อัปเดต welfare_payment ตาม applicant_id",
+    description="ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — อัปเดตแถวล่าสุด",
+    dependencies=_v1_api_key,
+)
+async def update_welfare_payment_for_staff(
+    applicant_id: int = Query(..., ge=1),
+    body: WelfarePaymentUpdateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True)
+    return await _patch(
+        f"{base}/v1/case_for_staff/welfare-payment?applicant_id={applicant_id}",
+        json=payload,
+    )
+
+
+@router.post(
+    "/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment",
+    tags=["case_for_staff"],
+    summary="อัปโหลด PDF file_payment",
+    description="ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id, file (PDF)",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_file_payment_for_staff(
+    welfare_dda_ref_id: int,
+    attachment_type_id: int = Form(..., ge=1),
+    file: UploadFile = File(..., description="ไฟล์ PDF"),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment"
+    return await _post_evidence_multipart(
+        url,
+        {"attachment_type_id": attachment_type_id},
+        file,
+    )
+
+
+@router.get(
+    "/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+    tags=["case_for_staff"],
+    summary="ดาวน์โหลด PDF file_payment",
+    dependencies=_v1_api_key,
+)
+async def get_file_payment_for_staff(welfare_dda_ref_id: int, file_payment_id: int) -> Response:
+    base = settings.case_service_url.rstrip("/")
+    r = await _get_raw(
+        f"{base}/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+    )
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "application/pdf"),
+        headers={
+            k: v
+            for k, v in r.headers.items()
+            if k.lower() in ("content-disposition", "content-length")
+        },
+    )
+
+
+@router.get(
     "/v1/case_for_staff/type-money-categories",
     tags=["case_for_staff"],
     summary="ประเภทเงินช่วยเหลือสำหรับหน้าจอเจ้าหน้าที่",
@@ -574,6 +838,23 @@ async def create_case_for_staff_welfare_request_status(body: CaseForStaffWelfare
 async def get_case_for_staff_por_kor_1_detail(applicant_id: int = Query(..., ge=1)) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/case_for_staff/por-kor-1-detail?applicant_id={applicant_id}")
+
+
+@router.post(
+    "/v1/case_for_staff/welfare-dda-ref",
+    tags=["case_for_staff"],
+    summary="สร้าง welfare_dda_ref และ welfare_payment",
+    description=(
+        "ส่งต่อ `POST …/v1/case_for_staff/welfare-dda-ref` — หนึ่ง dda_ref ผูก welfare_payment หลาย applicant; "
+        "ฟิลด์จ่ายเงินบน payment ว่างไว้สำหรับอัปเดตภายหลัง"
+    ),
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_welfare_dda_ref_bundle(body: WelfareDdaRefBundleCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(f"{base}/v1/case_for_staff/welfare-dda-ref", json=payload)
 
 
 @router.post(
