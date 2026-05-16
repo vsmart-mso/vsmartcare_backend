@@ -41,3 +41,18 @@ class CaseForStaffListResponse(BaseModel):
     total_applicants: int = Field(..., ge=0, description="จำนวน Applicant ทั้งหมดในจังหวัด")
     filtered_applicants: int = Field(..., ge=0, description="จำนวน Applicant หลังใช้ filter")
     items: list[CaseForStaffRead] = Field(default_factory=list)
+
+
+class CaseForStaffFinanceRead(CaseForStaffRead):
+    dda_ref: str | None = Field(None, max_length=255)
+    count_037: int = Field(0, ge=0)
+    count_038: int = Field(0, ge=0)
+    is_037_or_038: bool | None = None
+
+
+class CaseForStaffFinanceListResponse(BaseModel):
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_applicants: int = Field(..., ge=0)
+    filtered_applicants: int = Field(..., ge=0)
+    items: list[CaseForStaffFinanceRead] = Field(default_factory=list)

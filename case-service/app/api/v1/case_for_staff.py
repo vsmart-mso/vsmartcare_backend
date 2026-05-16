@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, select
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
+from sqlalchemy import and_, case as sql_case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,12 +23,25 @@ from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrict
 from ...models.lookup import CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
-from ...models.payment import ApproveCase
+from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
+from ...services.file_payment_upload import file_payment_upload_root, save_file_payment_pdf
 from ...schemas.address import AddressRead
-from ...schemas.payment import ApproveCaseCreate, ApproveCaseRead
+from ...schemas.payment import (
+    ApproveCaseCreate,
+    ApproveCaseRead,
+    FilePaymentRead,
+    FilePaymentUploadRead,
+    WelfareDdaRefBundleCreate,
+    WelfareDdaRefBundleRead,
+    WelfarePaymentInitialRead,
+    WelfarePaymentRead,
+    WelfarePaymentUpdate,
+)
 from ...schemas.case_for_staff import (
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffApplicantStaffFieldsUpdate,
+    CaseForStaffFinanceListResponse,
+    CaseForStaffFinanceRead,
     CaseForStaffListResponse,
     CaseForStaffPorKor1DetailResponse,
     CaseForStaffRead,
@@ -459,6 +473,433 @@ async def list_cases_for_staff(
     )
 
 
+async def _list_cases_for_staff_finance_impl(
+    session: AsyncSession,
+    province_id: int,
+    case_number: str | None,
+    current_status: str | None,
+    current_status_id: list[int] | None,
+    firstname: str | None,
+    lastname: str | None,
+    cid: str | None,
+    datetime_create: date | None,
+    province_name: str | None,
+    district_id: int | None,
+    district_name: str | None,
+    subdistrict_id: int | None,
+    subdistrict_name: str | None,
+    subdistrict_postcode_id: int | None,
+    postcode: str | None,
+    type_money_id: list[int] | None,
+    *,
+    require_welfare_payment_with_dda: bool,
+) -> CaseForStaffFinanceListResponse:
+    province = await session.scalar(select(Province).where(Province.id == province_id))
+    if province is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
+
+    latest_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id.label("applicant_id"),
+            WelfareRequestStatus.current_status_id.label("current_status_id"),
+            CurrentStatus.description_staff.label("current_status"),
+            CurrentStatus.color.label("current_status_color"),
+            func.row_number()
+            .over(
+                partition_by=WelfareRequestStatus.applicant_id,
+                order_by=[WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc()],
+            )
+            .label("rn"),
+        )
+        .join(CurrentStatus, CurrentStatus.id == WelfareRequestStatus.current_status_id)
+        .subquery()
+    )
+
+    primary_address_sq = (
+        select(
+            Address.applicant_id.label("applicant_id"),
+            Address.sub_district_postcode_id.label("sub_district_postcode_id"),
+            func.row_number()
+            .over(
+                partition_by=Address.applicant_id,
+                order_by=[Address.id.asc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+    location_subdistrict_postcode_id = func.coalesce(
+        primary_address_sq.c.sub_district_postcode_id,
+        Person.sub_district_postcode_id,
+    )
+
+    payment_stats_sq = (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            func.coalesce(
+                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
+                0,
+            ).label("count_037"),
+            func.coalesce(
+                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
+                0,
+            ).label("count_038"),
+            sql_case(
+                (func.count(WelfarePayment.is_037_or_038) == 0, None),
+                (
+                    func.coalesce(
+                        func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
+                        0,
+                    )
+                    > 0,
+                    True,
+                ),
+                else_=False,
+            ).label("is_037_or_038"),
+        )
+        .group_by(WelfarePayment.applicant_id)
+        .subquery()
+    )
+
+    latest_dda_sq = (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            WelfareDdaRef.dda_ref.label("dda_ref"),
+            func.row_number()
+            .over(
+                partition_by=WelfarePayment.applicant_id,
+                order_by=WelfarePayment.id.desc(),
+            )
+            .label("rn"),
+        )
+        .join(WelfareDdaRef, WelfareDdaRef.id == WelfarePayment.dda_ref_id)
+        .subquery()
+    )
+
+    approved_exists = (
+        select(ApproveCase.id)
+        .where(
+            ApproveCase.applicant_id == Applicant.id,
+            ApproveCase.approve_status.is_(True),
+        )
+    ).exists()
+
+    welfare_payment_with_dda_exists = (
+        select(WelfarePayment.id)
+        .where(WelfarePayment.applicant_id == Applicant.id)
+        .join(WelfareDdaRef, WelfareDdaRef.id == WelfarePayment.dda_ref_id)
+        .exists()
+    )
+
+    stmt = (
+        select(
+            Applicant.id.label("applicant_id"),
+            Applicant.case_number.label("case_number"),
+            latest_status_sq.c.current_status_id.label("current_status_id"),
+            latest_status_sq.c.current_status.label("current_status"),
+            latest_status_sq.c.current_status_color.label("current_status_color"),
+            Applicant.type_money_category_id.label("type_money_id"),
+            TypeMoneyCategory.name.label("type_money_id_name"),
+            TypeMoneyCategory.color.label("type_money_id_color"),
+            TypeMoneyCategory.name_acronym.label("type_money_name_acronym"),
+            Applicant.sw_explorer_sdshv.label("sw_explorer_sdshv"),
+            Person.first_name.label("firstname"),
+            Person.last_name.label("lastname"),
+            Person.cid.label("cid"),
+            Applicant.created_at.label("datetime_create"),
+            Applicant.is_emergency.label("is_emergency"),
+            Applicant.is_existing_case.label("is_existing_case"),
+            Applicant.time_count_process.label("time_count_process"),
+            Province.id.label("province_id"),
+            Province.name.label("province_name"),
+            District.id.label("district_id"),
+            District.name.label("district_name"),
+            SubDistrict.id.label("subdistrict_id"),
+            SubDistrict.name.label("subdistrict_name"),
+            SubDistrictPostcode.id.label("subdistrict_postcode_id"),
+            Postcode.name.label("postcode"),
+            latest_dda_sq.c.dda_ref.label("dda_ref"),
+            func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
+            func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
+            payment_stats_sq.c.is_037_or_038.label("is_037_or_038"),
+        )
+        .join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(
+            primary_address_sq,
+            and_(
+                primary_address_sq.c.applicant_id == Applicant.id,
+                primary_address_sq.c.rn == 1,
+            ),
+        )
+        .join(
+            SubDistrictPostcode,
+            SubDistrictPostcode.id == location_subdistrict_postcode_id,
+        )
+        .join(Postcode, Postcode.id == SubDistrictPostcode.postcode_id)
+        .join(SubDistrict, SubDistrict.id == SubDistrictPostcode.sub_district_id)
+        .join(District, District.id == SubDistrict.district_id)
+        .join(Province, Province.id == District.province_id)
+        .outerjoin(
+            latest_status_sq,
+            and_(
+                latest_status_sq.c.applicant_id == Applicant.id,
+                latest_status_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
+        .outerjoin(
+            payment_stats_sq,
+            payment_stats_sq.c.applicant_id == Applicant.id,
+        )
+        .outerjoin(
+            latest_dda_sq,
+            and_(
+                latest_dda_sq.c.applicant_id == Applicant.id,
+                latest_dda_sq.c.rn == 1,
+            ),
+        )
+        .where(Province.id == province_id)
+        .where(approved_exists)
+        .order_by(Applicant.created_at.desc(), Applicant.id.desc())
+    )
+    if require_welfare_payment_with_dda:
+        stmt = stmt.where(welfare_payment_with_dda_exists)
+
+    total_stmt = select(func.count()).select_from(
+        stmt.with_only_columns(Applicant.id).order_by(None).distinct().subquery()
+    )
+
+    if cleaned_case_number := _clean_text_filter(case_number):
+        stmt = stmt.where(Applicant.case_number.ilike(f"%{cleaned_case_number}%"))
+    if cleaned_current_status := _clean_text_filter(current_status):
+        stmt = stmt.where(latest_status_sq.c.current_status.ilike(f"%{cleaned_current_status}%"))
+    if current_status_id:
+        stmt = stmt.where(latest_status_sq.c.current_status_id.in_(current_status_id))
+    if cleaned_firstname := _clean_text_filter(firstname):
+        stmt = stmt.where(Person.first_name.ilike(f"%{cleaned_firstname}%"))
+    if cleaned_lastname := _clean_text_filter(lastname):
+        stmt = stmt.where(Person.last_name.ilike(f"%{cleaned_lastname}%"))
+    if cleaned_cid := _clean_text_filter(cid):
+        stmt = stmt.where(Person.cid.ilike(f"%{cleaned_cid}%"))
+    if datetime_create is not None:
+        stmt = stmt.where(func.date(Applicant.created_at) == datetime_create)
+    if cleaned_province_name := _clean_text_filter(province_name):
+        stmt = stmt.where(Province.name.ilike(f"%{cleaned_province_name}%"))
+    if district_id is not None:
+        stmt = stmt.where(District.id == district_id)
+    if cleaned_district_name := _clean_text_filter(district_name):
+        stmt = stmt.where(District.name.ilike(f"%{cleaned_district_name}%"))
+    if subdistrict_id is not None:
+        stmt = stmt.where(SubDistrict.id == subdistrict_id)
+    if cleaned_subdistrict_name := _clean_text_filter(subdistrict_name):
+        stmt = stmt.where(SubDistrict.name.ilike(f"%{cleaned_subdistrict_name}%"))
+    if subdistrict_postcode_id is not None:
+        stmt = stmt.where(SubDistrictPostcode.id == subdistrict_postcode_id)
+    if cleaned_postcode := _clean_text_filter(postcode):
+        stmt = stmt.where(Postcode.name.ilike(f"%{cleaned_postcode}%"))
+    if type_money_id:
+        stmt = stmt.where(Applicant.type_money_category_id.in_(type_money_id))
+
+    filtered_count_stmt = select(func.count()).select_from(
+        stmt.with_only_columns(Applicant.id).order_by(None).distinct().subquery()
+    )
+
+    total_applicants = await session.scalar(total_stmt)
+    filtered_applicants = await session.scalar(filtered_count_stmt)
+    result = await session.execute(stmt)
+    rows = result.mappings().all()
+    return CaseForStaffFinanceListResponse(
+        province_id=province.id,
+        province_name=province.name,
+        total_applicants=total_applicants or 0,
+        filtered_applicants=filtered_applicants or 0,
+        items=[CaseForStaffFinanceRead.model_validate(row) for row in rows],
+    )
+
+
+@router.get("/finance", response_model=CaseForStaffFinanceListResponse)
+async def list_cases_for_staff_finance(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา (บังคับ)"),
+    case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
+    current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: list[int] | None = Query(
+        None,
+        description="กรองตาม current_status_id ได้หลายค่า (เช่น ?current_status_id=1&current_status_id=2)",
+    ),
+    firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: date | None = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: str | None = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: int | None = Query(None, description="กรองตามอำเภอ"),
+    district_name: str | None = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: int | None = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: str | None = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: int | None = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
+    postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    type_money_id: list[int] | None = Query(
+        None,
+        description="กรองตาม type_money_category.id ได้หลายค่า (เช่น ?type_money_id=1&type_money_id=2)",
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffFinanceListResponse:
+    """รายการสำหรับตารางการเงิน — เฉพาะเคสที่ approve_case.approve_status = true."""
+    return await _list_cases_for_staff_finance_impl(
+        session,
+        province_id,
+        case_number,
+        current_status,
+        current_status_id,
+        firstname,
+        lastname,
+        cid,
+        datetime_create,
+        province_name,
+        district_id,
+        district_name,
+        subdistrict_id,
+        subdistrict_name,
+        subdistrict_postcode_id,
+        postcode,
+        type_money_id,
+        require_welfare_payment_with_dda=False,
+    )
+
+
+@router.get("/finance/with-dda-ref", response_model=CaseForStaffFinanceListResponse)
+async def list_cases_for_staff_finance_with_dda_ref(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา (บังคับ)"),
+    case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
+    current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: list[int] | None = Query(
+        None,
+        description="กรองตาม current_status_id ได้หลายค่า",
+    ),
+    firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: date | None = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: str | None = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: int | None = Query(None, description="กรองตามอำเภอ"),
+    district_name: str | None = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: int | None = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: str | None = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: int | None = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
+    postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    type_money_id: list[int] | None = Query(
+        None,
+        description="กรองตาม type_money_category.id ได้หลายค่า",
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffFinanceListResponse:
+    """เหมือน /finance แต่ดึงเฉพาะ applicant ที่มี welfare_payment ผูก welfare_dda_ref แล้ว."""
+    return await _list_cases_for_staff_finance_impl(
+        session,
+        province_id,
+        case_number,
+        current_status,
+        current_status_id,
+        firstname,
+        lastname,
+        cid,
+        datetime_create,
+        province_name,
+        district_id,
+        district_name,
+        subdistrict_id,
+        subdistrict_name,
+        subdistrict_postcode_id,
+        postcode,
+        type_money_id,
+        require_welfare_payment_with_dda=True,
+    )
+
+
+@router.patch("/welfare-payment", response_model=WelfarePaymentRead)
+async def update_welfare_payment_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: WelfarePaymentUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> WelfarePaymentRead:
+    """อัปเดต welfare_payment ล่าสุดของ applicant (เรียงตาม id desc)."""
+    payment = await session.scalar(
+        select(WelfarePayment)
+        .where(WelfarePayment.applicant_id == applicant_id)
+        .order_by(WelfarePayment.id.desc())
+        .limit(1),
+    )
+    if payment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
+
+    for field, value in updates.items():
+        setattr(payment, field, value)
+
+    await session.commit()
+    await session.refresh(payment)
+    return WelfarePaymentRead.model_validate(payment)
+
+
+@router.post(
+    "/welfare-dda-ref/{welfare_dda_ref_id}/file-payment",
+    response_model=FilePaymentUploadRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="อัปโหลดไฟล์ PDF สำหรับ welfare_dda_ref (file_payment)",
+)
+async def upload_file_payment_pdf(
+    welfare_dda_ref_id: int,
+    attachment_type_id: int = Form(..., ge=1),
+    file: UploadFile = File(..., description="ไฟล์ PDF"),
+    session: AsyncSession = Depends(get_session),
+) -> FilePaymentUploadRead:
+    row = await save_file_payment_pdf(
+        session,
+        welfare_dda_ref_id=welfare_dda_ref_id,
+        attachment_type_id=attachment_type_id,
+        file=file,
+    )
+    return FilePaymentUploadRead(
+        **FilePaymentRead.model_validate(row).model_dump(),
+        view_path=(
+            f"/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{row.id}/file"
+        ),
+    )
+
+
+@router.get(
+    "/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+    summary="ดาวน์โหลดไฟล์ PDF ของ file_payment",
+    response_class=FileResponse,
+)
+async def get_file_payment_pdf(
+    welfare_dda_ref_id: int,
+    file_payment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    row = await session.get(FilePayment, file_payment_id)
+    if row is None or row.welfare_dda_ref_id != welfare_dda_ref_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file_payment_not_found")
+
+    root = file_payment_upload_root()
+    path = (root / row.file_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="file_payment_invalid_path",
+        ) from e
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file_payment_file_missing")
+
+    download_name = row.file_original_name or row.file_stored_name or path.name
+    return FileResponse(path, media_type="application/pdf", filename=download_name)
+
+
 @router.get("/type-money-categories", response_model=list[TypeMoneyCategoryRead])
 async def list_type_money_categories(
     session: AsyncSession = Depends(get_session),
@@ -629,6 +1070,78 @@ async def get_por_kor_1_case_detail_for_staff(
 
     case_read = await applicant_to_case_read(row)
     return _build_por_kor_1_detail(case_read, row)
+
+
+@router.post(
+    "/welfare-dda-ref",
+    response_model=WelfareDdaRefBundleRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="สร้าง welfare_dda_ref และ welfare_payment หลายรายการ",
+    description=(
+        "บันทึกหมายเลข dda_ref หนึ่งรายการ พร้อม welfare_payment ต่อ applicant ใน dda_ref_detail — "
+        "payment_number, payment_038_reason, transaction_date, effective_date, user_sdshv, is_037_or_038 บน payment ว่าง (null) ไว้สำหรับกระบวนการอัปเดตภายหลัง"
+    ),
+)
+async def create_welfare_dda_ref_bundle(
+    body: WelfareDdaRefBundleCreate,
+    session: AsyncSession = Depends(get_session),
+) -> WelfareDdaRefBundleRead:
+    dda_ref = body.dda_ref.strip()
+    if not dda_ref:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="dda_ref_required")
+
+    applicant_ids = [item.applicant_id for item in body.dda_ref_detail]
+    if len(applicant_ids) != len(set(applicant_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="duplicate_applicant_id_in_dda_ref_detail",
+        )
+
+    found_ids = set(
+        await session.scalars(select(Applicant.id).where(Applicant.id.in_(applicant_ids)))
+    )
+    missing = sorted(set(applicant_ids) - found_ids)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"applicant_not_found": missing},
+        )
+
+    dda_row = WelfareDdaRef(dda_ref=dda_ref, user_sdshv=body.user_sdshv)
+    session.add(dda_row)
+    await session.flush()
+
+    for item in body.dda_ref_detail:
+        session.add(
+            WelfarePayment(
+                applicant_id=item.applicant_id,
+                dda_ref_id=dda_row.id,
+                is_037_or_038=None,
+                payment_number=None,
+                payment_038_reason=None,
+                user_sdshv=None,
+                transaction_date=None,
+                effective_date=None,
+            ),
+        )
+
+    await session.commit()
+
+    result = await session.execute(
+        select(WelfareDdaRef)
+        .options(selectinload(WelfareDdaRef.welfare_payments))
+        .where(WelfareDdaRef.id == dda_row.id),
+    )
+    dda_row = result.scalar_one()
+    return WelfareDdaRefBundleRead(
+        id=dda_row.id,
+        dda_ref=dda_row.dda_ref,
+        user_sdshv=dda_row.user_sdshv,
+        welfare_payments=[
+            WelfarePaymentInitialRead.model_validate(p)
+            for p in sorted(dda_row.welfare_payments, key=lambda x: x.id)
+        ],
+    )
 
 
 @router.post(
