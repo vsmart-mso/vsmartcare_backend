@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.lookup import AttachmentType
-from ..models.payment import FilePayment, WelfareDdaRef
+from ..models.payment import FilePayment, WelfareDdaRef, WelfarePayment
 from ..settings import resolved_upload_root, settings
 
 ALLOWED_PAYMENT_PDF_TYPES: dict[str, str] = {
@@ -24,6 +24,19 @@ async def validate_welfare_dda_ref_exists(session: AsyncSession, welfare_dda_ref
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_dda_ref_not_found")
     return row
+
+
+async def resolve_welfare_dda_ref_id_for_applicant(session: AsyncSession, applicant_id: int) -> int:
+    """หา dda_ref_id จาก welfare_payment ล่าสุดของ applicant (เรียงตาม id desc)."""
+    dda_ref_id = await session.scalar(
+        select(WelfarePayment.dda_ref_id)
+        .where(WelfarePayment.applicant_id == applicant_id)
+        .order_by(WelfarePayment.id.desc())
+        .limit(1),
+    )
+    if dda_ref_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
+    return dda_ref_id
 
 
 async def validate_attachment_type_exists(session: AsyncSession, attachment_type_id: int) -> None:
@@ -41,10 +54,11 @@ def file_payment_upload_root() -> Path:
 async def save_file_payment_pdf(
     session: AsyncSession,
     *,
-    welfare_dda_ref_id: int,
+    applicant_id: int,
     attachment_type_id: int,
     file: UploadFile,
 ) -> FilePayment:
+    welfare_dda_ref_id = await resolve_welfare_dda_ref_id_for_applicant(session, applicant_id)
     await validate_welfare_dda_ref_exists(session, welfare_dda_ref_id)
     await validate_attachment_type_exists(session, attachment_type_id)
 

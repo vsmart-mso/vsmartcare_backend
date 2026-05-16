@@ -20,11 +20,15 @@ from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
-from ...models.lookup import CurrentStatus, TypeMoneyCategory
+from ...models.lookup import AttachmentType, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
-from ...services.file_payment_upload import file_payment_upload_root, save_file_payment_pdf
+from ...services.file_payment_upload import (
+    file_payment_upload_root,
+    resolve_welfare_dda_ref_id_for_applicant,
+    save_file_payment_pdf,
+)
 from ...schemas.address import AddressRead
 from ...schemas.payment import (
     ApproveCaseCreate,
@@ -62,7 +66,7 @@ from ...schemas.case_for_staff import (
 from ...schemas.case_welfare import WelfareCaseRead
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
-from ...schemas.lookup import CurrentStatusRead, TypeMoneyCategoryRead
+from ...schemas.lookup import AttachmentTypeRead, CurrentStatusRead, TypeMoneyCategoryRead
 from ...schemas.person import PersonRead
 from ...schemas.status_log import WelfareRequestStatusRead
 from ...schemas.welfare import (
@@ -845,41 +849,42 @@ async def update_welfare_payment_for_staff(
 
 
 @router.post(
-    "/welfare-dda-ref/{welfare_dda_ref_id}/file-payment",
+    "/applicant/{applicant_id}/file-payment",
     response_model=FilePaymentUploadRead,
     status_code=status.HTTP_201_CREATED,
-    summary="อัปโหลดไฟล์ PDF สำหรับ welfare_dda_ref (file_payment)",
+    summary="อัปโหลดไฟล์ PDF สำหรับ applicant (file_payment)",
 )
 async def upload_file_payment_pdf(
-    welfare_dda_ref_id: int,
+    applicant_id: int,
     attachment_type_id: int = Form(..., ge=1),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
     session: AsyncSession = Depends(get_session),
 ) -> FilePaymentUploadRead:
     row = await save_file_payment_pdf(
         session,
-        welfare_dda_ref_id=welfare_dda_ref_id,
+        applicant_id=applicant_id,
         attachment_type_id=attachment_type_id,
         file=file,
     )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
         view_path=(
-            f"/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{row.id}/file"
+            f"/v1/case_for_staff/applicant/{applicant_id}/file-payment/{row.id}/file"
         ),
     )
 
 
 @router.get(
-    "/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+    "/applicant/{applicant_id}/file-payment/{file_payment_id}/file",
     summary="ดาวน์โหลดไฟล์ PDF ของ file_payment",
     response_class=FileResponse,
 )
 async def get_file_payment_pdf(
-    welfare_dda_ref_id: int,
+    applicant_id: int,
     file_payment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
+    welfare_dda_ref_id = await resolve_welfare_dda_ref_id_for_applicant(session, applicant_id)
     row = await session.get(FilePayment, file_payment_id)
     if row is None or row.welfare_dda_ref_id != welfare_dda_ref_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file_payment_not_found")
@@ -920,6 +925,28 @@ async def get_type_money_category(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="type_money_category_not_found")
     return TypeMoneyCategoryRead.model_validate(row)
+
+
+@router.get("/attachment-types", response_model=list[AttachmentTypeRead])
+async def list_attachment_types_for_staff(
+    session: AsyncSession = Depends(get_session),
+) -> list[AttachmentTypeRead]:
+    result = await session.execute(select(AttachmentType).order_by(AttachmentType.id))
+    return [AttachmentTypeRead.model_validate(row) for row in result.scalars().all()]
+
+
+@router.get(
+    "/attachment-types/{attachment_type_id}",
+    response_model=AttachmentTypeRead,
+)
+async def get_attachment_type_for_staff(
+    attachment_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> AttachmentTypeRead:
+    row = await _get_row(session, AttachmentType, attachment_type_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="attachment_type_not_found")
+    return AttachmentTypeRead.model_validate(row)
 
 
 @router.get("/current-status", response_model=list[CurrentStatusRead])

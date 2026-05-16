@@ -705,20 +705,23 @@ async def update_welfare_payment_for_staff(
 
 
 @router.post(
-    "/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment",
+    "/v1/case_for_staff/applicant/{applicant_id}/file-payment",
     tags=["case_for_staff"],
     summary="อัปโหลด PDF file_payment",
-    description="ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id, file (PDF)",
+    description=(
+        "ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id (9=PDF 037, 10=PDF 038), file (PDF); "
+        "ระบบจะหา welfare_dda_ref จาก welfare_payment ล่าสุดของ applicant"
+    ),
     dependencies=_v1_api_key,
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_file_payment_for_staff(
-    welfare_dda_ref_id: int,
+    applicant_id: int,
     attachment_type_id: int = Form(..., ge=1),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
-    url = f"{base}/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment"
+    url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/file-payment"
     return await _post_evidence_multipart(
         url,
         {"attachment_type_id": attachment_type_id},
@@ -727,15 +730,15 @@ async def upload_file_payment_for_staff(
 
 
 @router.get(
-    "/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+    "/v1/case_for_staff/applicant/{applicant_id}/file-payment/{file_payment_id}/file",
     tags=["case_for_staff"],
     summary="ดาวน์โหลด PDF file_payment",
     dependencies=_v1_api_key,
 )
-async def get_file_payment_for_staff(welfare_dda_ref_id: int, file_payment_id: int) -> Response:
+async def get_file_payment_for_staff(applicant_id: int, file_payment_id: int) -> Response:
     base = settings.case_service_url.rstrip("/")
     r = await _get_raw(
-        f"{base}/v1/case_for_staff/welfare-dda-ref/{welfare_dda_ref_id}/file-payment/{file_payment_id}/file",
+        f"{base}/v1/case_for_staff/applicant/{applicant_id}/file-payment/{file_payment_id}/file",
     )
     return Response(
         content=r.content,
@@ -768,6 +771,28 @@ async def list_type_money_categories_for_staff():
 async def get_type_money_category_for_staff(type_money_category_id: int):
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/case_for_staff/type-money-categories/{type_money_category_id}")
+
+
+@router.get(
+    "/v1/case_for_staff/attachment-types",
+    tags=["case_for_staff"],
+    summary="ประเภทไฟล์แนบสำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def list_attachment_types_for_staff():
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/attachment-types")
+
+
+@router.get(
+    "/v1/case_for_staff/attachment-types/{attachment_type_id}",
+    tags=["case_for_staff"],
+    summary="ดึงประเภทไฟล์แนบตาม id สำหรับหน้าจอเจ้าหน้าที่",
+    dependencies=_v1_api_key,
+)
+async def get_attachment_type_for_staff(attachment_type_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/attachment-types/{attachment_type_id}")
 
 
 @router.get(
