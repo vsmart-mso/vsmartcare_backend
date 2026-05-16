@@ -43,6 +43,7 @@ class WelfareApplicantUpsert(BaseModel):
 class AddressInCase(BaseModel):
     sub_district_postcode_id: int
     address_type_id: int
+    alley: str | None = Field(None, max_length=255)
     sub_lane: str | None = Field(None, max_length=255)
     house_name: str | None = Field(None, max_length=255)
     road: str | None = Field(None, max_length=255)
@@ -101,6 +102,33 @@ class WelfareCaseCreate(BaseModel):
         1,
         description="FK current_status.id — เช่น 1 = รอรับเรื่อง",
     )
+
+
+class WelfareApplicantUpdate(BaseModel):
+    """ทุกฟิลด์ optional — ส่งเฉพาะสิ่งที่ต้องการเปลี่ยน (persons_id ห้ามเปลี่ยน)"""
+    requester_relation_id: int | None = None
+    marital_status_id: int | None = None
+    mobile_phone: str | None = Field(default=None, max_length=20)
+    home_phone: str | None = Field(default=None, max_length=20)
+    fax_number: str | None = Field(default=None, max_length=20)
+    email_address: EmailStr | None = None
+    problem_details: str | None = None
+    bank_name_id: int | None = Field(default=None, ge=1)
+    bank_account_no: str | None = Field(default=None, max_length=50)
+    age: int | None = Field(default=None, ge=0)
+
+
+class WelfareCaseUpdate(BaseModel):
+    """Payload สำหรับ PATCH /v1/cases/{applicant_id}
+
+    ส่งเฉพาะส่วนที่ต้องการแก้ไข — None = ไม่แตะ, list ใหม่ = replace ทั้ง section
+    """
+    applicant: WelfareApplicantUpdate | None = None
+    addresses: list[AddressInCase] | None = None
+    dependency_loads: list[DependencyLoadInCase] | None = None
+    economic_infos: list[EconomicInfoInCase] | None = None
+    request_type_ids: list[int] | None = None
+    welfare_history: WelfareHistoryInCase | None = None
 
 
 class WelfareCaseRead(BaseModel):

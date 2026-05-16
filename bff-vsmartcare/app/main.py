@@ -971,13 +971,39 @@ async def update_case_evidence(
     )
 
 
+@router.patch(
+    "/v1/cases/{applicant_id}",
+    tags=["cases"],
+    summary="แก้ไขข้อมูล case ที่มีอยู่แล้ว",
+    description="ส่งต่อ `PATCH …/v1/cases/{applicant_id}` ใน case-service — ส่งเฉพาะ section ที่ต้องการแก้ไข",
+    dependencies=_v1_api_key,
+)
+async def update_case(applicant_id: int, request: Request) -> Any:
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(f"{base}/v1/cases/{applicant_id}", json=body)
+
+
+@router.patch(
+    "/v1/cases/{applicant_id}/evidences/{evidence_id}",
+    tags=["cases"],
+    summary="แก้ไขชื่อเอกสาร",
+    description="ส่งต่อ `PATCH …/v1/cases/{applicant_id}/evidences/{evidence_id}` ใน case-service — อัปเดต file_other_type_name",
+    dependencies=_v1_api_key,
+)
+async def patch_case_evidence(applicant_id: int, evidence_id: int, request: Request) -> Any:
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}", json=body)
+
+
 @router.delete(
     "/v1/cases/{applicant_id}/evidences/{evidence_id}",
     tags=["cases"],
-    summary="ลบรูปหลักฐาน",
-    description="ส่งต่อ `DELETE …/v1/cases/{applicant_id}/evidences/{evidence_id}` — ลบ record และไฟล์จากดิสก์",
-    status_code=204,
+    summary="ลบหลักฐาน (รูป)",
+    description="ส่งต่อ `DELETE …/v1/cases/{applicant_id}/evidences/{evidence_id}` ใน case-service — ลบทั้ง DB record และไฟล์บน disk",
     dependencies=_v1_api_key,
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_case_evidence(applicant_id: int, evidence_id: int) -> Response:
     base = settings.case_service_url.rstrip("/")
