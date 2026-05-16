@@ -39,9 +39,13 @@ class Address(Base):
         nullable=False,
     )
 
+    alley: Mapped[str | None] = mapped_column(
+        String(255),
+        comment="ตรอก",
+    )
     sub_lane: Mapped[str | None] = mapped_column(
         String(255),
-        comment="ซอย/ถนน",
+        comment="ซอย",
     )
     house_name: Mapped[str | None] = mapped_column(String(255))
     road: Mapped[str | None] = mapped_column(String(255))

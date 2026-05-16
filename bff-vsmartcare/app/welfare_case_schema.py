@@ -27,6 +27,7 @@ class WelfareApplicantUpsert(BaseModel):
 class AddressInCase(BaseModel):
     sub_district_postcode_id: int
     address_type_id: int
+    alley: str | None = Field(None, max_length=255)
     sub_lane: str | None = Field(None, max_length=255)
     house_name: str | None = Field(None, max_length=255)
     road: str | None = Field(None, max_length=255)

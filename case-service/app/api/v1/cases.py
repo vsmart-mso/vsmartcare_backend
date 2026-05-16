@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -37,6 +37,7 @@ from ...schemas.case_display import CaseDisplayRead
 from ...schemas.case_welfare import (
     WelfareCaseCreate,
     WelfareCaseRead,
+    WelfareCaseUpdate,
     WelfareEvidenceUploadRead,
 )
 from ...schemas.lookup import CurrentStatusRead
@@ -281,6 +282,7 @@ async def create_welfare_case(
                 sub_district_postcode_id=addr.sub_district_postcode_id,
                 applicant_id=aid,
                 address_type_id=addr.address_type_id,
+                alley=addr.alley,
                 sub_lane=addr.sub_lane,
                 house_name=addr.house_name,
                 road=addr.road,
@@ -380,6 +382,145 @@ async def list_welfare_cases_display(
     return [await applicant_to_display_read(row) for row in rows]
 
 
+@router.patch("/{applicant_id}", response_model=WelfareCaseRead, summary="แก้ไขข้อมูล case ที่มีอยู่แล้ว")
+async def update_welfare_case(
+    applicant_id: int,
+    body: WelfareCaseUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> WelfareCaseRead:
+    """แก้ไข case โดยส่งเฉพาะ section ที่ต้องการเปลี่ยน
+    - field = None → ไม่แตะ section นั้น
+    - field = list ใหม่ → ลบของเดิมทั้งหมดแล้ว insert ใหม่ (replace)
+    """
+    # ตรวจว่า case มีอยู่จริง
+    applicant_row = await session.get(Applicant, applicant_id)
+    if applicant_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+
+    # ── อัปเดต applicant fields (เฉพาะที่ส่งมา) ────────────────────────────────
+    if body.applicant is not None:
+        a = body.applicant
+        if a.requester_relation_id is not None:
+            applicant_row.requester_relation_id = a.requester_relation_id
+        if a.marital_status_id is not None:
+            applicant_row.marital_status_id = a.marital_status_id
+        if a.mobile_phone is not None:
+            applicant_row.mobile_phone = a.mobile_phone
+        if a.home_phone is not None:
+            applicant_row.home_phone = a.home_phone
+        if a.fax_number is not None:
+            applicant_row.fax_number = a.fax_number
+        if a.email_address is not None:
+            applicant_row.email_address = str(a.email_address)
+        if a.problem_details is not None:
+            applicant_row.problem_details = a.problem_details
+        if a.bank_name_id is not None:
+            await _ensure_bank_name_exists(session, a.bank_name_id)
+            applicant_row.bank_name_id = a.bank_name_id
+        if a.bank_account_no is not None:
+            applicant_row.bank_account_no = a.bank_account_no
+        if a.age is not None:
+            applicant_row.age = a.age
+
+    # ── Replace addresses ────────────────────────────────────────────────────────
+    if body.addresses is not None:
+        await session.execute(delete(Address).where(Address.applicant_id == applicant_id))
+        for addr in body.addresses:
+            session.add(Address(
+                applicant_id=applicant_id,
+                sub_district_postcode_id=addr.sub_district_postcode_id,
+                address_type_id=addr.address_type_id,
+                alley=addr.alley,
+                sub_lane=addr.sub_lane,
+                house_name=addr.house_name,
+                road=addr.road,
+                house_moo=addr.house_moo,
+                house_number=addr.house_number,
+                mobile_phone=addr.mobile_phone,
+                latitude=addr.latitude,
+                longitude=addr.longitude,
+            ))
+
+    # ── Replace dependency_loads ─────────────────────────────────────────────────
+    if body.dependency_loads is not None:
+        await session.execute(delete(DependencyLoad).where(DependencyLoad.applicant_id == applicant_id))
+        for dl in body.dependency_loads:
+            session.add(DependencyLoad(
+                applicant_id=applicant_id,
+                dependency_type_id=dl.dependency_type_id,
+                dependency_other_text=dl.dependency_other_text,
+            ))
+
+    # ── Replace economic_infos ───────────────────────────────────────────────────
+    if body.economic_infos is not None:
+        # bulk DELETE ไม่ trigger ORM cascade ต้องลบ EconomicIncomeSource ก่อน
+        eco_id_subq = select(EconomicInfo.id).where(EconomicInfo.applicant_id == applicant_id)
+        await session.execute(delete(EconomicIncomeSource).where(EconomicIncomeSource.economic_id.in_(eco_id_subq)))
+        await session.execute(delete(EconomicInfo).where(EconomicInfo.applicant_id == applicant_id))
+        await session.flush()
+        for eco in body.economic_infos:
+            econ = EconomicInfo(
+                applicant_id=applicant_id,
+                housing_types_id=eco.housing_types_id,
+                occupation=eco.occupation,
+                monthly_income=eco.monthly_income,
+                household_members=eco.household_members,
+                family_occupation=eco.family_occupation,
+            )
+            session.add(econ)
+            await session.flush()
+            for src in eco.income_sources:
+                session.add(EconomicIncomeSource(
+                    economic_id=econ.id,
+                    income_source_type_id=src.income_source_type_id,
+                    other_details=src.other_details,
+                ))
+
+    # ── Replace request_type_ids ─────────────────────────────────────────────────
+    if body.request_type_ids is not None:
+        await session.execute(delete(WelfareRequestType).where(WelfareRequestType.applicant_id == applicant_id))
+        for rt in _dedupe_preserve_order(body.request_type_ids):
+            session.add(WelfareRequestType(applicant_id=applicant_id, request_type_id=rt))
+
+    # ── Replace welfare_history (1:1 — upsert by applicant_id) ──────────────────
+    if body.welfare_history is not None:
+        existing_wh = await session.get(WelfareHistory, applicant_id)
+        wh = body.welfare_history
+        if existing_wh is not None:
+            existing_wh.received_count = wh.received_count
+            existing_wh.has_received_welfare = wh.has_received_welfare
+            existing_wh.total_received_amount = wh.total_received_amount
+            await session.flush()
+            await session.execute(
+                delete(WelfareHistoryDetail).where(WelfareHistoryDetail.welfare_history_id == applicant_id)
+            )
+        else:
+            new_wh = WelfareHistory(
+                applicant_id=applicant_id,
+                received_count=wh.received_count,
+                has_received_welfare=wh.has_received_welfare,
+                total_received_amount=wh.total_received_amount,
+            )
+            session.add(new_wh)
+            await session.flush()
+        for det in wh.history_details:
+            session.add(WelfareHistoryDetail(
+                welfare_history_id=applicant_id,
+                received_welfare_type_id=det.received_welfare_type_id,
+                received_other=det.received_other,
+            ))
+
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+
+    reloaded = await _load_full_applicant(session, applicant_id)
+    if reloaded is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="reload_failed")
+    return await applicant_to_case_read(reloaded)
+
+
 @router.get("/{applicant_id}", response_model=WelfareCaseRead)
 async def get_welfare_case(
     applicant_id: int,
@@ -427,6 +568,52 @@ async def get_welfare_evidence_file(
     }.get(suffix, "application/octet-stream")
     download_name = ev.file_original_name or ev.file_stored_name or path.name
     return FileResponse(path, media_type=media, filename=download_name)
+
+
+@router.delete(
+    "/{applicant_id}/evidences/{evidence_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="ลบหลักฐาน (รูป) — ลบทั้ง DB record และไฟล์บน disk",
+)
+async def delete_welfare_evidence(
+    applicant_id: int,
+    evidence_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    # ลบไฟล์จาก disk ก่อน (ถ้าไม่มีก็ข้ามได้)
+    root = resolved_upload_root().resolve()
+    path = (root / ev.file_path).resolve()
+    try:
+        path.relative_to(root)
+        path.unlink(missing_ok=True)
+    except ValueError:
+        pass  # path traversal guard — ข้ามการลบไฟล์ แต่ยังลบ DB record
+
+    await session.delete(ev)
+
+
+@router.patch(
+    "/{applicant_id}/evidences/{evidence_id}",
+    summary="แก้ไขชื่อเอกสาร (สำหรับ attachment_type_id = อื่นๆ)",
+)
+async def update_welfare_evidence_name(
+    applicant_id: int,
+    evidence_id: int,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+    if "file_other_type_name" in body:
+        ev.file_other_type_name = body["file_other_type_name"]
+    await session.commit()
+    await session.refresh(ev)
+    return {"id": ev.id, "file_other_type_name": ev.file_other_type_name}
 
 
 @router.post(
