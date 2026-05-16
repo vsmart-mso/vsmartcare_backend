@@ -186,6 +186,31 @@ async def _post_evidence_multipart(
         return r.json()
 
 
+async def _put_evidence_multipart(
+    url: str,
+    form_fields: Dict[str, Any],
+    file: UploadFile,
+    *,
+    timeout: float = 120.0,
+) -> Dict[str, Any]:
+    """ส่ง multipart PUT ไป case-service สำหรับแก้ไขรูปหลักฐาน."""
+    content = await file.read()
+    data: Dict[str, str] = {}
+    for k, v in form_fields.items():
+        if v is None:
+            continue
+        data[str(k)] = str(v)
+
+    fname = file.filename or "upload"
+    ct = file.content_type or "application/octet-stream"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        files = {"file": (fname, content, ct)}
+        r = await client.put(url, data=data, files=files)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
+
+
 async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
     """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -893,6 +918,32 @@ async def list_approve_case_for_staff(applicant_id: int = Query(..., ge=1)) -> A
 async def get_case(applicant_id: int) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/cases/{applicant_id}")
+
+
+@router.put(
+    "/v1/cases/{applicant_id}/evidences/{evidence_id}",
+    tags=["cases"],
+    summary="แก้ไขรูปหลักฐาน (multipart)",
+    description="ส่งต่อ `PUT …/v1/cases/{applicant_id}/evidences/{evidence_id}` — แทนที่รูปเดิมด้วยรูปใหม่",
+    dependencies=_v1_api_key,
+)
+async def update_case_evidence(
+    applicant_id: int,
+    evidence_id: int,
+    attachment_type_id: int = Form(...),
+    file_other_type_name: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}"
+    return await _put_evidence_multipart(
+        url,
+        {
+            "attachment_type_id": attachment_type_id,
+            "file_other_type_name": file_other_type_name,
+        },
+        file,
+    )
 
 
 @router.get(
