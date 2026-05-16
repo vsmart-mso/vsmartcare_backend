@@ -559,3 +559,23 @@ async def update_welfare_evidence_image(
     await session.flush()
     await session.refresh(ev)
     return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(ev))
+
+
+@router.delete(
+    "/{applicant_id}/evidences/{evidence_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="ลบรูปหลักฐาน",
+)
+async def delete_welfare_evidence_image(
+    applicant_id: int,
+    evidence_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    file_path = (resolved_upload_root() / ev.file_path).resolve()
+    await session.delete(ev)
+    await session.flush()
+    file_path.unlink(missing_ok=True)

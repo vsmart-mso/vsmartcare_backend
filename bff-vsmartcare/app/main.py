@@ -946,6 +946,20 @@ async def update_case_evidence(
     )
 
 
+@router.delete(
+    "/v1/cases/{applicant_id}/evidences/{evidence_id}",
+    tags=["cases"],
+    summary="ลบรูปหลักฐาน",
+    description="ส่งต่อ `DELETE …/v1/cases/{applicant_id}/evidences/{evidence_id}` — ลบ record และไฟล์จากดิสก์",
+    status_code=204,
+    dependencies=_v1_api_key,
+)
+async def delete_case_evidence(applicant_id: int, evidence_id: int) -> Response:
+    base = settings.case_service_url.rstrip("/")
+    await _delete(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}")
+    return Response(status_code=204)
+
+
 @router.get(
     "/v1/cases/{applicant_id}/evidences/{evidence_id}/file",
     tags=["cases"],
