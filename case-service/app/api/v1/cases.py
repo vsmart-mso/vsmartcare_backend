@@ -497,3 +497,65 @@ async def upload_welfare_evidence_image(
 
     await session.refresh(evidence)
     return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(evidence))
+
+
+@router.put(
+    "/{applicant_id}/evidences/{evidence_id}",
+    response_model=WelfareEvidenceUploadRead,
+    summary="แก้ไขรูปหลักฐาน",
+)
+async def update_welfare_evidence_image(
+    applicant_id: int,
+    evidence_id: int,
+    attachment_type_id: int = Form(..., ge=1),
+    file_other_type_name: str | None = Form(None),
+    file: UploadFile = File(..., description="ไฟล์รูปใหม่ (jpeg/png/webp/gif)"),
+    session: AsyncSession = Depends(get_session),
+) -> WelfareEvidenceUploadRead:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    normalized_other_name = await validate_welfare_evidence_upload(
+        session,
+        attachment_type_id,
+        file_other_type_name,
+    )
+
+    raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if raw_content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="unsupported_media_type_expect_image",
+        )
+
+    blob = await file.read()
+    if len(blob) > settings.max_upload_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
+
+    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
+    base = resolved_upload_root()
+    dest_dir = (base / str(applicant_id)).resolve()
+    try:
+        dest_dir.relative_to(base.resolve())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upload_path_invalid") from e
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}{ext}"
+    new_full_path = dest_dir / stored
+    new_full_path.write_bytes(blob)
+
+    old_file = (base / ev.file_path).resolve()
+    old_file.unlink(missing_ok=True)
+
+    ev.attachment_type_id = attachment_type_id
+    ev.file_path = f"{applicant_id}/{stored}"
+    ev.file_original_name = file.filename
+    ev.file_stored_name = stored
+    ev.file_size = len(blob)
+    ev.file_other_type_name = normalized_other_name
+
+    await session.flush()
+    await session.refresh(ev)
+    return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(ev))
