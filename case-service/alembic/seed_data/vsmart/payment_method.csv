@@ -1,0 +1,7 @@
+id,code,name_th,legacy_vsmart_value,sort_order,requires_ktb_form
+1,cash,เงินสด,False,1,false
+2,cheque,เช็ค,True,2,false
+3,bank_transfer,โอนเงินเข้าบัญชี,0,3,false
+4,promptpay,พร้อมเพย์ (Prompt Pay),1,4,false
+5,ktb_corporate,KTB Corporate Online,2,5,true
+6,epayment,e-Payment,3,6,false
