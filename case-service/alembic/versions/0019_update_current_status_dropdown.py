@@ -1,6 +1,6 @@
 """update current_status dropdown none to wait
 
-Revision ID: 0019_update_current_status_dropdown
+Revision ID: 0019_update_status_dropdown
 Revises: 0018_payment_is037_nullable
 Create Date: 2026-05-16 00:00:00.000000
 """
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0019_update_current_status_dropdown"
+revision: str = "0019_update_status_dropdown"
 down_revision: str | Sequence[str] | None = "0018_payment_is037_nullable"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
