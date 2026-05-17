@@ -15,7 +15,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
-    from .intake import AnnouncementRegulation
+    from .intake import AnnouncementRegulation, CaseHandling
 
 
 class LookupMixin:
@@ -103,6 +103,16 @@ class AddressType(LookupMixin, Base):
     """ประเภทที่อยู่ — ตามทะเบียนบ้าน / ปัจจุบัน ฯลฯ"""
 
     __tablename__ = "address_type"
+
+
+class TypeMoney(LookupMixin, Base):
+    """ประเภทเงิน (อุดหนุน / เฉพาะกิจ) — 1:n กับ case_handling"""
+
+    __tablename__ = "type_money"
+
+    case_handlings: Mapped[list["CaseHandling"]] = relationship(
+        back_populates="type_money",
+    )
 
 
 class TypeMoneyCategory(Base):

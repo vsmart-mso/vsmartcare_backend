@@ -25,6 +25,7 @@ from ...models.lookup import (
     ReceivedWelfareType,
     RequesterRelationType,
     RequestType,
+    TypeMoney,
 )
 from ...schemas.lookup import (
     AddressTypeRead,
@@ -39,6 +40,7 @@ from ...schemas.lookup import (
     ReceivedWelfareTypeRead,
     RequesterRelationTypeRead,
     RequestTypeRead,
+    TypeMoneyRead,
 )
 
 router = APIRouter(prefix="/v1/lookups", tags=["lookups"])
@@ -356,5 +358,23 @@ async def get_address_type(
 ) -> AddressTypeRead:
     return await _get_row(
         session, AddressType, AddressTypeRead, address_type_id, "address_type_not_found"
+    )
+
+
+# --- type-money ---
+
+
+@router.get("/type-money", response_model=list[TypeMoneyRead])
+async def list_type_money(session: AsyncSession = Depends(get_session)) -> list[TypeMoneyRead]:
+    return await _list_rows(session, TypeMoney, TypeMoneyRead)
+
+
+@router.get("/type-money/{type_money_id}", response_model=TypeMoneyRead)
+async def get_type_money(
+    type_money_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> TypeMoneyRead:
+    return await _get_row(
+        session, TypeMoney, TypeMoneyRead, type_money_id, "type_money_not_found"
     )
 

@@ -28,6 +28,7 @@ from .lookup import (
     ReceivedWelfareType,
     RequesterRelationType,
     RequestType,
+    TypeMoney,
     TypeMoneyCategory,
 )
 from .payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
@@ -76,6 +77,7 @@ __all__ = [
     "ScreeningLog",
     "SubDistrict",
     "SubDistrictPostcode",
+    "TypeMoney",
     "TypeMoneyCategory",
     "WelfareDdaRef",
     "WelfareEvidence",

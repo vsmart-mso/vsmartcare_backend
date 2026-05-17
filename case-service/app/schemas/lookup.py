@@ -116,6 +116,14 @@ class AddressTypeRead(_LookupRead):
     pass
 
 
+class TypeMoneyCreate(_LookupBase):
+    pass
+
+
+class TypeMoneyRead(_LookupRead):
+    pass
+
+
 class TypeMoneyCategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     name_acronym: str = Field(..., min_length=1, max_length=255)
