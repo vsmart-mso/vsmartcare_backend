@@ -83,10 +83,16 @@ class IncomeSourceType(LookupMixin, Base):
     __tablename__ = "income_source_types"
 
 
-class BankName(LookupMixin, Base):
+class BankName(Base):
     """ชื่อธนาคาร — อ้างอิงจาก applicants.bank_name_id"""
 
     __tablename__ = "bank_name"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    bank_id_mso: Mapped[int] = mapped_column(nullable=False)
+    bank_code: Mapped[str] = mapped_column(String(10), nullable=False)
+    order: Mapped[int] = mapped_column("order", nullable=False)
 
     applicants: Mapped[list["Applicant"]] = relationship(
         back_populates="bank_name",

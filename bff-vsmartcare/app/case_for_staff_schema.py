@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,12 @@ class CaseForStaffListResponse(BaseModel):
 
 
 class CaseForStaffFinanceRead(CaseForStaffRead):
+    bank_name_id: int | None = Field(None, ge=1)
+    bank_code: str | None = Field(None, max_length=10)
+    bank_account_no: str | None = Field(None, max_length=50)
+    email_address: str | None = Field(None, max_length=255)
+    mobile_phone: str | None = Field(None, max_length=20)
+    money_amount: Decimal | None = Field(None, ge=0)
     dda_ref: str | None = Field(None, max_length=255)
     count_037: int = Field(0, ge=0)
     count_038: int = Field(0, ge=0)

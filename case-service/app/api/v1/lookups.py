@@ -325,7 +325,10 @@ async def get_dependency_type(
 
 @router.get("/bank-names", response_model=list[BankNameRead])
 async def list_bank_names(session: AsyncSession = Depends(get_session)) -> list[BankNameRead]:
-    return await _list_rows(session, BankName, BankNameRead)
+    result = await session.execute(
+        select(BankName).order_by(BankName.order.asc(), BankName.id.asc()),
+    )
+    return [BankNameRead.model_validate(r) for r in result.scalars().all()]
 
 
 @router.get("/bank-names/{bank_name_id}", response_model=BankNameRead)
