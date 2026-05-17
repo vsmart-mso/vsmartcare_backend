@@ -319,6 +319,7 @@ async def create_welfare_case(
         econ = EconomicInfo(
             applicant_id=aid,
             housing_types_id=eco.housing_types_id,
+            housing_types_rent=eco.housing_types_rent,
             occupation=eco.occupation,
             monthly_income=eco.monthly_income,
             household_members=eco.household_members,
@@ -474,6 +475,7 @@ async def update_welfare_case(
             econ = EconomicInfo(
                 applicant_id=applicant_id,
                 housing_types_id=eco.housing_types_id,
+                housing_types_rent=eco.housing_types_rent,
                 occupation=eco.occupation,
                 monthly_income=eco.monthly_income,
                 household_members=eco.household_members,
