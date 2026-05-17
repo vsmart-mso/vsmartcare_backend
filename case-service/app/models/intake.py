@@ -1,12 +1,13 @@
 """ORM models สำหรับ payment intake flow — หน้า 11, 13, 20 (v2).
 
-ตารางใหม่ที่สร้างใน migration 0020–0022:
+ตารางใหม่ที่สร้างใน migration 0020–0026:
   - AnnouncementRegulation  (master ระเบียบ/ประกาศ)
   - CaseHandling            (hub รับเรื่อง 1:1 applicants)
   - CaseRegulationChoice    (ระเบียบที่เลือก หน้า 11)
   - PaymentMethod           (master วิธีจ่ายเงิน 6 แถว)
   - CasePayment             (วิธีจ่ายเงินตอนรับเรื่อง หน้า 13)
   - CaseKtbCorporate        (ข้อมูล KTB Corporate หน้า 20)
+  - type_money (lookup)     FK บน case_handling.type_money_id
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
-    from .lookup import BankName, TypeMoneyCategory
+    from .lookup import BankName, TypeMoney, TypeMoneyCategory
     from .person import Person
 
 
@@ -102,12 +103,21 @@ class CaseHandling(Base):
     vsmart_informer_id: Mapped[int | None] = mapped_column()
     vsmart_social_worker_id: Mapped[int | None] = mapped_column()
     sw_user_sdshv: Mapped[str | None] = mapped_column(String(255))
+    type_money_id: Mapped[int | None] = mapped_column(
+        ForeignKey("type_money.id"),
+        nullable=True,
+        index=True,
+    )
     intake_completed_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
     applicant: Mapped["Applicant"] = relationship(
         back_populates="case_handling",
+        lazy="selectin",
+    )
+    type_money: Mapped["TypeMoney | None"] = relationship(
+        back_populates="case_handlings",
         lazy="selectin",
     )
     regulation_choice: Mapped["CaseRegulationChoice | None"] = relationship(

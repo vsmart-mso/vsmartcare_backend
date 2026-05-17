@@ -8,6 +8,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.intake import KtbNotifyChannel, KtbRecipientCategory
+from .lookup import TypeMoneyRead
 
 
 # ---------------------------------------------------------------------------
@@ -104,11 +105,13 @@ class CaseHandlingRead(BaseModel):
     vsmart_informer_id: int | None = None
     vsmart_social_worker_id: int | None = None
     sw_user_sdshv: str | None = None
+    type_money_id: int | None = None
     intake_completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
     regulation_choice: RegulationChoiceRead | None = None
+    type_money: TypeMoneyRead | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
