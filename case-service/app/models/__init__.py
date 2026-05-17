@@ -5,6 +5,16 @@ from .applicant import Applicant
 from .dependency import DependencyLoad
 from .economic import EconomicIncomeSource, EconomicInfo
 from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
+from .intake import (
+    AnnouncementRegulation,
+    CaseHandling,
+    CaseKtbCorporate,
+    CasePayment,
+    CaseRegulationChoice,
+    KtbNotifyChannel,
+    KtbRecipientCategory,
+    PaymentMethod,
+)
 from .lookup import (
     AddressType,
     AttachmentType,
@@ -34,9 +44,14 @@ from .welfare import (
 __all__ = [
     "Address",
     "AddressType",
+    "AnnouncementRegulation",
     "Applicant",
     "AttachmentType",
     "BankName",
+    "CaseHandling",
+    "CaseKtbCorporate",
+    "CasePayment",
+    "CaseRegulationChoice",
     "CurrentStatus",
     "DependencyLoad",
     "DependencyType",
@@ -45,7 +60,10 @@ __all__ = [
     "EconomicInfo",
     "HousingType",
     "IncomeSourceType",
+    "KtbNotifyChannel",
+    "KtbRecipientCategory",
     "MaritalStatusType",
+    "PaymentMethod",
     "Person",
     "Postcode",
     "PrefixType",

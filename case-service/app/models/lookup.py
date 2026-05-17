@@ -15,6 +15,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
+    from .intake import AnnouncementRegulation
 
 
 class LookupMixin:
@@ -111,6 +112,9 @@ class TypeMoneyCategory(Base):
     activate: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     applicants: Mapped[list["Applicant"]] = relationship(
+        back_populates="type_money_category",
+    )
+    announcement_regulations: Mapped[list["AnnouncementRegulation"]] = relationship(
         back_populates="type_money_category",
     )
 

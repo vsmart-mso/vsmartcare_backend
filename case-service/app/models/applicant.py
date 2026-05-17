@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .address import Address
     from .dependency import DependencyLoad
     from .economic import EconomicInfo
+    from .intake import CaseHandling
     from .lookup import BankName, MaritalStatusType, RequesterRelationType, TypeMoneyCategory
     from .payment import ApproveCase, WelfarePayment
     from .person import Person
@@ -140,5 +141,10 @@ class Applicant(Base):
     )
     welfare_payments: Mapped[list["WelfarePayment"]] = relationship(
         back_populates="applicant",
+        cascade="all, delete-orphan",
+    )
+    case_handling: Mapped["CaseHandling | None"] = relationship(
+        back_populates="applicant",
+        uselist=False,
         cascade="all, delete-orphan",
     )
