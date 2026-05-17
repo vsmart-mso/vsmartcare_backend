@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -84,6 +84,12 @@ class Applicant(Base):
     sw_explorer_sdshv: Mapped[str | None] = mapped_column(String(255))
 
     time_count_process: Mapped[int | None] = mapped_column()
+
+    process_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    process_sla_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     is_emergency: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_existing_case: Mapped[bool] = mapped_column(default=False, nullable=False)

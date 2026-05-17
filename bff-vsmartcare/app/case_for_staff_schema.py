@@ -5,10 +5,23 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
+ProcessTrafficColor = Literal["green", "yellow", "orange", "red"]
 
-class CaseForStaffRead(BaseModel):
+
+class ProcessSlaFields(BaseModel):
+    process_started_at: datetime | None = None
+    process_sla_days: int | None = Field(None, ge=1)
+    process_elapsed_days: int | None = Field(None, ge=0)
+    process_remaining_days: int | None = None
+    process_traffic_color: ProcessTrafficColor | None = None
+    process_is_overdue: bool | None = None
+
+
+class CaseForStaffRead(ProcessSlaFields):
     applicant_id: int
     case_number: str | None = Field(None, max_length=100)
     current_status_id: int | None = None
@@ -63,3 +76,17 @@ class CaseForStaffFinanceListResponse(BaseModel):
     total_applicants: int = Field(..., ge=0)
     filtered_applicants: int = Field(..., ge=0)
     items: list[CaseForStaffFinanceRead] = Field(default_factory=list)
+
+
+class CaseForStaffApplicantStaffFieldsRead(ProcessSlaFields):
+    """ผลลัพธ์หลัง PATCH applicant-staff-fields — mirror case-service."""
+
+    applicant_id: int
+    type_money_category_id: int | None = None
+    type_money_name: str | None = Field(None, max_length=255)
+    type_money_name_acronym: str | None = Field(None, max_length=255)
+    type_money_color: str | None = Field(None, max_length=32)
+    sw_explorer_sdshv: str | None = Field(None, max_length=255)
+    is_emergency: bool = False
+    time_count_process: int | None = Field(None, ge=0)
+    updated_at: datetime

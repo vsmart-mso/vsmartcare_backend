@@ -16,6 +16,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import BaseModel, Field
 
 from .case_for_staff_schema import (
+    CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
     CaseForStaffListResponse,
@@ -864,20 +865,23 @@ async def get_current_status_for_staff(current_status_id: int):
     summary="อัปเดตประเภทเงิน / ผู้สำรวจ SDSHV (applicants)",
     description=(
         "ส่งต่อ `PATCH …/v1/case_for_staff/applicant-staff-fields?applicant_id=…` — "
-        "อัปเดต `type_money_category_id` และ/หรือ `sw_explorer_sdshv` ในตาราง applicants"
+        "อัปเดต `type_money_category_id` และ/หรือ `sw_explorer_sdshv` ในตาราง applicants "
+        "(คืน process_sla_days และฟิลด์ SLA ที่คำนวณ)"
     ),
+    response_model=CaseForStaffApplicantStaffFieldsRead,
     dependencies=_v1_api_key,
 )
 async def update_case_for_staff_applicant_staff_fields(
     applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
     body: CaseForStaffApplicantStaffFieldsUpdateBody = ...,
-) -> Any:
+) -> CaseForStaffApplicantStaffFieldsRead:
     base = settings.case_service_url.rstrip("/")
     payload = body.model_dump(exclude_unset=True)
-    return await _patch(
+    data = await _patch(
         f"{base}/v1/case_for_staff/applicant-staff-fields?applicant_id={applicant_id}",
         json=payload,
     )
+    return CaseForStaffApplicantStaffFieldsRead.model_validate(data)
 
 
 @router.post(

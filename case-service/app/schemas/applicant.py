@@ -9,6 +9,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from .process_sla import ProcessSlaFields
+
 
 class ApplicantBase(BaseModel):
     persons_id: int
@@ -61,7 +63,7 @@ class ApplicantUpdate(BaseModel):
     age: int | None = Field(None, ge=0)
 
 
-class ApplicantRead(ApplicantBase):
+class ApplicantRead(ApplicantBase, ProcessSlaFields):
     id: int
     created_at: datetime
     updated_at: datetime

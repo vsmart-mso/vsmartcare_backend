@@ -7,9 +7,10 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from .lookup import CurrentStatusRead
+from .process_sla import ProcessSlaFields
 
 
-class CaseDisplayRead(BaseModel):
+class CaseDisplayRead(ProcessSlaFields):
     applicant_id: int
     case_number: str | None = Field(None, max_length=100)
     datetime_create: datetime
