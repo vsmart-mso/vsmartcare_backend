@@ -20,9 +20,10 @@ from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
-from ...models.lookup import AttachmentType, CurrentStatus, TypeMoneyCategory
+from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
+from ...models.intake import CaseHandling, CaseRegulationChoice
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from ...services.file_payment_upload import (
     file_payment_upload_root,
@@ -627,8 +628,20 @@ async def _list_cases_for_staff_finance_impl(
             func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
             func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
             payment_stats_sq.c.is_037_or_038.label("is_037_or_038"),
+            Applicant.bank_name_id.label("bank_name_id"),
+            BankName.bank_code.label("bank_code"),
+            Applicant.bank_account_no.label("bank_account_no"),
+            Applicant.email_address.label("email_address"),
+            Applicant.mobile_phone.label("mobile_phone"),
+            CaseRegulationChoice.money_amount.label("money_amount"),
         )
         .join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
+        .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+        .outerjoin(
+            CaseRegulationChoice,
+            CaseRegulationChoice.case_handling_id == CaseHandling.id,
+        )
         .outerjoin(
             primary_address_sq,
             and_(

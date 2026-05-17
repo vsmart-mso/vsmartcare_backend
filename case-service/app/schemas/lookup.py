@@ -92,12 +92,20 @@ class IncomeSourceTypeRead(_LookupRead):
     pass
 
 
-class BankNameCreate(_LookupBase):
+class BankNameBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    bank_id_mso: int = Field(..., ge=0)
+    bank_code: str = Field(..., min_length=1, max_length=10)
+    order: int = Field(..., ge=0)
+
+
+class BankNameCreate(BankNameBase):
     pass
 
 
-class BankNameRead(_LookupRead):
-    pass
+class BankNameRead(BankNameBase):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AddressTypeCreate(_LookupBase):

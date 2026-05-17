@@ -448,14 +448,10 @@ async def check_existing_case_by_cid(
         api_key_header=settings.vsmart_main_api_key_header,
         timeout=timeout,
     )
-    print("vsmart_task", vsmart_task)
-    print("--------------------------------")
-
+  
     sources = list(await asyncio.gather(self_task, mso_task, vsmart_task))
     is_existing = any(s.found for s in sources if s.available)
-    print("sources", sources)
-    print("is_existing", is_existing)
-    print("--------------------------------")
+  
     return ExistingCaseCheckResult(
         cid=normalized,
         is_existing_case=is_existing,

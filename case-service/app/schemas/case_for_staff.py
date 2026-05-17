@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +60,16 @@ class CaseForStaffListResponse(BaseModel):
 class CaseForStaffFinanceRead(CaseForStaffRead):
     """แถวตารางการเงิน — ข้อมูลพื้นฐานเหมือน CaseForStaffRead + DDA และสรุป welfare_payment."""
 
+    bank_name_id: int | None = Field(None, ge=1, description="applicants.bank_name_id")
+    bank_code: str | None = Field(None, max_length=10, description="bank_name.bank_code")
+    bank_account_no: str | None = Field(None, max_length=50, description="applicants.bank_account_no")
+    email_address: str | None = Field(None, max_length=255, description="applicants.email_address")
+    mobile_phone: str | None = Field(None, max_length=20, description="applicants.mobile_phone")
+    money_amount: Decimal | None = Field(
+        None,
+        ge=0,
+        description="case_regulation_choice.money_amount (ผ่าน case_handling)",
+    )
     dda_ref: str | None = Field(None, max_length=255, description="dda_ref ล่าสุดจาก welfare_dda_ref (ผ่าน welfare_payment)")
     count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false")
     count_038: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = true")

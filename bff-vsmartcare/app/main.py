@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
@@ -152,10 +153,23 @@ def _http_error_detail_from_response(r: httpx.Response) -> Any:
     return d
 
 
+def _json_safe_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """แปลง date/datetime/Decimal ใน dict ให้ httpx json= serialize ได้."""
+
+    def _default(value: object) -> str:
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return format(value, "f")
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+    return json.loads(json.dumps(payload, default=_default))
+
+
 async def _post(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
     """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, json=json)
+        r = await client.post(url, json=_json_safe_payload(json))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -214,7 +228,7 @@ async def _put_evidence_multipart(
 async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
     """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.patch(url, json=json)
+        r = await client.patch(url, json=_json_safe_payload(json))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -594,7 +608,8 @@ async def list_cases_for_staff(
     summary="รายการคำร้องสำหรับตารางการเงิน",
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff/finance` — บังคับ `province_id`, เฉพาะเคสที่ approve_case.approve_status = true, "
-        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, count_037, count_038, is_037_or_038"
+        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, count_037, count_038, is_037_or_038, "
+        "bank_name_id, bank_code, bank_account_no, email_address, mobile_phone, money_amount"
     ),
     response_model=CaseForStaffFinanceListResponse,
     dependencies=_v1_api_key,
@@ -658,7 +673,7 @@ async def list_cases_for_staff_finance(
     summary="รายการคำร้องการเงิน (มี welfare_payment + welfare_dda_ref)",
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff/finance/with-dda-ref` — เหมือน /finance แต่ดึงเฉพาะ applicant "
-        "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว"
+        "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว; คืนฟิลด์ธนาคาร/ติดต่อเหมือน /finance"
     ),
     response_model=CaseForStaffFinanceListResponse,
     dependencies=_v1_api_key,
@@ -722,7 +737,7 @@ async def update_welfare_payment_for_staff(
     body: WelfarePaymentUpdateBody = Body(...),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
-    payload = body.model_dump(exclude_unset=True)
+    payload = body.model_dump(exclude_unset=True, mode="json")
     return await _patch(
         f"{base}/v1/case_for_staff/welfare-payment?applicant_id={applicant_id}",
         json=payload,
@@ -1377,6 +1392,10 @@ async def bff_get_requester_relation_type(requester_relation_type_id: int):
     "/v1/lookups/bank-names",
     tags=["lookups"],
     summary="รายการชื่อธนาคาร",
+    description=(
+        "ส่งต่อ `GET .../v1/lookups/bank-names` — เรียงตาม `order` แล้ว `id`; "
+        "แต่ละรายการมี `bank_id_mso`, `bank_code`, `order`"
+    ),
     dependencies=_v1_api_key,
 )
 async def bff_list_bank_names():
@@ -1387,6 +1406,10 @@ async def bff_list_bank_names():
     "/v1/lookups/bank-names/{bank_name_id}",
     tags=["lookups"],
     summary="ดึงชื่อธนาคารตาม id",
+    description=(
+        "ส่งต่อ `GET .../v1/lookups/bank-names/{bank_name_id}` — "
+        "รวม `bank_id_mso`, `bank_code`, `order`"
+    ),
     dependencies=_v1_api_key,
 )
 async def bff_get_bank_name(bank_name_id: int):
