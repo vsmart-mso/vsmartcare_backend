@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from .process_sla import ProcessSlaFields
 from .address import AddressRead
 from .applicant import ApplicantRead
 from .dependency import DependencyLoadRead
@@ -21,7 +22,7 @@ from .welfare import (
 )
 
 
-class CaseForStaffRead(BaseModel):
+class CaseForStaffRead(ProcessSlaFields):
     applicant_id: int
     case_number: str | None = Field(None, max_length=100)
     current_status_id: int | None = None
@@ -115,7 +116,7 @@ class CaseForStaffApplicantStaffFieldsUpdate(BaseModel):
     )
 
 
-class CaseForStaffApplicantStaffFieldsRead(BaseModel):
+class CaseForStaffApplicantStaffFieldsRead(ProcessSlaFields):
     """ผลลัพธ์หลังอัปเดต type_money_category_id / sw_explorer_sdshv."""
 
     applicant_id: int
@@ -124,6 +125,8 @@ class CaseForStaffApplicantStaffFieldsRead(BaseModel):
     type_money_name_acronym: str | None = Field(None, max_length=255)
     type_money_color: str | None = Field(None, max_length=32)
     sw_explorer_sdshv: str | None = Field(None, max_length=255)
+    is_emergency: bool = False
+    time_count_process: int | None = Field(None, ge=0)
     updated_at: datetime
 
 
@@ -136,7 +139,7 @@ class PorKor1TypeMoney(BaseModel):
     color: str | None = Field(None, max_length=32)
 
 
-class PorKor1Summary(BaseModel):
+class PorKor1Summary(ProcessSlaFields):
     """สรุปอ้างอิงคำร้อง — ใช้หัวจอสรุป / ระบบอื่น."""
 
     applicant_id: int

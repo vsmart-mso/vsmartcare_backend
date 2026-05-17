@@ -25,6 +25,11 @@ from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.intake import CaseHandling, CaseRegulationChoice
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
+from ...services.process_sla import (
+    apply_emergency_flag_for_money_category,
+    apply_process_sla_to_applicant,
+    process_sla_fields_dict,
+)
 from ...services.file_payment_upload import (
     file_payment_upload_root,
     resolve_welfare_dda_ref_id_for_applicant,
@@ -137,6 +142,28 @@ def _load_esignature_base64(esignature_path: str | None) -> str | None:
 
 router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
 
+
+def _enrich_row_process_sla(data: dict[str, object]) -> None:
+    data.update(
+        process_sla_fields_dict(
+            data.get("process_started_at"),  # type: ignore[arg-type]
+            data.get("process_sla_days"),  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _row_to_case_for_staff_read(row: object) -> CaseForStaffRead:
+    data = dict(row)  # type: ignore[arg-type]
+    _enrich_row_process_sla(data)
+    return CaseForStaffRead.model_validate(data)
+
+
+def _row_to_case_for_staff_finance_read(row: object) -> CaseForStaffFinanceRead:
+    data = dict(row)  # type: ignore[arg-type]
+    _enrich_row_process_sla(data)
+    return CaseForStaffFinanceRead.model_validate(data)
+
+
 def _por_kor_1_address_geo(a: Address) -> tuple[
     int | None,
     str | None,
@@ -188,10 +215,10 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         type_money=type_money,
         is_emergency=orm.is_emergency,
         is_existing_case=orm.is_existing_case,
-        time_count_process=orm.time_count_process,
         sw_explorer_sdshv=orm.sw_explorer_sdshv,
         applicant_created_at=orm.created_at,
         applicant_updated_at=orm.updated_at,
+        **process_sla_fields_dict(orm.process_started_at, orm.process_sla_days),
     )
 
     person_orm = orm.person
@@ -390,7 +417,8 @@ async def list_cases_for_staff(
             Applicant.created_at.label("datetime_create"),
             Applicant.is_emergency.label("is_emergency"),
             Applicant.is_existing_case.label("is_existing_case"),
-            Applicant.time_count_process.label("time_count_process"),
+            Applicant.process_started_at.label("process_started_at"),
+            Applicant.process_sla_days.label("process_sla_days"),
             Province.id.label("province_id"),
             Province.name.label("province_name"),
             District.id.label("district_id"),
@@ -474,7 +502,7 @@ async def list_cases_for_staff(
         province_name=province.name,
         total_applicants=total_applicants or 0,
         filtered_applicants=filtered_applicants or 0,
-        items=[CaseForStaffRead.model_validate(row) for row in rows],
+        items=[_row_to_case_for_staff_read(row) for row in rows],
     )
 
 
@@ -615,7 +643,8 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.created_at.label("datetime_create"),
             Applicant.is_emergency.label("is_emergency"),
             Applicant.is_existing_case.label("is_existing_case"),
-            Applicant.time_count_process.label("time_count_process"),
+            Applicant.process_started_at.label("process_started_at"),
+            Applicant.process_sla_days.label("process_sla_days"),
             Province.id.label("province_id"),
             Province.name.label("province_name"),
             District.id.label("district_id"),
@@ -731,7 +760,7 @@ async def _list_cases_for_staff_finance_impl(
         province_name=province.name,
         total_applicants=total_applicants or 0,
         filtered_applicants=filtered_applicants or 0,
-        items=[CaseForStaffFinanceRead.model_validate(row) for row in rows],
+        items=[_row_to_case_for_staff_finance_read(row) for row in rows],
     )
 
 
@@ -1007,20 +1036,45 @@ async def update_applicant_staff_fields_for_staff(
     applicant = await session.get(
         Applicant,
         applicant_id,
-        options=[selectinload(Applicant.type_money_category)],
+        options=[
+            selectinload(Applicant.type_money_category),
+            selectinload(Applicant.bank_name),
+        ],
     )
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
     if "type_money_category_id" in payload:
+        old_category_id = applicant.type_money_category_id
+        old_started_at = applicant.process_started_at
         tmc_id = payload["type_money_category_id"]
         if tmc_id is not None:
-            if await _get_row(session, TypeMoneyCategory, tmc_id) is None:
+            tmc_row = await _get_row(session, TypeMoneyCategory, tmc_id)
+            if tmc_row is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="type_money_category_not_found",
                 )
+        else:
+            tmc_row = None
         applicant.type_money_category_id = tmc_id
+
+        bank_code = applicant.bank_name.bank_code if applicant.bank_name else None
+        category_acronym = tmc_row.name_acronym if tmc_row is not None else None
+        start_process = old_started_at is None and tmc_id is not None
+        category_changed = tmc_id != old_category_id
+        recalc_sla_only = old_started_at is not None and (
+            category_changed or tmc_id is None
+        )
+        if start_process or recalc_sla_only:
+            apply_process_sla_to_applicant(
+                applicant,
+                category_acronym=category_acronym,
+                bank_code=bank_code,
+                start_process=start_process,
+                recalc_sla_only=recalc_sla_only,
+            )
+        apply_emergency_flag_for_money_category(applicant, category_acronym)
 
     if "sw_explorer_sdshv" in payload:
         applicant.sw_explorer_sdshv = payload["sw_explorer_sdshv"]
@@ -1042,7 +1096,9 @@ async def update_applicant_staff_fields_for_staff(
         type_money_name_acronym=tmc.name_acronym if tmc else None,
         type_money_color=tmc.color if tmc else None,
         sw_explorer_sdshv=applicant.sw_explorer_sdshv,
+        is_emergency=applicant.is_emergency,
         updated_at=applicant.updated_at,
+        **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
     )
 
 

@@ -43,6 +43,7 @@ from ...schemas.case_welfare import (
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
+from ...services.process_sla import process_sla_fields_dict
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
@@ -127,10 +128,10 @@ async def applicant_to_display_read(applicant: Applicant) -> CaseDisplayRead:
         applicant_id=applicant.id,
         case_number=applicant.case_number,
         datetime_create=applicant.created_at,
-        time_count_process=applicant.time_count_process,
         is_existing_case=applicant.is_existing_case,
         current_status=CurrentStatusRead.model_validate(status) if status is not None else None,
         description_public=status.description_public if status is not None else None,
+        **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
     )
 
 
@@ -171,8 +172,14 @@ async def applicant_to_case_read(applicant: Applicant) -> WelfareCaseRead:
             updated_at=welfare_history_model.updated_at,
         )
 
+    applicant_read = ApplicantRead.model_validate(
+        {
+            **ApplicantRead.model_validate(applicant).model_dump(),
+            **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
+        },
+    )
     return WelfareCaseRead(
-        applicant=ApplicantRead.model_validate(applicant),
+        applicant=applicant_read,
         addresses=[AddressRead.model_validate(a) for a in sorted(applicant.addresses, key=lambda x: x.id)],
         dependency_loads=[
             DependencyLoadRead.model_validate(d)
@@ -406,7 +413,14 @@ async def update_welfare_case(
     - field = list ใหม่ → ลบของเดิมทั้งหมดแล้ว insert ใหม่ (replace)
     """
     # ตรวจว่า case มีอยู่จริง
-    applicant_row = await session.get(Applicant, applicant_id)
+    applicant_row = await session.get(
+        Applicant,
+        applicant_id,
+        options=[
+            selectinload(Applicant.type_money_category),
+            selectinload(Applicant.bank_name),
+        ],
+    )
     if applicant_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
 
