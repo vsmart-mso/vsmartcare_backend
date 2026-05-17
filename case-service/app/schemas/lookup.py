@@ -124,6 +124,14 @@ class TypeMoneyRead(_LookupRead):
     pass
 
 
+class BankAccountTypeRead(BaseModel):
+    id: int
+    name: str
+    sort_order: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TypeMoneyCategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     name_acronym: str = Field(..., min_length=1, max_length=255)

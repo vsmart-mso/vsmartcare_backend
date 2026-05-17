@@ -16,7 +16,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -48,7 +48,7 @@ from ...schemas.intake import (
     RegulationRead,
 )
 
-router = APIRouter(tags=["intake"])
+router = APIRouter(prefix="/v1/intake", tags=["intake"])
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +115,7 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
             ),
             selectinload(CaseHandling.payment).selectinload(CasePayment.payment_method),
             selectinload(CaseHandling.ktb_corporate),
+            selectinload(CaseHandling.type_money),
         ),
     )
 
@@ -125,7 +126,7 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
 
 
 @router.get(
-    "/v1/regulations",
+    "/regulations",
     response_model=list[RegulationDropdownItem],
     summary="รายการระเบียบสำหรับ dropdown หน้า 11",
     description=(
@@ -134,7 +135,6 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
     ),
 )
 async def list_regulations(
-    type_money_category_id: int | None = Query(None, description="กรองตามหมวดเงิน"),
     citizen: str | None = Query(None, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     budget_year: int | None = Query(
         None, description="ปีงบประมาณไทย (พ.ศ.) เช่น 2568 — ใช้นับ count_used"
@@ -149,10 +149,6 @@ async def list_regulations(
             AnnouncementRegulation.id.asc(),
         )
     )
-    if type_money_category_id is not None:
-        stmt = stmt.where(
-            AnnouncementRegulation.type_money_category_id == type_money_category_id
-        )
 
     regs = list((await session.execute(stmt)).scalars().all())
 
@@ -190,8 +186,11 @@ async def list_regulations(
                 code=reg.code,
                 name=reg.name,
                 display_name=_regulation_display_name(reg),
+                type_money_category_id=reg.type_money_category_id,
+                type_money_category_name_acronym=reg.type_money_category.name_acronym,
                 maximum_money=reg.maximum_money,
                 limit_per_budget_year=reg.limit_per_budget_year,
+                activate=reg.activate,
                 count_used=count,
                 disabled=disabled,
             )
@@ -205,7 +204,7 @@ async def list_regulations(
 
 
 @router.get(
-    "/v1/regulations/{regulation_id}",
+    "/regulations/{regulation_id}",
     response_model=RegulationRead,
     summary="รายละเอียดระเบียบ",
 )
@@ -225,7 +224,7 @@ async def get_regulation(
 
 
 @router.get(
-    "/v1/payment-methods",
+    "/payment-methods",
     response_model=list[PaymentMethodRead],
     summary="รายการวิธีจ่ายเงินสำหรับ dropdown หน้า 13",
 )
@@ -250,7 +249,7 @@ async def list_payment_methods(
 
 
 @router.get(
-    "/v1/cases/{applicant_id}/intake",
+    "/cases/{applicant_id}",
     response_model=CaseIntakeRead,
     summary="ดูสถานะ intake ทั้งหมด (หน้า 11, 13, 20)",
 )
@@ -269,7 +268,7 @@ async def get_intake(
 
 
 @router.post(
-    "/v1/cases/{applicant_id}/intake",
+    "/cases/{applicant_id}",
     response_model=CaseIntakeRead,
     status_code=status.HTTP_201_CREATED,
     summary="บันทึกข้อมูลหน้า 11 (eleven_insert) — upsert case_handling + regulation_choice",
@@ -310,6 +309,7 @@ async def upsert_intake_handling(
             vsmart_informer_id=body.vsmart_informer_id,
             vsmart_social_worker_id=body.vsmart_social_worker_id,
             sw_user_sdshv=body.sw_user_sdshv,
+            type_money_id=body.type_money_id,
         )
         session.add(handling)
         await session.flush()
@@ -320,7 +320,9 @@ async def upsert_intake_handling(
             handling.vsmart_social_worker_id = body.vsmart_social_worker_id
         if body.sw_user_sdshv is not None:
             handling.sw_user_sdshv = body.sw_user_sdshv
-        handling.updated_at = datetime.now(tz=timezone.utc)
+        if body.type_money_id is not None:
+            handling.type_money_id = body.type_money_id
+        handling.updated_at = datetime.utcnow()
 
     # Upsert case_regulation_choice
     choice = await session.scalar(
@@ -346,7 +348,7 @@ async def upsert_intake_handling(
         choice.comment = body.comment
         choice.esignature = body.esignature
         choice.signed_by_sdshv = body.signed_by_sdshv
-        choice.updated_at = datetime.now(tz=timezone.utc)
+        choice.updated_at = datetime.utcnow()
 
     await session.commit()
     reloaded = await _load_handling_full(session, applicant_id)
@@ -359,7 +361,7 @@ async def upsert_intake_handling(
 
 
 @router.patch(
-    "/v1/cases/{applicant_id}/intake",
+    "/cases/{applicant_id}",
     response_model=CaseIntakeRead,
     summary="แก้ไขข้อมูลหน้า 11 (เหมือน POST แต่ต้องมี case_handling อยู่แล้ว)",
 )
@@ -379,7 +381,7 @@ async def patch_intake_handling(
 
 
 @router.post(
-    "/v1/cases/{applicant_id}/intake/payment",
+    "/cases/{applicant_id}/payment",
     response_model=CasePaymentRead,
     status_code=status.HTTP_201_CREATED,
     summary="บันทึกวิธีจ่ายเงินหน้า 13 (thirteen_insert) — upsert case_payment",
@@ -428,11 +430,11 @@ async def upsert_intake_payment(
     else:
         for k, v in fields.items():
             setattr(payment, k, v)
-        payment.updated_at = datetime.now(tz=timezone.utc)
+        payment.updated_at = datetime.utcnow()
 
     # อัปเดต intake_completed_at เมื่อบันทึกการจ่ายเงินครั้งแรก
     if handling.intake_completed_at is None:
-        handling.intake_completed_at = datetime.now(tz=timezone.utc)
+        handling.intake_completed_at = datetime.utcnow()
 
     await session.commit()
 
@@ -450,7 +452,7 @@ async def upsert_intake_payment(
 
 
 @router.get(
-    "/v1/cases/{applicant_id}/intake/payment",
+    "/cases/{applicant_id}/payment",
     response_model=CasePaymentRead,
     summary="ดูข้อมูลวิธีจ่ายเงิน (case_payment)",
 )
@@ -477,7 +479,7 @@ async def get_intake_payment(
 
 
 @router.patch(
-    "/v1/cases/{applicant_id}/intake/payment",
+    "/cases/{applicant_id}/payment",
     response_model=CasePaymentRead,
     summary="แก้ไขวิธีจ่ายเงิน (case_payment)",
 )
@@ -503,7 +505,7 @@ async def patch_intake_payment(
 
 
 @router.post(
-    "/v1/cases/{applicant_id}/intake/ktb",
+    "/cases/{applicant_id}/ktb",
     response_model=CaseKtbCorporateRead,
     status_code=status.HTTP_201_CREATED,
     summary="บันทึก KTB Corporate Online หน้า 20 (twenty_insert) — upsert case_ktb_corporate",
@@ -555,11 +557,11 @@ async def upsert_intake_ktb(
     else:
         for k, v in fields.items():
             setattr(ktb, k, v)
-        ktb.updated_at = datetime.now(tz=timezone.utc)
+        ktb.updated_at = datetime.utcnow()
 
     # อัปเดต intake_completed_at ถ้ายังไม่มี
     if handling.intake_completed_at is None:
-        handling.intake_completed_at = datetime.now(tz=timezone.utc)
+        handling.intake_completed_at = datetime.utcnow()
 
     await session.commit()
     await session.refresh(ktb)
@@ -572,7 +574,7 @@ async def upsert_intake_ktb(
 
 
 @router.get(
-    "/v1/cases/{applicant_id}/intake/ktb",
+    "/cases/{applicant_id}/ktb",
     response_model=CaseKtbCorporateRead,
     summary="ดูข้อมูล KTB Corporate (case_ktb_corporate)",
 )
@@ -597,7 +599,7 @@ async def get_intake_ktb(
 
 
 @router.patch(
-    "/v1/cases/{applicant_id}/intake/ktb",
+    "/cases/{applicant_id}/ktb",
     response_model=CaseKtbCorporateRead,
     summary="แก้ไขข้อมูล KTB Corporate",
 )

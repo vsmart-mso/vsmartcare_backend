@@ -56,6 +56,7 @@ _TAGS = [
     {"name": "geo", "description": "ข้อมูลจังหวัด อำเภอ ตำบล รหัสไปรษณีย์ จาก case-service"},
     {"name": "notifications", "description": "การแจ้งเตือน"},
     {"name": "auth", "description": "Login ThaiD"},
+    {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -1135,6 +1136,157 @@ def _case_lookup_url(path_under_v1: str) -> str:
     return f"{base}/{path_under_v1.lstrip('/')}"
 
 
+# --- intake: บันทึก/แก้ไขข้อมูลการรับเรื่อง (หน้า 11, 13, 20) ---
+
+
+@router.get(
+    "/v1/intake/regulations",
+    tags=["intake"],
+    summary="รายการระเบียบสำหรับ dropdown หน้า 11",
+    dependencies=_v1_api_key,
+)
+async def bff_list_regulations(
+    citizen: Optional[str] = Query(None),
+    budget_year: Optional[int] = Query(None),
+):
+    base = settings.case_service_url.rstrip("/")
+    params = {}
+    if citizen is not None:
+        params["citizen"] = citizen
+    if budget_year is not None:
+        params["budget_year"] = budget_year
+    query_string = urlencode(params)
+    url = f"{base}/v1/intake/regulations?{query_string}" if query_string else f"{base}/v1/intake/regulations"
+    return await _get(url)
+
+
+@router.get(
+    "/v1/intake/regulations/{regulation_id}",
+    tags=["intake"],
+    summary="รายละเอียดระเบียบ",
+    dependencies=_v1_api_key,
+)
+async def bff_get_regulation(regulation_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/intake/regulations/{regulation_id}")
+
+
+@router.get(
+    "/v1/intake/payment-methods",
+    tags=["intake"],
+    summary="รายการวิธีจ่ายเงินสำหรับ dropdown หน้า 13",
+    dependencies=_v1_api_key,
+)
+async def bff_list_payment_methods():
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/intake/payment-methods")
+
+
+@router.get(
+    "/v1/intake/cases/{applicant_id}",
+    tags=["intake"],
+    summary="ดูสถานะ intake ทั้งหมด (หน้า 11, 13, 20)",
+    dependencies=_v1_api_key,
+)
+async def bff_get_intake(applicant_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/intake/cases/{applicant_id}")
+
+
+@router.post(
+    "/v1/intake/cases/{applicant_id}",
+    tags=["intake"],
+    summary="บันทึกข้อมูลหน้า 11 (eleven_insert) — upsert case_handling + regulation_choice",
+    dependencies=_v1_api_key,
+)
+async def bff_upsert_intake_handling(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/intake/cases/{applicant_id}", json=body)
+
+
+@router.patch(
+    "/v1/intake/cases/{applicant_id}",
+    tags=["intake"],
+    summary="แก้ไขข้อมูลหน้า 11",
+    dependencies=_v1_api_key,
+)
+async def bff_patch_intake_handling(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(f"{base}/v1/intake/cases/{applicant_id}", json=body)
+
+
+@router.post(
+    "/v1/intake/cases/{applicant_id}/payment",
+    tags=["intake"],
+    summary="บันทึกวิธีจ่ายเงินหน้า 13",
+    dependencies=_v1_api_key,
+)
+async def bff_upsert_intake_payment(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/intake/cases/{applicant_id}/payment", json=body)
+
+
+@router.get(
+    "/v1/intake/cases/{applicant_id}/payment",
+    tags=["intake"],
+    summary="ดูข้อมูลวิธีจ่ายเงิน (case_payment)",
+    dependencies=_v1_api_key,
+)
+async def bff_get_intake_payment(applicant_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/intake/cases/{applicant_id}/payment")
+
+
+@router.patch(
+    "/v1/intake/cases/{applicant_id}/payment",
+    tags=["intake"],
+    summary="แก้ไขวิธีจ่ายเงิน (case_payment)",
+    dependencies=_v1_api_key,
+)
+async def bff_patch_intake_payment(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(f"{base}/v1/intake/cases/{applicant_id}/payment", json=body)
+
+
+@router.post(
+    "/v1/intake/cases/{applicant_id}/ktb",
+    tags=["intake"],
+    summary="บันทึก KTB Corporate Online หน้า 20",
+    dependencies=_v1_api_key,
+)
+async def bff_upsert_intake_ktb(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/intake/cases/{applicant_id}/ktb", json=body)
+
+
+@router.get(
+    "/v1/intake/cases/{applicant_id}/ktb",
+    tags=["intake"],
+    summary="ดูข้อมูล KTB Corporate (case_ktb_corporate)",
+    dependencies=_v1_api_key,
+)
+async def bff_get_intake_ktb(applicant_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/intake/cases/{applicant_id}/ktb")
+
+
+@router.patch(
+    "/v1/intake/cases/{applicant_id}/ktb",
+    tags=["intake"],
+    summary="แก้ไขข้อมูล KTB Corporate",
+    dependencies=_v1_api_key,
+)
+async def bff_patch_intake_ktb(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(f"{base}/v1/intake/cases/{applicant_id}/ktb", json=body)
+
+
 # --- lookups: เส้นและชื่อพารามิเตอร์ตรงกับ case-service (ไม่ใช้ query บอกประเภท master) ---
 
 
@@ -1414,6 +1566,26 @@ async def bff_list_bank_names():
 )
 async def bff_get_bank_name(bank_name_id: int):
     return await _get(_case_lookup_url(f"v1/lookups/bank-names/{bank_name_id}"))
+
+
+@router.get(
+    "/v1/lookups/bank-account-types",
+    tags=["lookups"],
+    summary="รายการประเภทบัญชีธนาคาร",
+    dependencies=_v1_api_key,
+)
+async def bff_list_bank_account_types():
+    return await _get(_case_lookup_url("v1/lookups/bank-account-types"))
+
+
+@router.get(
+    "/v1/lookups/bank-account-types/{bank_account_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทบัญชีธนาคารตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_bank_account_type(bank_account_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/bank-account-types/{bank_account_type_id}"))
 
 
 @router.get(

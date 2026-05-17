@@ -18,6 +18,7 @@ from .intake import (
 from .lookup import (
     AddressType,
     AttachmentType,
+    BankAccountType,
     BankName,
     CurrentStatus,
     DependencyType,
@@ -48,6 +49,7 @@ __all__ = [
     "AnnouncementRegulation",
     "Applicant",
     "AttachmentType",
+    "BankAccountType",
     "BankName",
     "CaseHandling",
     "CaseKtbCorporate",

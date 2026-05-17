@@ -25,7 +25,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
-    from .lookup import BankName, TypeMoney, TypeMoneyCategory
+    from .lookup import BankAccountType, BankName, TypeMoney, TypeMoneyCategory
     from .person import Person
 
 
@@ -246,7 +246,10 @@ class CasePayment(Base):
         index=True,
     )
     bank_branch: Mapped[str | None] = mapped_column(String(255))
-    account_type: Mapped[str | None] = mapped_column(String(100))
+    bank_account_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account_type.id"),
+        index=True,
+    )
     account_number: Mapped[str | None] = mapped_column(String(50))
     account_name: Mapped[str | None] = mapped_column(String(255))
     cheque_reference: Mapped[str | None] = mapped_column(String(100))
@@ -260,6 +263,10 @@ class CasePayment(Base):
     )
     bank_name: Mapped["BankName | None"] = relationship(
         foreign_keys=[bank_name_id],
+        lazy="selectin",
+    )
+    bank_account_type: Mapped["BankAccountType | None"] = relationship(
+        foreign_keys=[bank_account_type_id],
         lazy="selectin",
     )
     agent_person: Mapped["Person | None"] = relationship(

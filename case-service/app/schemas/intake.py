@@ -8,7 +8,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.intake import KtbNotifyChannel, KtbRecipientCategory
-from .lookup import TypeMoneyRead
+from .lookup import BankAccountTypeRead, TypeMoneyRead
 
 
 # ---------------------------------------------------------------------------
@@ -39,8 +39,11 @@ class RegulationDropdownItem(BaseModel):
     code: str
     name: str
     display_name: str = Field(description="(short_name) name สำหรับแสดงผล")
+    type_money_category_id: int
+    type_money_category_name_acronym: str = Field(description="ชื่อย่อหมวดเงิน เช่น ฉก.")
     maximum_money: Decimal
     limit_per_budget_year: int
+    activate: bool
     count_used: int = Field(default=0, description="ครั้งที่บุคคลนี้ใช้ระเบียบนี้ในปีงบประมาณ")
     disabled: bool = Field(default=False, description="True เมื่อ count_used >= limit_per_budget_year")
 
@@ -74,6 +77,7 @@ class IntakeHandlingUpsert(BaseModel):
     vsmart_informer_id: int | None = None
     vsmart_social_worker_id: int | None = None
     sw_user_sdshv: str | None = Field(None, max_length=255)
+    type_money_id: int | None = Field(None, description="id จาก type_money")
     regulation_id: int = Field(..., description="id จาก announcement_regulations")
     help_kind: str = Field(default="money", description="money | things")
     money_amount: Decimal | None = Field(None, ge=0)
@@ -130,7 +134,7 @@ class CasePaymentUpsert(BaseModel):
     payee_person_id: int | None = None
     bank_name_id: int | None = None
     bank_branch: str | None = Field(None, max_length=255)
-    account_type: str | None = Field(None, max_length=100)
+    bank_account_type_id: int | None = None
     account_number: str | None = Field(None, max_length=50)
     account_name: str | None = Field(None, max_length=255)
     cheque_reference: str | None = Field(None, max_length=100)
@@ -145,7 +149,7 @@ class CasePaymentRead(BaseModel):
     payee_person_id: int | None = None
     bank_name_id: int | None = None
     bank_branch: str | None = None
-    account_type: str | None = None
+    bank_account_type_id: int | None = None
     account_number: str | None = None
     account_name: str | None = None
     cheque_reference: str | None = None
@@ -153,6 +157,7 @@ class CasePaymentRead(BaseModel):
     updated_at: datetime
 
     payment_method: PaymentMethodRead | None = None
+    bank_account_type: BankAccountTypeRead | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

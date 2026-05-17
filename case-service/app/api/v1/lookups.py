@@ -15,6 +15,7 @@ from ...core.database import get_session
 from ...models.lookup import (
     AddressType,
     AttachmentType,
+    BankAccountType,
     BankName,
     CurrentStatus,
     DependencyType,
@@ -30,6 +31,7 @@ from ...models.lookup import (
 from ...schemas.lookup import (
     AddressTypeRead,
     AttachmentTypeRead,
+    BankAccountTypeRead,
     BankNameRead,
     CurrentStatusRead,
     DependencyTypeRead,
@@ -358,6 +360,29 @@ async def get_address_type(
 ) -> AddressTypeRead:
     return await _get_row(
         session, AddressType, AddressTypeRead, address_type_id, "address_type_not_found"
+    )
+
+
+# --- bank-account-types ---
+
+
+@router.get("/bank-account-types", response_model=list[BankAccountTypeRead])
+async def list_bank_account_types(
+    session: AsyncSession = Depends(get_session),
+) -> list[BankAccountTypeRead]:
+    result = await session.execute(
+        select(BankAccountType).order_by(BankAccountType.sort_order.asc(), BankAccountType.id.asc())
+    )
+    return [BankAccountTypeRead.model_validate(r) for r in result.scalars().all()]
+
+
+@router.get("/bank-account-types/{bank_account_type_id}", response_model=BankAccountTypeRead)
+async def get_bank_account_type(
+    bank_account_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> BankAccountTypeRead:
+    return await _get_row(
+        session, BankAccountType, BankAccountTypeRead, bank_account_type_id, "bank_account_type_not_found"
     )
 
 

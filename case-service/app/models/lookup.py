@@ -15,7 +15,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
-    from .intake import AnnouncementRegulation, CaseHandling
+    from .intake import AnnouncementRegulation, CaseHandling, CasePayment
 
 
 class LookupMixin:
@@ -112,6 +112,20 @@ class TypeMoney(LookupMixin, Base):
 
     case_handlings: Mapped[list["CaseHandling"]] = relationship(
         back_populates="type_money",
+    )
+
+
+class BankAccountType(Base):
+    """ประเภทบัญชีธนาคาร — ออมทรัพย์, ประจำ, กระแสรายวัน"""
+
+    __tablename__ = "bank_account_type"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    sort_order: Mapped[int | None] = mapped_column()
+
+    case_payments: Mapped[list["CasePayment"]] = relationship(
+        back_populates="bank_account_type",
     )
 
 
