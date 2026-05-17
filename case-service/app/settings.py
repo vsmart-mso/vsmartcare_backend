@@ -35,6 +35,46 @@ class Settings(BaseSettings):
     #: ใช้เทียบกับ type_money_category.name_acronym (หลัง normalize ช่องว่าง) สำหรับ GET por-kor-1-detail
     por_kor_1_name_acronym: str = Field(default="ปศค 1", validation_alias="POR_KOR_1_NAME_ACRONYM")
 
+    # --- ตรวจรายใหม่/รายเดิม (app.api.check_case) — ว่าง URL = ข้ามแหล่งนั้น ---
+    #: MSO logbook — URL เต็ม (ถ้าตั้ง จะไม่ใช้ BASE_URL + CHECK_PATH)
+    mso_logbook_url: str = Field(default="", validation_alias="MSO_LOGBOOK_URL")
+    mso_logbook_base_url: str = Field(default="", validation_alias="MSO_LOGBOOK_BASE_URL")
+    mso_logbook_check_path: str = Field(
+        default="/vapi/api-convert/logbook/get-problem/",
+        validation_alias="MSO_LOGBOOK_CHECK_PATH",
+    )
+    #: POST body ``{"national_id": "<cid>"}`` — ชื่อฟิลด์ JSON ปรับได้
+    mso_logbook_body_field: str = Field(
+        default="national_id",
+        validation_alias="MSO_LOGBOOK_BODY_FIELD",
+    )
+    mso_logbook_api_key: str | None = Field(default=None, validation_alias="MSO_LOGBOOK_API_KEY")
+    mso_logbook_api_key_header: str = Field(
+        default="Api-Key",
+        validation_alias="MSO_LOGBOOK_API_KEY_HEADER",
+    )
+
+    #: vsmart_main — เช็ค CID ในฐานคำร้อง VSmart หลัก (ว่าง = ข้าม)
+    vsmart_main_base_url: str = Field(default="", validation_alias="VSMART_MAIN_BASE_URL")
+    vsmart_main_check_path: str = Field(
+        default="/api/v1/people/check-cid",
+        validation_alias="VSMART_MAIN_CHECK_PATH",
+    )
+    vsmart_main_cid_query_param: str = Field(
+        default="cid",
+        validation_alias="VSMART_MAIN_CID_QUERY_PARAM",
+    )
+    vsmart_main_api_key: str | None = Field(default=None, validation_alias="VSMART_MAIN_API_KEY")
+    vsmart_main_api_key_header: str = Field(
+        default="X-API-Key",
+        validation_alias="VSMART_MAIN_API_KEY_HEADER",
+    )
+
+    external_check_timeout_seconds: float = Field(
+        default=10.0,
+        validation_alias="EXTERNAL_CHECK_TIMEOUT_SECONDS",
+    )
+
 
 settings = Settings()
 
