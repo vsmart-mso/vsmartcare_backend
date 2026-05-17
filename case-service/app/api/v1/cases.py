@@ -41,6 +41,7 @@ from ...schemas.case_welfare import (
     WelfareEvidenceUploadRead,
 )
 from ...schemas.lookup import CurrentStatusRead
+from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
@@ -239,7 +240,17 @@ async def create_welfare_case(
     if body.applicant.type_money_category_id is not None:
         await _ensure_type_money_category_exists(session, body.applicant.type_money_category_id)
 
+
     req_ids = _dedupe_preserve_order(body.request_type_ids)
+
+    person_cid = await session.scalar(
+        select(Person.cid).where(Person.id == body.applicant.persons_id)
+    )
+    if person_cid is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
+
+    # รายใหม่/รายเดิม — เช็ค self + MSO logbook + vsmart_main (ดู app.api.check_case)
+    existing_check = await check_existing_case_by_cid(session, person_cid)
 
     a = body.applicant
     applicant_row = Applicant(
@@ -256,7 +267,8 @@ async def create_welfare_case(
         type_money_category_id=a.type_money_category_id,
         sw_explorer_sdshv=a.sw_explorer_sdshv,
         age=a.age,
-        # is_existing_case, is_emergency, time_count_process — ใช้ default จากโมเดล ไม่รับจาก client
+        is_existing_case=existing_check.is_existing_case,
+        # is_emergency, time_count_process — ใช้ default จากโมเดล ไม่รับจาก client
     )
 
     session.add(applicant_row)
