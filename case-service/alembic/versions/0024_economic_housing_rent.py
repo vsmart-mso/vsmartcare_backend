@@ -1,6 +1,6 @@
 """economic_infos: เพิ่ม column housing_types_rent (ค่าเช่าต่อเดือน)
 
-Revision ID: 0024_economic_infos_housing_types_rent
+Revision ID: 0024_economic_housing_rent
 Revises: 0023_address_add_alley
 Create Date: 2026-05-17 00:00:00.000000
 """
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0024_economic_infos_housing_types_rent"
+revision: str = "0024_economic_housing_rent"
 down_revision: str | Sequence[str] | None = "0023_address_add_alley"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
