@@ -38,6 +38,10 @@ class EconomicInfo(Base):
     housing_types_id: Mapped[int | None] = mapped_column(
         ForeignKey("housing_types.id"),
     )
+    housing_types_rent: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2),
+        comment="ค่าเช่าต่อเดือน (บาท) — กรอกเมื่อ housing_types เป็นบ้านเช่า",
+    )
 
     occupation: Mapped[str | None] = mapped_column(String(255))
     monthly_income: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
