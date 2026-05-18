@@ -431,6 +431,18 @@ class WelfarePaymentUpdateBody(BaseModel):
     user_sdshv: Optional[str] = Field(None, max_length=255)
 
 
+class WelfareReviewCommentCreateBody(BaseModel):
+    review_field_id: int = Field(..., ge=1)
+    reason: str = Field(..., min_length=1)
+
+
+class WelfareEditRequestCreateBody(BaseModel):
+    applicant_id: int = Field(..., ge=1)
+    update_by_sdshv: Optional[str] = Field(None, max_length=255)
+    remarks: Optional[str] = None
+    comments: list[WelfareReviewCommentCreateBody] = Field(..., min_length=1)
+
+
 def _case_for_staff_finance_query_pairs(
     *,
     province_id: int,
@@ -896,6 +908,44 @@ async def create_case_for_staff_welfare_request_status(body: CaseForStaffWelfare
     base = settings.case_service_url.rstrip("/")
     payload = body.model_dump(exclude_none=True)
     return await _post(f"{base}/v1/case_for_staff/welfare-request-status", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/review-fields",
+    tags=["case_for_staff"],
+    summary="รายการหัวข้อที่สามารถส่งกลับแก้ไขได้",
+    description="ส่งต่อ `GET …/v1/case_for_staff/review-fields` — master data ทุกหัวข้อที่ is_active=true เรียงตาม step, display_order",
+    dependencies=_v1_api_key,
+)
+async def list_review_fields() -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/review-fields")
+
+
+@router.get(
+    "/v1/case_for_staff/welfare-edit-request",
+    tags=["case_for_staff"],
+    summary="ดึง review comments ล่าสุดของ applicant (status=8)",
+    description="ส่งต่อ `GET …/v1/case_for_staff/welfare-edit-request?applicant_id=…` — คืน list ของ comment ต่อ field ล่าสุดที่ส่งกลับแก้ไข",
+    dependencies=_v1_api_key,
+)
+async def get_welfare_edit_request_comments(applicant_id: int = Query(..., ge=1)) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/welfare-edit-request?applicant_id={applicant_id}")
+
+
+@router.post(
+    "/v1/case_for_staff/welfare-edit-request",
+    tags=["case_for_staff"],
+    summary="ส่งคำขอแก้ไขข้อมูล (เปลี่ยนสถานะ 8 + บันทึก comment)",
+    description="ส่งต่อ `POST …/v1/case_for_staff/welfare-edit-request` — atomic: สร้าง welfare_request_status(status=8) + welfare_review_comment ต่อหัวข้อ",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_welfare_edit_request(body: WelfareEditRequestCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(f"{base}/v1/case_for_staff/welfare-edit-request", json=payload)
 
 
 @router.get(

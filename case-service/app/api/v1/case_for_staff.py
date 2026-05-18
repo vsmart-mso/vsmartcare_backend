@@ -74,6 +74,13 @@ from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
 from ...schemas.lookup import AttachmentTypeRead, CurrentStatusRead, TypeMoneyCategoryRead
 from ...schemas.person import PersonRead
+from ...models.review import ReviewField, WelfareReviewComment
+from ...schemas.review import (
+    ReviewFieldRead,
+    WelfareEditRequestCreate,
+    WelfareEditRequestRead,
+    WelfareReviewCommentRead,
+)
 from ...schemas.status_log import WelfareRequestStatusRead
 from ...schemas.welfare import (
     WelfareEvidenceRead,
@@ -1312,4 +1319,109 @@ async def list_approve_case_for_staff(
         d.esignature = _load_esignature_base64(d.esignature)
         res_list.append(d)
     return res_list
+
+
+@router.get(
+    "/review-fields",
+    response_model=list[ReviewFieldRead],
+    summary="รายการหัวข้อที่สามารถส่งกลับแก้ไขได้",
+)
+async def list_review_fields(
+    session: AsyncSession = Depends(get_session),
+) -> list[ReviewFieldRead]:
+    result = await session.execute(
+        select(ReviewField)
+        .where(ReviewField.is_active.is_(True))
+        .order_by(ReviewField.step.asc(), ReviewField.display_order.asc()),
+    )
+    return [ReviewFieldRead.model_validate(row) for row in result.scalars().all()]
+
+
+@router.get(
+    "/welfare-edit-request",
+    summary="ดึง review comments ล่าสุดของ applicant (status=8)",
+)
+async def get_welfare_edit_request(
+    applicant_id: int = Query(..., ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(
+            WelfareRequestStatus.applicant_id == applicant_id,
+            WelfareRequestStatus.current_status_id == 8,
+        )
+        .order_by(WelfareRequestStatus.id.desc())
+        .limit(1)
+        .options(
+            selectinload(WelfareRequestStatus.review_comments).selectinload(
+                WelfareReviewComment.review_field
+            )
+        ),
+    )
+    status_row = result.scalar_one_or_none()
+    if not status_row:
+        return []
+    return [
+        {
+            "review_field_id": c.review_field_id,
+            "name": c.review_field.name,
+            "label": c.review_field.label,
+            "step": c.review_field.step,
+            "reason": c.reason,
+        }
+        for c in status_row.review_comments
+    ]
+
+
+@router.post(
+    "/welfare-edit-request",
+    response_model=WelfareEditRequestRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="ส่งคำขอแก้ไขข้อมูล — เปลี่ยนสถานะเป็น 8 + บันทึก comment ต่อหัวข้อ (atomic)",
+)
+async def create_welfare_edit_request(
+    body: WelfareEditRequestCreate,
+    session: AsyncSession = Depends(get_session),
+) -> WelfareEditRequestRead:
+    applicant = await session.get(Applicant, body.applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    _EDIT_REQUEST_STATUS_ID = 8
+    if await _get_row(session, CurrentStatus, _EDIT_REQUEST_STATUS_ID) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+
+    status_log = WelfareRequestStatus(
+        applicant_id=body.applicant_id,
+        current_status_id=_EDIT_REQUEST_STATUS_ID,
+        remarks=body.remarks or "",
+        update_by_sdshv=body.update_by_sdshv,
+    )
+    session.add(status_log)
+    await session.flush()
+
+    comments: list[WelfareReviewComment] = []
+    for item in body.comments:
+        if await _get_row(session, ReviewField, item.review_field_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"review_field_not_found:{item.review_field_id}",
+            )
+        comment = WelfareReviewComment(
+            welfare_request_status_id=status_log.id,
+            review_field_id=item.review_field_id,
+            reason=item.reason,
+        )
+        session.add(comment)
+        comments.append(comment)
+
+    await session.commit()
+
+    return WelfareEditRequestRead(
+        welfare_request_status_id=status_log.id,
+        comments=[
+            WelfareReviewCommentRead.model_validate(c) for c in comments
+        ],
+    )
 
