@@ -72,11 +72,18 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
         description="case_regulation_choice.money_amount (ผ่าน case_handling)",
     )
     dda_ref: str | None = Field(None, max_length=255, description="dda_ref ล่าสุดจาก welfare_dda_ref (ผ่าน welfare_payment)")
-    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false")
-    count_038: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = true")
+    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false (037)")
+    count_038: int = Field(
+        0,
+        ge=0,
+        description="จำนวนแถว welfare_payment ทั้งหมดของ applicant (รวมทุก dda_ref; รวมแถวที่ is_037_or_038 ยังเป็น null)",
+    )
     is_037_or_038: bool | None = Field(
         None,
-        description="null เมื่อยังไม่มี welfare_payment; มิฉะนั้น true ถ้ามีแถวใด is_037_or_038 = true",
+        description=(
+            "is_037_or_038 จาก welfare_payment ล่าสุด (เรียง id desc); "
+            "null = ยังไม่มี payment หรือยังไม่ระบุ; false = 037; true = 038"
+        ),
     )
 
 

@@ -743,7 +743,10 @@ async def list_cases_for_staff_finance_with_dda_ref(
     "/v1/case_for_staff/welfare-payment",
     tags=["case_for_staff"],
     summary="อัปเดต welfare_payment ตาม applicant_id",
-    description="ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — อัปเดตแถวล่าสุด",
+    description=(
+        "ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — อัปเดตแถวล่าสุด; "
+        "ถ้า is_037_or_038=false (037) case-service จะบันทึก welfare_request_status เป็น current_status_id=10"
+    ),
     dependencies=_v1_api_key,
 )
 async def update_welfare_payment_for_staff(

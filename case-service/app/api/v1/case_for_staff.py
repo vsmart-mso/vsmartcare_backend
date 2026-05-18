@@ -30,6 +30,7 @@ from ...services.process_sla import (
     apply_process_sla_to_applicant,
     process_sla_fields_dict,
 )
+from ...constants.current_status import CURRENT_STATUS_WITHDRAWING
 from ...services.file_payment_upload import (
     file_payment_upload_root,
     resolve_welfare_dda_ref_id_for_applicant,
@@ -347,6 +348,11 @@ async def _get_row(session: AsyncSession, model: object, row_id: int) -> object 
     return result.scalar_one_or_none()
 
 
+def _welfare_payment_update_indicates_037(updates: dict) -> bool:
+    """True เมื่อ request บันทึกผลจ่ายแบบ 037 (is_037_or_038 = false)."""
+    return updates.get("is_037_or_038") is False
+
+
 @router.get("", response_model=CaseForStaffListResponse)
 async def list_cases_for_staff(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
@@ -581,24 +587,23 @@ async def _list_cases_for_staff_finance_impl(
                 func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
                 0,
             ).label("count_037"),
-            func.coalesce(
-                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
-                0,
-            ).label("count_038"),
-            sql_case(
-                (func.count(WelfarePayment.is_037_or_038) == 0, None),
-                (
-                    func.coalesce(
-                        func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
-                        0,
-                    )
-                    > 0,
-                    True,
-                ),
-                else_=False,
-            ).label("is_037_or_038"),
+            func.count(WelfarePayment.id).label("count_038"),
         )
         .group_by(WelfarePayment.applicant_id)
+        .subquery()
+    )
+
+    latest_payment_sq = (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            WelfarePayment.is_037_or_038.label("is_037_or_038"),
+            func.row_number()
+            .over(
+                partition_by=WelfarePayment.applicant_id,
+                order_by=WelfarePayment.id.desc(),
+            )
+            .label("rn"),
+        )
         .subquery()
     )
 
@@ -663,7 +668,7 @@ async def _list_cases_for_staff_finance_impl(
             latest_dda_sq.c.dda_ref.label("dda_ref"),
             func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
             func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
-            payment_stats_sq.c.is_037_or_038.label("is_037_or_038"),
+            latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
             Applicant.bank_name_id.label("bank_name_id"),
             BankName.bank_code.label("bank_code"),
             Applicant.bank_account_no.label("bank_account_no"),
@@ -710,6 +715,13 @@ async def _list_cases_for_staff_finance_impl(
             and_(
                 latest_dda_sq.c.applicant_id == Applicant.id,
                 latest_dda_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            latest_payment_sq,
+            and_(
+                latest_payment_sq.c.applicant_id == Applicant.id,
+                latest_payment_sq.c.rn == 1,
             ),
         )
         .where(Province.id == province_id)
@@ -875,7 +887,10 @@ async def update_welfare_payment_for_staff(
     body: WelfarePaymentUpdate = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> WelfarePaymentRead:
-    """อัปเดต welfare_payment ล่าสุดของ applicant (เรียงตาม id desc)."""
+    """อัปเดต welfare_payment ล่าสุดของ applicant (เรียงตาม id desc).
+
+    ถ้าบันทึกผลจ่าย 037 (is_037_or_038=false) จะเพิ่ม welfare_request_status เป็น current_status_id=10
+    """
     payment = await session.scalar(
         select(WelfarePayment)
         .where(WelfarePayment.applicant_id == applicant_id)
@@ -889,8 +904,22 @@ async def update_welfare_payment_for_staff(
     if not updates:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
 
+    is_037_update = _welfare_payment_update_indicates_037(updates)
+
     for field, value in updates.items():
         setattr(payment, field, value)
+
+    if is_037_update:
+        if await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+        session.add(
+            WelfareRequestStatus(
+                applicant_id=applicant_id,
+                current_status_id=CURRENT_STATUS_WITHDRAWING,
+                remarks="บันทึกผลจ่ายเงิน 037",
+                update_by_sdshv=updates.get("user_sdshv"),
+            ),
+        )
 
     await session.commit()
     await session.refresh(payment)

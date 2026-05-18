@@ -107,7 +107,10 @@ class WelfarePaymentRead(WelfarePaymentBase):
 class WelfarePaymentUpdate(BaseModel):
     """อัปเดต welfare_payment (ส่งเฉพาะฟิลด์ที่ต้องการเปลี่ยน)."""
 
-    is_037_or_038: bool | None = None
+    is_037_or_038: bool | None = Field(
+        None,
+        description="false = 037, true = 038",
+    )
     payment_number: str | None = Field(None, max_length=255)
     payment_038_reason: str | None = Field(None, max_length=255)
     transaction_date: date | None = None
