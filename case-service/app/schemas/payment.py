@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,6 +71,7 @@ class WelfarePaymentInitialRead(BaseModel):
     user_sdshv: str | None = None
     transaction_date: date | None = None
     effective_date: date | None = None
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -101,6 +102,7 @@ class WelfarePaymentCreate(WelfarePaymentBase):
 
 class WelfarePaymentRead(WelfarePaymentBase):
     id: int
+    created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -120,6 +122,11 @@ class WelfarePaymentUpdate(BaseModel):
 
 class FilePaymentBase(BaseModel):
     welfare_dda_ref_id: int
+    welfare_payment_id: int | None = Field(
+        None,
+        ge=1,
+        description="แถว welfare_payment ที่ไฟล์นี้ผูก (แนะนำส่งหลัง PATCH 038)",
+    )
     file_original_name: str | None = Field(None, max_length=255)
     file_stored_name: str | None = Field(None, max_length=255)
     file_path: str = Field(..., max_length=1024)
@@ -145,3 +152,51 @@ class FilePaymentUploadRead(FilePaymentRead):
         ...,
         description="GET path สำหรับดาวน์โหลดไฟล์ — ต่อกับ base URL ของ case-service หรือ BFF",
     )
+
+
+class PaymentUploadFileItem(BaseModel):
+    """ไฟล์หนึ่งรายการในรอบอัปโหลด — ใช้ view_path ดาวน์โหลด."""
+
+    label: str = Field(..., description="cft037 หรือ cft038")
+    file_payment_id: int
+    file_original_name: str | None = None
+    view_path: str = Field(
+        ...,
+        description="GET path ดาวน์โหลด — ต่อกับ base URL ของ case-service หรือ BFF",
+    )
+
+
+class PaymentUploadHistoryRound(BaseModel):
+    """หนึ่งรอบ (ครั้งที่) ของการบันทึก/อัปโหลด 037–038."""
+
+    round_no: int = Field(..., ge=1, description="ครั้งที่ (เรียงตามรอบ 038)")
+    welfare_payment_id: int = Field(..., ge=1, description="แถว welfare_payment ของ 038 ในรอบนี้")
+    payment_id_cft037: str | None = Field(
+        None,
+        description="Payment ID / เลขอ้างอิง CFT 037 (payment_number จากแถว 037)",
+    )
+    payment_id_cft038: str | None = Field(
+        None,
+        description="Payment ID / เลขอ้างอิง CFT 038 (payment_number จากแถว 038)",
+    )
+    files: list[str] = Field(
+        default_factory=list,
+        description='ป้ายไฟล์ที่อัปโหลดในรอบนี้ เช่น ["cft037", "cft038"]',
+    )
+    file_items: list[PaymentUploadFileItem] = Field(
+        default_factory=list,
+        description="รายละเอียดไฟล์พร้อมลิงก์ดาวน์โหลด",
+    )
+    reason: str | None = Field(None, description="เหตุผล (payment_038_reason)")
+    uploaded_at: datetime | None = Field(
+        None,
+        description="วันเวลาบันทึกรอบ — จาก welfare_payment.created_at",
+    )
+
+
+class PaymentUploadHistoryRead(BaseModel):
+    """ประวัติการอัปโหลด PDF 037/038 ของ applicant."""
+
+    applicant_id: int
+    case_number: str | None = Field(None, description="หมายเลขคำร้อง")
+    rounds: list[PaymentUploadHistoryRound] = Field(default_factory=list)

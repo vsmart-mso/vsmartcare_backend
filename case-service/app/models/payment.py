@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -74,11 +74,19 @@ class WelfarePayment(Base):
     user_sdshv: Mapped[str | None] = mapped_column(String(255))
     transaction_date: Mapped[date | None] = mapped_column(Date)
     effective_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_payments")
     welfare_dda_ref: Mapped["WelfareDdaRef"] = relationship(
         back_populates="welfare_payments",
         lazy="selectin",
+    )
+    file_payments: Mapped[list["FilePayment"]] = relationship(
+        back_populates="welfare_payment",
     )
 
 
@@ -104,8 +112,17 @@ class FilePayment(Base):
         nullable=False,
         index=True,
     )
+    welfare_payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("welfare_payment.id"),
+        nullable=True,
+        index=True,
+    )
 
     welfare_dda_ref: Mapped["WelfareDdaRef"] = relationship(
+        back_populates="file_payments",
+        lazy="selectin",
+    )
+    welfare_payment: Mapped["WelfarePayment | None"] = relationship(
         back_populates="file_payments",
         lazy="selectin",
     )

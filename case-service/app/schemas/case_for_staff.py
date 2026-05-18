@@ -48,6 +48,23 @@ class CaseForStaffRead(ProcessSlaFields):
     subdistrict_name: str = Field(..., min_length=1, max_length=255)
     subdistrict_postcode_id: int
     postcode: str = Field(..., min_length=1, max_length=10)
+    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false (037)")
+    count_038: int = Field(
+        0,
+        ge=0,
+        description="จำนวนครั้งที่บันทึก 038 (นับแถว welfare_payment ที่ is_037_or_038 = true)",
+    )
+    is_037_or_038: bool | None = Field(
+        None,
+        description=(
+            "is_037_or_038 จาก welfare_payment ล่าสุด (เรียง id desc); "
+            "null = ยังไม่มี payment หรือยังไม่ระบุ; false = 037; true = 038"
+        ),
+    )
+    have_dda_ref: bool = Field(
+        False,
+        description="true เมื่อ applicant มี welfare_payment ผูก welfare_dda_ref แล้ว",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):
@@ -59,7 +76,7 @@ class CaseForStaffListResponse(BaseModel):
 
 
 class CaseForStaffFinanceRead(CaseForStaffRead):
-    """แถวตารางการเงิน — ข้อมูลพื้นฐานเหมือน CaseForStaffRead + DDA และสรุป welfare_payment."""
+    """แถวตารางการเงิน — ข้อมูลพื้นฐาน + สรุป welfare_payment (count_037/038) + DDA และธนาคาร."""
 
     bank_name_id: int | None = Field(None, ge=1, description="applicants.bank_name_id")
     bank_code: str | None = Field(None, max_length=10, description="bank_name.bank_code")
@@ -72,19 +89,6 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
         description="case_regulation_choice.money_amount (ผ่าน case_handling)",
     )
     dda_ref: str | None = Field(None, max_length=255, description="dda_ref ล่าสุดจาก welfare_dda_ref (ผ่าน welfare_payment)")
-    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false (037)")
-    count_038: int = Field(
-        0,
-        ge=0,
-        description="จำนวนแถว welfare_payment ทั้งหมดของ applicant (รวมทุก dda_ref; รวมแถวที่ is_037_or_038 ยังเป็น null)",
-    )
-    is_037_or_038: bool | None = Field(
-        None,
-        description=(
-            "is_037_or_038 จาก welfare_payment ล่าสุด (เรียง id desc); "
-            "null = ยังไม่มี payment หรือยังไม่ระบุ; false = 037; true = 038"
-        ),
-    )
 
 
 class CaseForStaffFinanceListResponse(BaseModel):

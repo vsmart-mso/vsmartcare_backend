@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case as sql_case, func, select
+from sqlalchemy import and_, case as sql_case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,8 +33,14 @@ from ...services.process_sla import (
 from ...constants.current_status import CURRENT_STATUS_WITHDRAWING
 from ...services.file_payment_upload import (
     file_payment_upload_root,
-    resolve_welfare_dda_ref_id_for_applicant,
     save_file_payment_pdf,
+)
+from ...services.payment_upload_history import build_payment_upload_history
+from ...services.welfare_payment_flow import (
+    apply_037_update,
+    apply_038_update,
+    apply_fields_on_active_dda,
+    file_payment_owned_by_applicant,
 )
 from ...schemas.address import AddressRead
 from ...schemas.payment import (
@@ -44,6 +50,7 @@ from ...schemas.payment import (
     FilePaymentUploadRead,
     WelfareDdaRefBundleCreate,
     WelfareDdaRefBundleRead,
+    PaymentUploadHistoryRead,
     WelfarePaymentInitialRead,
     WelfarePaymentRead,
     WelfarePaymentUpdate,
@@ -343,6 +350,50 @@ def _clean_text_filter(value: str | None) -> str | None:
     return value or None
 
 
+def _welfare_payment_stats_subquery():
+    return (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            func.coalesce(
+                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
+                0,
+            ).label("count_037"),
+            func.coalesce(
+                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
+                0,
+            ).label("count_038"),
+        )
+        .group_by(WelfarePayment.applicant_id)
+        .subquery()
+    )
+
+
+def _latest_welfare_payment_subquery():
+    return (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            WelfarePayment.is_037_or_038.label("is_037_or_038"),
+            func.row_number()
+            .over(
+                partition_by=WelfarePayment.applicant_id,
+                order_by=WelfarePayment.id.desc(),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+
+def _applicant_have_dda_ref_exists():
+    """มีแถว welfare_payment ที่ผูก welfare_dda_ref สำหรับ applicant นี้หรือไม่."""
+    return (
+        select(WelfarePayment.id)
+        .where(WelfarePayment.applicant_id == Applicant.id)
+        .join(WelfareDdaRef, WelfareDdaRef.id == WelfarePayment.dda_ref_id)
+        .exists()
+    )
+
+
 async def _get_row(session: AsyncSession, model: object, row_id: int) -> object | None:
     result = await session.execute(select(model).where(model.id == row_id))  # type: ignore[attr-defined]
     return result.scalar_one_or_none()
@@ -351,6 +402,11 @@ async def _get_row(session: AsyncSession, model: object, row_id: int) -> object 
 def _welfare_payment_update_indicates_037(updates: dict) -> bool:
     """True เมื่อ request บันทึกผลจ่ายแบบ 037 (is_037_or_038 = false)."""
     return updates.get("is_037_or_038") is False
+
+
+def _welfare_payment_update_indicates_038(updates: dict) -> bool:
+    """True เมื่อ request บันทึกผลจ่ายแบบ 038 (is_037_or_038 = true)."""
+    return updates.get("is_037_or_038") is True
 
 
 @router.get("", response_model=CaseForStaffListResponse)
@@ -412,6 +468,10 @@ async def list_cases_for_staff(
         Person.sub_district_postcode_id,
     )
 
+    payment_stats_sq = _welfare_payment_stats_subquery()
+    latest_payment_sq = _latest_welfare_payment_subquery()
+    have_dda_ref = _applicant_have_dda_ref_exists()
+
     stmt = (
         select(
             Applicant.id.label("applicant_id"),
@@ -440,6 +500,10 @@ async def list_cases_for_staff(
             SubDistrict.name.label("subdistrict_name"),
             SubDistrictPostcode.id.label("subdistrict_postcode_id"),
             Postcode.name.label("postcode"),
+            func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
+            func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
+            latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
+            have_dda_ref.label("have_dda_ref"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -465,6 +529,17 @@ async def list_cases_for_staff(
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
+        .outerjoin(
+            payment_stats_sq,
+            payment_stats_sq.c.applicant_id == Applicant.id,
+        )
+        .outerjoin(
+            latest_payment_sq,
+            and_(
+                latest_payment_sq.c.applicant_id == Applicant.id,
+                latest_payment_sq.c.rn == 1,
+            ),
+        )
         .where(Province.id == province_id)
         .order_by(Applicant.created_at.desc(), Applicant.id.desc())
     )
@@ -580,32 +655,8 @@ async def _list_cases_for_staff_finance_impl(
         Person.sub_district_postcode_id,
     )
 
-    payment_stats_sq = (
-        select(
-            WelfarePayment.applicant_id.label("applicant_id"),
-            func.coalesce(
-                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
-                0,
-            ).label("count_037"),
-            func.count(WelfarePayment.id).label("count_038"),
-        )
-        .group_by(WelfarePayment.applicant_id)
-        .subquery()
-    )
-
-    latest_payment_sq = (
-        select(
-            WelfarePayment.applicant_id.label("applicant_id"),
-            WelfarePayment.is_037_or_038.label("is_037_or_038"),
-            func.row_number()
-            .over(
-                partition_by=WelfarePayment.applicant_id,
-                order_by=WelfarePayment.id.desc(),
-            )
-            .label("rn"),
-        )
-        .subquery()
-    )
+    payment_stats_sq = _welfare_payment_stats_subquery()
+    latest_payment_sq = _latest_welfare_payment_subquery()
 
     latest_dda_sq = (
         select(
@@ -630,12 +681,7 @@ async def _list_cases_for_staff_finance_impl(
         )
     ).exists()
 
-    welfare_payment_with_dda_exists = (
-        select(WelfarePayment.id)
-        .where(WelfarePayment.applicant_id == Applicant.id)
-        .join(WelfareDdaRef, WelfareDdaRef.id == WelfarePayment.dda_ref_id)
-        .exists()
-    )
+    welfare_payment_with_dda_exists = _applicant_have_dda_ref_exists()
 
     stmt = (
         select(
@@ -669,6 +715,7 @@ async def _list_cases_for_staff_finance_impl(
             func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
             func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
             latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
+            welfare_payment_with_dda_exists.label("have_dda_ref"),
             Applicant.bank_name_id.label("bank_name_id"),
             BankName.bank_code.label("bank_code"),
             Applicant.bank_account_no.label("bank_account_no"),
@@ -887,27 +934,23 @@ async def update_welfare_payment_for_staff(
     body: WelfarePaymentUpdate = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> WelfarePaymentRead:
-    """อัปเดต welfare_payment ล่าสุดของ applicant (เรียงตาม id desc).
+    """บันทึก 037/038 ตามกฎรอบ DDA — คืนแถว welfare_payment ที่ถูกสร้างหรือแก้ (ใช้ id อัปโหลด PDF).
 
-    ถ้าบันทึกผลจ่าย 037 (is_037_or_038=false) จะเพิ่ม welfare_request_status เป็น current_status_id=10
+    038 ครั้งแรก: PATCH แถว is_037_or_038=null จาก bundle; ครั้งถัดไป: INSERT แถวใหม่
+    037: ครั้งเดียวต่อรอบ DDA — ถ้าบันทึก 037 จะเพิ่ม welfare_request_status เป็น current_status_id=10
     """
-    payment = await session.scalar(
-        select(WelfarePayment)
-        .where(WelfarePayment.applicant_id == applicant_id)
-        .order_by(WelfarePayment.id.desc())
-        .limit(1),
-    )
-    if payment is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
-
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
 
-    is_037_update = _welfare_payment_update_indicates_037(updates)
+    if _welfare_payment_update_indicates_037(updates):
+        payment = await apply_037_update(session, applicant_id, updates)
+    elif _welfare_payment_update_indicates_038(updates):
+        payment = await apply_038_update(session, applicant_id, updates)
+    else:
+        payment = await apply_fields_on_active_dda(session, applicant_id, updates)
 
-    for field, value in updates.items():
-        setattr(payment, field, value)
+    is_037_update = _welfare_payment_update_indicates_037(updates)
 
     if is_037_update:
         if await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING) is None:
@@ -935,6 +978,11 @@ async def update_welfare_payment_for_staff(
 async def upload_file_payment_pdf(
     applicant_id: int,
     attachment_type_id: int = Form(..., ge=1),
+    welfare_payment_id: int | None = Form(
+        None,
+        ge=1,
+        description="id จาก welfare_payment หลัง PATCH 038/037 — ไม่ส่งจะใช้แถวล่าสุดบน DDA ปัจจุบัน",
+    ),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
     session: AsyncSession = Depends(get_session),
 ) -> FilePaymentUploadRead:
@@ -943,6 +991,7 @@ async def upload_file_payment_pdf(
         applicant_id=applicant_id,
         attachment_type_id=attachment_type_id,
         file=file,
+        welfare_payment_id=welfare_payment_id,
     )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
@@ -962,9 +1011,8 @@ async def get_file_payment_pdf(
     file_payment_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    welfare_dda_ref_id = await resolve_welfare_dda_ref_id_for_applicant(session, applicant_id)
     row = await session.get(FilePayment, file_payment_id)
-    if row is None or row.welfare_dda_ref_id != welfare_dda_ref_id:
+    if row is None or not await file_payment_owned_by_applicant(session, applicant_id, row):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="file_payment_not_found")
 
     root = file_payment_upload_root()
@@ -981,6 +1029,84 @@ async def get_file_payment_pdf(
 
     download_name = row.file_original_name or row.file_stored_name or path.name
     return FileResponse(path, media_type="application/pdf", filename=download_name)
+
+
+@router.get(
+    "/applicant/{applicant_id}/welfare-payments",
+    response_model=list[WelfarePaymentRead],
+    summary="รายการ welfare_payment ของ applicant",
+)
+async def list_welfare_payments_for_applicant(
+    applicant_id: int,
+    dda_ref_id: int | None = Query(None, ge=1, description="กรองตาม welfare_dda_ref.id"),
+    session: AsyncSession = Depends(get_session),
+) -> list[WelfarePaymentRead]:
+    stmt = select(WelfarePayment).where(WelfarePayment.applicant_id == applicant_id)
+    if dda_ref_id is not None:
+        stmt = stmt.where(WelfarePayment.dda_ref_id == dda_ref_id)
+    stmt = stmt.order_by(WelfarePayment.id.asc())
+    result = await session.execute(stmt)
+    return [WelfarePaymentRead.model_validate(row) for row in result.scalars().all()]
+
+
+@router.get(
+    "/applicant/{applicant_id}/file-payments",
+    response_model=list[FilePaymentUploadRead],
+    summary="รายการ file_payment ของ applicant",
+)
+async def list_file_payments_for_applicant(
+    applicant_id: int,
+    welfare_payment_id: int | None = Query(None, ge=1),
+    attachment_type_id: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> list[FilePaymentUploadRead]:
+    linked_payment_ids = select(WelfarePayment.id).where(
+        WelfarePayment.applicant_id == applicant_id,
+    )
+    applicant_dda_ids = select(WelfarePayment.dda_ref_id).where(
+        WelfarePayment.applicant_id == applicant_id,
+    )
+    stmt = select(FilePayment).where(
+        or_(
+            FilePayment.welfare_payment_id.in_(linked_payment_ids),
+            and_(
+                FilePayment.welfare_payment_id.is_(None),
+                FilePayment.welfare_dda_ref_id.in_(applicant_dda_ids),
+            ),
+        ),
+    )
+    if welfare_payment_id is not None:
+        stmt = stmt.where(FilePayment.welfare_payment_id == welfare_payment_id)
+    if attachment_type_id is not None:
+        stmt = stmt.where(FilePayment.attachment_type_id == attachment_type_id)
+    stmt = stmt.order_by(FilePayment.id.asc())
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    return [
+        FilePaymentUploadRead(
+            **FilePaymentRead.model_validate(row).model_dump(),
+            view_path=(
+                f"/v1/case_for_staff/applicant/{applicant_id}/file-payment/{row.id}/file"
+            ),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/applicant/{applicant_id}/payment-upload-history",
+    response_model=PaymentUploadHistoryRead,
+    summary="ประวัติการอัปโหลด PDF 037/038",
+    description=(
+        "จัดกลุ่มตามรอบ 038 (ครั้งที่) — คืนหมายเลขคำร้อง, Payment ID cft037/cft038, "
+        "รายการไฟล์และ view_path สำหรับดาวน์โหลด"
+    ),
+)
+async def get_payment_upload_history(
+    applicant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> PaymentUploadHistoryRead:
+    return await build_payment_upload_history(session, applicant_id)
 
 
 @router.get("/type-money-categories", response_model=list[TypeMoneyCategoryRead])
