@@ -47,6 +47,14 @@ class CaseForStaffRead(ProcessSlaFields):
     subdistrict_name: str = Field(..., min_length=1, max_length=255)
     subdistrict_postcode_id: int
     postcode: str = Field(..., min_length=1, max_length=10)
+    count_037: int = Field(0, ge=0, description="จำนวนแถว welfare_payment ที่ is_037_or_038 = false (037)")
+    count_038: int = Field(
+        0,
+        ge=0,
+        description="จำนวนครั้งที่บันทึก 038 (นับแถว welfare_payment ที่ is_037_or_038 = true)",
+    )
+    is_037_or_038: bool | None = None
+    have_dda_ref: bool = False
 
 
 class CaseForStaffListResponse(BaseModel):
@@ -65,9 +73,6 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
     mobile_phone: str | None = Field(None, max_length=20)
     money_amount: Decimal | None = Field(None, ge=0)
     dda_ref: str | None = Field(None, max_length=255)
-    count_037: int = Field(0, ge=0)
-    count_038: int = Field(0, ge=0)
-    is_037_or_038: bool | None = None
 
 
 class CaseForStaffFinanceListResponse(BaseModel):

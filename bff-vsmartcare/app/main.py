@@ -566,7 +566,7 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
         "ส่งต่อ `GET …/v1/case_for_staff` ใน case-service โดยบังคับ `province_id` "
         "และรองรับ filter เพิ่มเติมจาก case_number, current_status, firstname, lastname, cid, "
         "datetime_create, district/subdistrict/postcode, type_money_id (type_money_category) พร้อมคืน is_emergency, "
-        "is_existing_case, time_count_process"
+        "is_existing_case, time_count_process, count_037, count_038, is_037_or_038, have_dda_ref (สรุป welfare_payment เหมือน /finance)"
     ),
     response_model=CaseForStaffListResponse,
     dependencies=_v1_api_key,
@@ -622,7 +622,7 @@ async def list_cases_for_staff(
     summary="รายการคำร้องสำหรับตารางการเงิน",
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff/finance` — บังคับ `province_id`, เฉพาะเคสที่ approve_case.approve_status = true, "
-        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, count_037, count_038, is_037_or_038, "
+        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, have_dda_ref, count_037, count_038, is_037_or_038, "
         "bank_name_id, bank_code, bank_account_no, email_address, mobile_phone, money_amount"
     ),
     response_model=CaseForStaffFinanceListResponse,
@@ -744,7 +744,8 @@ async def list_cases_for_staff_finance_with_dda_ref(
     tags=["case_for_staff"],
     summary="อัปเดต welfare_payment ตาม applicant_id",
     description=(
-        "ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — อัปเดตแถวล่าสุด; "
+        "ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — 038 ครั้งแรก PATCH แถว null, "
+        "038 ครั้งถัดไป INSERT แถวใหม่; 037 ครั้งเดียวต่อรอบ DDA; คืน id สำหรับอัปโหลด PDF; "
         "ถ้า is_037_or_038=false (037) case-service จะบันทึก welfare_request_status เป็น current_status_id=10"
     ),
     dependencies=_v1_api_key,
@@ -766,8 +767,8 @@ async def update_welfare_payment_for_staff(
     tags=["case_for_staff"],
     summary="อัปโหลด PDF file_payment",
     description=(
-        "ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id (9=PDF 037, 10=PDF 038), file (PDF); "
-        "ระบบจะหา welfare_dda_ref จาก welfare_payment ล่าสุดของ applicant"
+        "ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id (9=PDF 037, 10=PDF 038), "
+        "welfare_payment_id (แนะนำหลัง PATCH 038), file (PDF); ไม่ส่ง welfare_payment_id จะใช้แถวล่าสุดบน DDA ปัจจุบัน"
     ),
     dependencies=_v1_api_key,
     status_code=status.HTTP_201_CREATED,
@@ -775,15 +776,19 @@ async def update_welfare_payment_for_staff(
 async def upload_file_payment_for_staff(
     applicant_id: int,
     attachment_type_id: int = Form(..., ge=1),
+    welfare_payment_id: Optional[int] = Form(
+        None,
+        ge=1,
+        description="id จาก welfare_payment หลัง PATCH — ไม่ส่งจะใช้แถวล่าสุดบน DDA ปัจจุบัน",
+    ),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
     url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/file-payment"
-    return await _post_evidence_multipart(
-        url,
-        {"attachment_type_id": attachment_type_id},
-        file,
-    )
+    form_fields: Dict[str, Any] = {"attachment_type_id": attachment_type_id}
+    if welfare_payment_id is not None:
+        form_fields["welfare_payment_id"] = welfare_payment_id
+    return await _post_evidence_multipart(url, form_fields, file)
 
 
 @router.get(
@@ -806,6 +811,61 @@ async def get_file_payment_for_staff(applicant_id: int, file_payment_id: int) ->
             if k.lower() in ("content-disposition", "content-length")
         },
     )
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/welfare-payments",
+    tags=["case_for_staff"],
+    summary="รายการ welfare_payment ของ applicant",
+    dependencies=_v1_api_key,
+)
+async def list_welfare_payments_for_staff(
+    applicant_id: int,
+    dda_ref_id: Optional[int] = Query(None, ge=1),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/welfare-payments"
+    if dda_ref_id is not None:
+        url = f"{url}?dda_ref_id={dda_ref_id}"
+    return await _get(url)
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/file-payments",
+    tags=["case_for_staff"],
+    summary="รายการ file_payment ของ applicant",
+    dependencies=_v1_api_key,
+)
+async def list_file_payments_for_staff(
+    applicant_id: int,
+    welfare_payment_id: Optional[int] = Query(None, ge=1),
+    attachment_type_id: Optional[int] = Query(None, ge=1),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    params: list[str] = []
+    if welfare_payment_id is not None:
+        params.append(f"welfare_payment_id={welfare_payment_id}")
+    if attachment_type_id is not None:
+        params.append(f"attachment_type_id={attachment_type_id}")
+    url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/file-payments"
+    if params:
+        url = f"{url}?{'&'.join(params)}"
+    return await _get(url)
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/payment-upload-history",
+    tags=["case_for_staff"],
+    summary="ประวัติการอัปโหลด PDF 037/038",
+    description=(
+        "ส่งต่อ case-service — คืนหมายเลขคำร้อง, ครั้งที่, Payment ID cft037/cft038, "
+        "ไฟล์พร้อม view_path ดาวน์โหลด (GET …/file-payment/{id}/file)"
+    ),
+    dependencies=_v1_api_key,
+)
+async def get_payment_upload_history_for_staff(applicant_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/applicant/{applicant_id}/payment-upload-history")
 
 
 @router.get(

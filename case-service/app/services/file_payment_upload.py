@@ -11,12 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.lookup import AttachmentType
 from ..models.payment import FilePayment, WelfareDdaRef, WelfarePayment
+from ..services.welfare_payment_flow import resolve_welfare_payment_for_upload
 from ..settings import resolved_upload_root, settings
 
 ALLOWED_PAYMENT_PDF_TYPES: dict[str, str] = {
     "application/pdf": ".pdf",
     "application/x-pdf": ".pdf",
 }
+
+ATTACHMENT_PDF_037_ID = 9
+ATTACHMENT_PDF_038_ID = 10
+ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS = frozenset({ATTACHMENT_PDF_037_ID, ATTACHMENT_PDF_038_ID})
 
 
 async def validate_welfare_dda_ref_exists(session: AsyncSession, welfare_dda_ref_id: int) -> WelfareDdaRef:
@@ -57,10 +62,21 @@ async def save_file_payment_pdf(
     applicant_id: int,
     attachment_type_id: int,
     file: UploadFile,
+    welfare_payment_id: int | None = None,
 ) -> FilePayment:
-    welfare_dda_ref_id = await resolve_welfare_dda_ref_id_for_applicant(session, applicant_id)
+    payment = await resolve_welfare_payment_for_upload(
+        session,
+        applicant_id,
+        welfare_payment_id,
+    )
+    welfare_dda_ref_id = payment.dda_ref_id
     await validate_welfare_dda_ref_exists(session, welfare_dda_ref_id)
     await validate_attachment_type_exists(session, attachment_type_id)
+    if attachment_type_id not in ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="attachment_type_must_be_pdf_037_or_038",
+        )
 
     raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
     if raw_content_type not in ALLOWED_PAYMENT_PDF_TYPES:
@@ -89,6 +105,7 @@ async def save_file_payment_pdf(
     relative_for_db = f"{welfare_dda_ref_id}/{stored}"
     row = FilePayment(
         welfare_dda_ref_id=welfare_dda_ref_id,
+        welfare_payment_id=payment.id,
         attachment_type_id=attachment_type_id,
         file_path=relative_for_db,
         file_original_name=file.filename,
