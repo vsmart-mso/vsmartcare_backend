@@ -234,7 +234,7 @@ curl http://localhost:8004/v1/ocr/results/42?limit=5 \
 
 | ข้อ | รายละเอียด |
 |---|---|
-| 🔗 **FK Concept** | `ocr_results.applicant_id` → `case_service.applicant.id` (logic FK — database เดียวกัน) |
+| 🔗 **FK** | `ocr_results.applicant_id` → `case_service.applicants.id` (real FK, `ON DELETE SET NULL`) |
 | 📦 **Storage** | PostgreSQL database `case_service` — แชร์ database เดียวกับ case-service |
 | 🔍 **Query** | `GET /v1/ocr/results/{applicant_id}` ดึงผลย้อนหลังได้ |
 | 🗑️ **Cleanup** | เมื่อลบ applicant ใน case-service → ควรลบ OCR results ตาม (manual หรือผ่าน API ในอนาคต) |

@@ -25,6 +25,7 @@ class BankInfo(BaseModel):
 
 
 class OcrResponse(BaseModel):
+    id: int = Field(..., description="ID ของผล OCR ใน DB — ใช้สำหรับ PATCH link ทีหลัง")
     markdown: str = Field("", description="ข้อความเต็มจาก OCR ในรูปแบบ Markdown")
     bank_info: BankInfo | None = Field(None, description="ข้อมูลบัญชีธนาคารที่สกัดได้")
     target_name_checked: str = Field("", description="ชื่อเป้าหมายที่ใช้ในการตรวจสอบ")

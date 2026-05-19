@@ -1,28 +1,15 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.ocr import router as ocr_router
-from .core.database import engine
-from .models.ocr_result import Base
 from .settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocr-service")
-
-
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    """สร้างตารางตอน startup."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables created (if not exist)")
-    yield
-
 
 _TAGS = [
     {"name": "ocr", "description": "OCR Pipeline — Gemini Flash"},
@@ -33,7 +20,6 @@ app = FastAPI(
     title=settings.service_name,
     version="0.1.0",
     openapi_tags=_TAGS,
-    lifespan=lifespan,
 )
 
 # ── CORS ──────────────────────────────────────────────────────

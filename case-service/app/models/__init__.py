@@ -32,6 +32,7 @@ from .lookup import (
     TypeMoney,
     TypeMoneyCategory,
 )
+from .ocr_result import OcrResult
 from .payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from .person import Person
 from .screening import ScreeningLog, WelfareRequestConsent
@@ -67,6 +68,7 @@ __all__ = [
     "KtbNotifyChannel",
     "KtbRecipientCategory",
     "MaritalStatusType",
+    "OcrResult",
     "PaymentMethod",
     "Person",
     "Postcode",

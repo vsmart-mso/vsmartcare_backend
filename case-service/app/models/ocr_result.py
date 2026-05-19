@@ -1,16 +1,13 @@
-"""SQLAlchemy model สำหรับ ocr_results — table ถูกสร้างโดย case-service alembic (0034)."""
+"""OCR Result model — เชื่อม applicant_id ไปยัง applicants.id (FK จริง)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Base เฉพาะ ocr-service — metadata.create_all() จะไม่ถูกเรียก (table มาจาก case-service)."""
-    pass
+from ..core.base import Base
 
 
 def _utcnow() -> datetime:
@@ -22,8 +19,10 @@ class OcrResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # FK จริงไปยัง applicants.id — constraint สร้างโดย case-service alembic migration 0034
-    applicant_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    # FK จริงไปยัง applicants.id (database เดียวกัน)
+    applicant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("applicants.id", ondelete="SET NULL"), index=True, nullable=True
+    )
 
     target_name_checked: Mapped[str] = mapped_column(Text, nullable=False)
     pre_file: Mapped[str] = mapped_column(String(255), nullable=False)

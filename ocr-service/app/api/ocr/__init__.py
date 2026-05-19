@@ -136,7 +136,7 @@ async def ocr_bank_book(
     await session.flush()
     logger.info(f"OCR result persisted: id={db_row.id}, applicant_id={applicant_id}")
 
-    return OcrResponse(**result)
+    return OcrResponse(id=db_row.id, **result)
 
 
 # ── PATCH: ผูกผล OCR กับ applicant_id ทีหลัง (หลังสร้างใบคำร้องแล้ว) ──────────
