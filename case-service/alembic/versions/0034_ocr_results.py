@@ -19,6 +19,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("ocr_results"):
+        return
+
     op.create_table(
         "ocr_results",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
