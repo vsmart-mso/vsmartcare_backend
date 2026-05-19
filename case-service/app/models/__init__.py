@@ -36,6 +36,7 @@ from .payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from .person import Person
 from .screening import ScreeningLog, WelfareRequestConsent
 from .review import ReviewField, WelfareReviewComment
+from .satisfaction import SatisfactionSurvey
 from .status_log import WelfareRequestStatus
 from .welfare import (
     WelfareEvidence,
@@ -91,5 +92,6 @@ __all__ = [
     "WelfareRequestStatus",
     "WelfareRequestType",
     "ReviewField",
+    "SatisfactionSurvey",
     "WelfareReviewComment",
 ]

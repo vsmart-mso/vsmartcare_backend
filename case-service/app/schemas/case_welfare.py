@@ -117,6 +117,8 @@ class WelfareApplicantUpdate(BaseModel):
     bank_name_id: int | None = Field(default=None, ge=1)
     bank_account_no: str | None = Field(default=None, max_length=50)
     age: int | None = Field(default=None, ge=0)
+    # True → clear สถานะการดำเนินงาน: process_started_at, process_sla_days, type_money_category_id = NULL
+    reset_processing_state: bool = False
 
 
 class WelfareCaseUpdate(BaseModel):
