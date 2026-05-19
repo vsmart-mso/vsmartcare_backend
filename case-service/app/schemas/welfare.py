@@ -45,6 +45,7 @@ class WelfareHistoryRead(WelfareHistoryBase):
 class WelfareRequestTypeBase(BaseModel):
     applicant_id: int
     request_type_id: int
+    request_other_text: str | None = Field(None, max_length=500)
 
 
 class WelfareRequestTypeCreate(WelfareRequestTypeBase):

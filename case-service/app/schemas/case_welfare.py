@@ -98,6 +98,11 @@ class WelfareCaseCreate(BaseModel):
             description="รายการ id จาก request_types — สร้างแถวใน welfare_request_types",
         ),
     ]
+    request_other_text: str | None = Field(
+        None,
+        max_length=500,
+        description="ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)",
+    )
     welfare_history: WelfareHistoryInCase | None = None
     initial_current_status_id: int = Field(
         1,
@@ -131,6 +136,11 @@ class WelfareCaseUpdate(BaseModel):
     dependency_loads: list[DependencyLoadInCase] | None = None
     economic_infos: list[EconomicInfoInCase] | None = None
     request_type_ids: list[int] | None = None
+    request_other_text: str | None = Field(
+        None,
+        max_length=500,
+        description="ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)",
+    )
     welfare_history: WelfareHistoryInCase | None = None
 
 

@@ -78,6 +78,9 @@ class WelfareCaseCreate(BaseModel):
         list[int],
         Field(min_length=1),
     ]
+    # ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)
+    # — เพิ่มเข้ามาตามมติประชุม 2026-05-19 (textarea 10.1 ใน Step3Problem.vue)
+    request_other_text: str | None = Field(None, max_length=500)
     welfare_history: WelfareHistoryInCase | None = None
     initial_current_status_id: int = Field(
         1,

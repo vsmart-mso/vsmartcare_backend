@@ -1,6 +1,6 @@
 """สร้างตาราง satisfaction_surveys — เก็บผลประเมินความพึงพอใจของผู้ยื่นคำขอ.
 
-Revision ID: 0035_satisfaction_survey
+Revision ID: 0036_satisfaction_survey
 Revises: 0034_upload_batch_id
 Create Date: 2026-05-19 00:00:00.000000
 """
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0035_satisfaction_survey"
+revision: str = "0036_satisfaction_survey"
 down_revision: str | Sequence[str] | None = "0034_upload_batch_id"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

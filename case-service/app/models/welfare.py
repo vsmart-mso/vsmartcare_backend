@@ -93,6 +93,11 @@ class WelfareRequestType(Base):
         primary_key=True,
     )
 
+    request_other_text: Mapped[str | None] = mapped_column(
+        String(500),
+        comment="ระบุรายละเอียดเพิ่มเติมเมื่อเลือก 'ช่วยเหลือเรื่องอื่นๆ'",
+    )
+
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_request_types")
     request_type: Mapped["RequestType"] = relationship(lazy="selectin")
 
