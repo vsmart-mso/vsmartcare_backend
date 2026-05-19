@@ -9,6 +9,7 @@ from .api.v1.cases import router as cases_router
 from .api.v1.eligibility import router as eligibility_router
 from .api.v1.geo import router as geo_router
 from .api.v1.intake import router as intake_router
+from .api.v1.satisfaction import router as satisfaction_router
 from .api.v1.lookups import router as lookups_router
 from .settings import settings
 
@@ -22,6 +23,7 @@ app.include_router(case_for_staff_router)
 app.include_router(eligibility_router)
 app.include_router(cases_router)
 app.include_router(intake_router)
+app.include_router(satisfaction_router)
 
 
 @app.get("/")
