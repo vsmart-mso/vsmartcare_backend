@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
+from uuid import UUID
 
 import json
 
@@ -429,6 +430,10 @@ class WelfarePaymentUpdateBody(BaseModel):
     transaction_date: Optional[date] = None
     effective_date: Optional[date] = None
     user_sdshv: Optional[str] = Field(None, max_length=255)
+    upload_batch_id: Optional[UUID] = Field(
+        None,
+        description="UUID ร่วมกันต่อการบันทึกครั้งเดียวใน modal (037+038)",
+    )
 
 
 class WelfareReviewCommentCreateBody(BaseModel):
@@ -687,7 +692,9 @@ async def list_cases_for_staff_finance(
     summary="รายการคำร้องการเงิน (มี welfare_payment + welfare_dda_ref)",
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff/finance/with-dda-ref` — เหมือน /finance แต่ดึงเฉพาะ applicant "
-        "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว; คืนฟิลด์ธนาคาร/ติดต่อเหมือน /finance"
+        "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว; "
+        "ไม่รวมเคสที่ current_status_id >= 10 (อยู่ระหว่างการเบิกขึ้นไป); "
+        "คืนฟิลด์ธนาคาร/ติดต่อเหมือน /finance"
     ),
     response_model=CaseForStaffFinanceListResponse,
     dependencies=_v1_api_key,
@@ -762,13 +769,39 @@ async def update_welfare_payment_for_staff(
     )
 
 
+@router.patch(
+    "/v1/case_for_staff/welfare-payment/{welfare_payment_id}",
+    tags=["case_for_staff"],
+    summary="อัปเดต welfare_payment ตาม id (แก้ไขรอบเดิม)",
+    description=(
+        "ส่งต่อ `PATCH …/welfare-payment/{welfare_payment_id}?applicant_id=…` — "
+        "แก้ไขแถวที่ระบุโดยตรง ไม่สร้างแถว 038 ใหม่"
+    ),
+    dependencies=_v1_api_key,
+)
+async def update_welfare_payment_by_id_for_staff(
+    welfare_payment_id: int,
+    applicant_id: int = Query(..., ge=1),
+    body: WelfarePaymentUpdateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True, mode="json")
+    return await _patch(
+        f"{base}/v1/case_for_staff/welfare-payment/{welfare_payment_id}"
+        f"?applicant_id={applicant_id}",
+        json=payload,
+    )
+
+
 @router.post(
     "/v1/case_for_staff/applicant/{applicant_id}/file-payment",
     tags=["case_for_staff"],
     summary="อัปโหลด PDF file_payment",
     description=(
         "ส่งต่อ multipart ไป case-service — ฟิลด์ form: attachment_type_id (9=PDF 037, 10=PDF 038), "
-        "welfare_payment_id (แนะนำหลัง PATCH 038), file (PDF); ไม่ส่ง welfare_payment_id จะใช้แถวล่าสุดบน DDA ปัจจุบัน"
+        "welfare_payment_id (แนะนำหลัง PATCH 038), file_payment_id (แก้ไข — อัปเดตแถวเดิม), "
+        "upload_batch_id (modal เดียว), file (PDF); "
+        "ไม่ส่ง welfare_payment_id จะใช้แถวล่าสุดบน DDA ปัจจุบัน"
     ),
     dependencies=_v1_api_key,
     status_code=status.HTTP_201_CREATED,
@@ -781,6 +814,15 @@ async def upload_file_payment_for_staff(
         ge=1,
         description="id จาก welfare_payment หลัง PATCH — ไม่ส่งจะใช้แถวล่าสุดบน DDA ปัจจุบัน",
     ),
+    file_payment_id: Optional[int] = Form(
+        None,
+        ge=1,
+        description="แก้ไขประวัติ — อัปเดตแถว file_payment เดิม",
+    ),
+    upload_batch_id: Optional[UUID] = Form(
+        None,
+        description="UUID ร่วมกันต่อการบันทึกครั้งเดียวใน modal",
+    ),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
@@ -788,6 +830,10 @@ async def upload_file_payment_for_staff(
     form_fields: Dict[str, Any] = {"attachment_type_id": attachment_type_id}
     if welfare_payment_id is not None:
         form_fields["welfare_payment_id"] = welfare_payment_id
+    if file_payment_id is not None:
+        form_fields["file_payment_id"] = file_payment_id
+    if upload_batch_id is not None:
+        form_fields["upload_batch_id"] = str(upload_batch_id)
     return await _post_evidence_multipart(url, form_fields, file)
 
 
