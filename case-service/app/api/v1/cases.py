@@ -448,6 +448,10 @@ async def update_welfare_case(
             applicant_row.bank_account_no = a.bank_account_no
         if a.age is not None:
             applicant_row.age = a.age
+        if a.reset_processing_state:
+            applicant_row.process_started_at     = None
+            applicant_row.process_sla_days       = None
+            applicant_row.type_money_category_id = None
 
     # ── Replace addresses ────────────────────────────────────────────────────────
     if body.addresses is not None:

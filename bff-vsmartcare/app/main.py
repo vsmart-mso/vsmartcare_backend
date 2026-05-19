@@ -59,6 +59,7 @@ _TAGS = [
     {"name": "notifications", "description": "การแจ้งเตือน"},
     {"name": "auth", "description": "Login ThaiD"},
     {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
+    {"name": "satisfaction", "description": "ผลประเมินความพึงพอใจของผู้ยื่นคำขอ"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -2026,6 +2027,45 @@ async def me(authorization: Optional[str] = Header(default=None)):
     if authorization and authorization.strip():
         headers["Authorization"] = authorization.strip()
     return await _get(f"{settings.thaid_auth_service_url}/v1/me", headers=headers)
+
+
+
+# ─── Satisfaction survey ───────────────────────────────────────────────────────
+
+
+class SatisfactionSurveyCreateBody(BaseModel):
+    applicant_id: int = Field(..., ge=1)
+    survey_type: str = Field(..., pattern="^(system_usage|aid_received)$")
+    rating: int = Field(..., ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+@router.post(
+    "/v1/satisfaction",
+    tags=["satisfaction"],
+    summary="บันทึกผลประเมินความพึงพอใจ",
+    description=(
+        "ส่งต่อ `POST …/v1/satisfaction` ใน case-service — "
+        "survey_type: 'system_usage' (หลังยื่นฟอร์ม) หรือ 'aid_received' (หลังเบิกจ่าย)"
+    ),
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_satisfaction_survey(body: SatisfactionSurveyCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/satisfaction", json=body.model_dump())
+
+
+@router.get(
+    "/v1/satisfaction",
+    tags=["satisfaction"],
+    summary="ดูผลประเมินความพึงพอใจของ applicant",
+    description="ส่งต่อ `GET …/v1/satisfaction?applicant_id=…` ใน case-service",
+    dependencies=_v1_api_key,
+)
+async def list_satisfaction_surveys(applicant_id: int = Query(..., ge=1)) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/satisfaction?applicant_id={applicant_id}")
 
 
 app.include_router(router, prefix=_api_prefix)
