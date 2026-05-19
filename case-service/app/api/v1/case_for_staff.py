@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 import base64
 import uuid
 from pathlib import Path
+from uuid import UUID
 
 from ...settings import resolved_upload_root
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
@@ -40,6 +41,7 @@ from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
     apply_fields_on_active_dda,
+    apply_payment_update_by_id,
     file_payment_owned_by_applicant,
 )
 from ...schemas.address import AddressRead
@@ -777,6 +779,12 @@ async def _list_cases_for_staff_finance_impl(
     )
     if require_welfare_payment_with_dda:
         stmt = stmt.where(welfare_payment_with_dda_exists)
+        stmt = stmt.where(
+            or_(
+                latest_status_sq.c.current_status_id.is_(None),
+                latest_status_sq.c.current_status_id < CURRENT_STATUS_WITHDRAWING,
+            ),
+        )
 
     total_stmt = select(func.count()).select_from(
         stmt.with_only_columns(Applicant.id).order_by(None).distinct().subquery()
@@ -905,7 +913,10 @@ async def list_cases_for_staff_finance_with_dda_ref(
     ),
     session: AsyncSession = Depends(get_session),
 ) -> CaseForStaffFinanceListResponse:
-    """เหมือน /finance แต่ดึงเฉพาะ applicant ที่มี welfare_payment ผูก welfare_dda_ref แล้ว."""
+    """เหมือน /finance แต่ดึงเฉพาะ applicant ที่มี welfare_payment ผูก welfare_dda_ref แล้ว.
+
+    ไม่รวมเคสที่สถานะล่าสุด current_status_id >= 10 (อยู่ระหว่างการเบิกขึ้นไป).
+    """
     return await _list_cases_for_staff_finance_impl(
         session,
         province_id,
@@ -969,6 +980,33 @@ async def update_welfare_payment_for_staff(
     return WelfarePaymentRead.model_validate(payment)
 
 
+@router.patch(
+    "/welfare-payment/{welfare_payment_id}",
+    response_model=WelfarePaymentRead,
+    summary="อัปเดต welfare_payment ตาม id (แก้ไขรอบเดิม)",
+)
+async def update_welfare_payment_by_id_for_staff(
+    welfare_payment_id: int,
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: WelfarePaymentUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> WelfarePaymentRead:
+    """PATCH แถวที่ระบุโดยตรง — ใช้แก้ประวัติ payment-upload-history ไม่สร้างแถว 038 ใหม่."""
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
+
+    payment = await apply_payment_update_by_id(
+        session,
+        applicant_id,
+        welfare_payment_id,
+        updates,
+    )
+    await session.commit()
+    await session.refresh(payment)
+    return WelfarePaymentRead.model_validate(payment)
+
+
 @router.post(
     "/applicant/{applicant_id}/file-payment",
     response_model=FilePaymentUploadRead,
@@ -981,7 +1019,16 @@ async def upload_file_payment_pdf(
     welfare_payment_id: int | None = Form(
         None,
         ge=1,
-        description="id จาก welfare_payment หลัง PATCH 038/037 — ไม่ส่งจะใช้แถวล่าสุดบน DDA ปัจจุบัน",
+        description="id จาก welfare_payment หลัง PATCH — ไม่ส่งจะเลือกแถว 037 หรือ 038 ตาม attachment_type_id",
+    ),
+    file_payment_id: int | None = Form(
+        None,
+        ge=1,
+        description="แก้ไขประวัติ — อัปเดตแถว file_payment เดิม ไม่สร้างแถวใหม่",
+    ),
+    upload_batch_id: UUID | None = Form(
+        None,
+        description="UUID ร่วมกันต่อการบันทึกครั้งเดียวใน modal",
     ),
     file: UploadFile = File(..., description="ไฟล์ PDF"),
     session: AsyncSession = Depends(get_session),
@@ -992,6 +1039,8 @@ async def upload_file_payment_pdf(
         attachment_type_id=attachment_type_id,
         file=file,
         welfare_payment_id=welfare_payment_id,
+        upload_batch_id=upload_batch_id,
+        file_payment_id=file_payment_id,
     )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
@@ -1098,8 +1147,8 @@ async def list_file_payments_for_applicant(
     response_model=PaymentUploadHistoryRead,
     summary="ประวัติการอัปโหลด PDF 037/038",
     description=(
-        "จัดกลุ่มตามรอบ 038 (ครั้งที่) — คืนหมายเลขคำร้อง, Payment ID cft037/cft038, "
-        "รายการไฟล์และ view_path สำหรับดาวน์โหลด"
+        "จัดกลุ่มตาม upload_batch_id หรือรอบ 037/038 — คืนหมายเลขคำร้อง, "
+        "Payment ID, transaction_date, effective_date, ไฟล์และ view_path"
     ),
 )
 async def get_payment_upload_history(
