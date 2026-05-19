@@ -12,6 +12,7 @@ services:
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
+      - OCR_SERVICE_URL=http://ocr-service:8000
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
     ports:
       - "8000:8000"
@@ -19,13 +20,12 @@ services:
       - case-service
       - notification-service
       - thaid-auth-service
+      - ocr-service
 
   case-service:
     image: service-case-service:latest
     build:
       context: ./case-service
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
       # ทับค่าใน .env เวลารันด้วย compose — host ต้องเป็น `postgres` ไม่ใช่ localhost
       - SERVICE_NAME=case-service
@@ -63,6 +63,21 @@ services:
       - PORT=8000
     ports:
       - "8002:8000"
+
+  ocr-service:
+    image: service-ocr-service:latest
+    build:
+      context: ./ocr-service
+    env_file:
+      - ./ocr-service/.env
+    environment:
+      - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+    ports:
+      - "8004:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   thaid-auth-service:
     image: service-thaid-auth-service:latest

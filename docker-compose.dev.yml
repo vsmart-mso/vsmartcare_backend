@@ -73,3 +73,22 @@ services:
         "8000",
         "--reload",
       ]
+
+  ocr-service:
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+    volumes:
+      - ./ocr-service/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
