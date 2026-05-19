@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,6 +104,7 @@ class WelfarePaymentCreate(WelfarePaymentBase):
 class WelfarePaymentRead(WelfarePaymentBase):
     id: int
     created_at: datetime | None = None
+    upload_batch_id: UUID | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -118,6 +120,10 @@ class WelfarePaymentUpdate(BaseModel):
     transaction_date: date | None = None
     effective_date: date | None = None
     user_sdshv: str | None = Field(None, max_length=255)
+    upload_batch_id: UUID | None = Field(
+        None,
+        description="UUID ร่วมกันต่อการบันทึกครั้งเดียวใน modal (037+038)",
+    )
 
 
 class FilePaymentBase(BaseModel):
@@ -142,6 +148,7 @@ class FilePaymentCreate(FilePaymentBase):
 
 class FilePaymentRead(FilePaymentBase):
     id: int
+    upload_batch_id: UUID | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -169,8 +176,12 @@ class PaymentUploadFileItem(BaseModel):
 class PaymentUploadHistoryRound(BaseModel):
     """หนึ่งรอบ (ครั้งที่) ของการบันทึก/อัปโหลด 037–038."""
 
-    round_no: int = Field(..., ge=1, description="ครั้งที่ (เรียงตามรอบ 038)")
-    welfare_payment_id: int = Field(..., ge=1, description="แถว welfare_payment ของ 038 ในรอบนี้")
+    round_no: int = Field(..., ge=1, description="ครั้งที่ (เรียงตาม id ของ welfare_payment)")
+    welfare_payment_id: int = Field(
+        ...,
+        ge=1,
+        description="แถว welfare_payment ของรอบนี้ (037 หรือ 038 แยกกัน)",
+    )
     payment_id_cft037: str | None = Field(
         None,
         description="Payment ID / เลขอ้างอิง CFT 037 (payment_number จากแถว 037)",
@@ -191,6 +202,18 @@ class PaymentUploadHistoryRound(BaseModel):
     uploaded_at: datetime | None = Field(
         None,
         description="วันเวลาบันทึกรอบ — จาก welfare_payment.created_at",
+    )
+    transaction_date: date | None = Field(
+        None,
+        description="วันที่ทำรายการ — จาก welfare_payment.transaction_date",
+    )
+    effective_date: date | None = Field(
+        None,
+        description="วันที่มีผล — จาก welfare_payment.effective_date",
+    )
+    upload_batch_id: UUID | None = Field(
+        None,
+        description="รหัสชุดอัปโหลดเดียวกัน (modal เดียว)",
     )
 
 

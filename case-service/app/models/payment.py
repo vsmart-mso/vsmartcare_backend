@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -79,6 +81,11 @@ class WelfarePayment(Base):
         nullable=False,
         server_default=func.now(),
     )
+    upload_batch_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
 
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_payments")
     welfare_dda_ref: Mapped["WelfareDdaRef"] = relationship(
@@ -114,6 +121,11 @@ class FilePayment(Base):
     )
     welfare_payment_id: Mapped[int | None] = mapped_column(
         ForeignKey("welfare_payment.id"),
+        nullable=True,
+        index=True,
+    )
+    upload_batch_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
         nullable=True,
         index=True,
     )
