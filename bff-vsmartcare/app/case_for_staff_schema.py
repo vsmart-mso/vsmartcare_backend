@@ -55,6 +55,10 @@ class CaseForStaffRead(ProcessSlaFields):
     )
     is_037_or_038: bool | None = None
     have_dda_ref: bool = False
+    is_approved: bool = Field(
+        False,
+        description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):

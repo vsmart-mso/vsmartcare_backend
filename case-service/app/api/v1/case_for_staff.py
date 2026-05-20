@@ -402,6 +402,18 @@ def _applicant_have_dda_ref_exists():
     )
 
 
+def _applicant_is_approved_exists():
+    """มีแถว approve_case ที่ approve_status = true สำหรับ applicant นี้หรือไม่."""
+    return (
+        select(ApproveCase.id)
+        .where(
+            ApproveCase.applicant_id == Applicant.id,
+            ApproveCase.approve_status.is_(True),
+        )
+        .exists()
+    )
+
+
 async def _get_row(session: AsyncSession, model: object, row_id: int) -> object | None:
     result = await session.execute(select(model).where(model.id == row_id))  # type: ignore[attr-defined]
     return result.scalar_one_or_none()
@@ -479,6 +491,7 @@ async def list_cases_for_staff(
     payment_stats_sq = _welfare_payment_stats_subquery()
     latest_payment_sq = _latest_welfare_payment_subquery()
     have_dda_ref = _applicant_have_dda_ref_exists()
+    is_approved = _applicant_is_approved_exists()
 
     stmt = (
         select(
@@ -512,6 +525,7 @@ async def list_cases_for_staff(
             func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
             latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
             have_dda_ref.label("have_dda_ref"),
+            is_approved.label("is_approved"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -681,13 +695,8 @@ async def _list_cases_for_staff_finance_impl(
         .subquery()
     )
 
-    approved_exists = (
-        select(ApproveCase.id)
-        .where(
-            ApproveCase.applicant_id == Applicant.id,
-            ApproveCase.approve_status.is_(True),
-        )
-    ).exists()
+    approved_exists = _applicant_is_approved_exists()
+    is_approved = approved_exists
 
     welfare_payment_with_dda_exists = _applicant_have_dda_ref_exists()
 
@@ -724,6 +733,7 @@ async def _list_cases_for_staff_finance_impl(
             func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
             latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
             welfare_payment_with_dda_exists.label("have_dda_ref"),
+            is_approved.label("is_approved"),
             Applicant.bank_name_id.label("bank_name_id"),
             BankName.bank_code.label("bank_code"),
             Applicant.bank_account_no.label("bank_account_no"),

@@ -65,6 +65,10 @@ class CaseForStaffRead(ProcessSlaFields):
         False,
         description="true เมื่อ applicant มี welfare_payment ผูก welfare_dda_ref แล้ว",
     )
+    is_approved: bool = Field(
+        False,
+        description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):
