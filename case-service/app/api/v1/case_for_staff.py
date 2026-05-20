@@ -160,6 +160,15 @@ def _load_esignature_base64(esignature_path: str | None) -> str | None:
 router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
 
 
+def _person_age_from_birth_date(birth_date: date) -> int:
+    """อายุเต็มปี ณ วันนี้ — ลด 1 ปีถ้ายังไม่ถึงวันเกิดในปีปัจจุบัน."""
+    today = date.today()
+    age = today.year - birth_date.year
+    if (today.month, today.day) < (birth_date.month, birth_date.day):
+        age -= 1
+    return max(age, 0)
+
+
 def _enrich_row_process_sla(data: dict[str, object]) -> None:
     data.update(
         process_sla_fields_dict(
@@ -169,15 +178,22 @@ def _enrich_row_process_sla(data: dict[str, object]) -> None:
     )
 
 
+def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
+    birth_date = data.pop("birth_date", None)
+    if birth_date is not None:
+        data["person_age"] = _person_age_from_birth_date(birth_date)  # type: ignore[arg-type]
+    _enrich_row_process_sla(data)
+
+
 def _row_to_case_for_staff_read(row: object) -> CaseForStaffRead:
     data = dict(row)  # type: ignore[arg-type]
-    _enrich_row_process_sla(data)
+    _enrich_case_for_staff_row(data)
     return CaseForStaffRead.model_validate(data)
 
 
 def _row_to_case_for_staff_finance_read(row: object) -> CaseForStaffFinanceRead:
     data = dict(row)  # type: ignore[arg-type]
-    _enrich_row_process_sla(data)
+    _enrich_case_for_staff_row(data)
     return CaseForStaffFinanceRead.model_validate(data)
 
 
@@ -508,6 +524,7 @@ async def list_cases_for_staff(
             Person.first_name.label("firstname"),
             Person.last_name.label("lastname"),
             Person.cid.label("cid"),
+            Person.birth_date.label("birth_date"),
             Applicant.created_at.label("datetime_create"),
             Applicant.is_emergency.label("is_emergency"),
             Applicant.is_existing_case.label("is_existing_case"),
@@ -715,6 +732,7 @@ async def _list_cases_for_staff_finance_impl(
             Person.first_name.label("firstname"),
             Person.last_name.label("lastname"),
             Person.cid.label("cid"),
+            Person.birth_date.label("birth_date"),
             Applicant.created_at.label("datetime_create"),
             Applicant.is_emergency.label("is_emergency"),
             Applicant.is_existing_case.label("is_existing_case"),

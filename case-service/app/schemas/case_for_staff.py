@@ -36,6 +36,7 @@ class CaseForStaffRead(ProcessSlaFields):
     firstname: str = Field(..., min_length=1, max_length=255)
     lastname: str = Field(..., min_length=1, max_length=255)
     cid: str = Field(..., min_length=13, max_length=13)
+    person_age: int = Field(..., ge=0, description="อายุ (ปี) คำนวณจาก persons.birth_date ณ วันที่เรียก API")
     datetime_create: datetime
     is_emergency: bool
     is_existing_case: bool
