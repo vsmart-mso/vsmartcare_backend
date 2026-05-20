@@ -56,7 +56,10 @@ async def delete_applicants_by_cid(
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="delete_blocked_by_related_data",
+            detail={
+                "code": "delete_blocked_by_related_data",
+                "message": str(exc.orig) if exc.orig else str(exc),
+            },
         ) from exc
 
     for upload_dir in purge.upload_dirs:

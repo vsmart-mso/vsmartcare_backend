@@ -46,5 +46,6 @@ class WelfareRequestStatus(Base):
     applicant: Mapped["Applicant"] = relationship(back_populates="status_logs")
     current_status: Mapped["CurrentStatus"] = relationship(lazy="selectin")
     review_comments: Mapped[list["WelfareReviewComment"]] = relationship(
-        back_populates="welfare_request_status"
+        back_populates="welfare_request_status",
+        cascade="all, delete-orphan",
     )

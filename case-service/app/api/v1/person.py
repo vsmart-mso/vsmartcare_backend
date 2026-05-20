@@ -5,11 +5,12 @@ from __future__ import annotations
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_session
+from ...models.applicant import Applicant
 from ...models.person import Person
 from ...schemas.person import (
     PersonDeleteAllResponse,
@@ -74,14 +75,25 @@ async def delete_person_by_cid(
     if person is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
 
+    purge = await purge_person_cases_and_logs(session, person)
     try:
-        purge = await purge_person_cases_and_logs(session, person)
+        remaining = await session.scalar(
+            select(func.count()).select_from(Applicant).where(Applicant.persons_id == person.id)
+        )
+        if remaining:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="delete_blocked_applicants_remain",
+            )
         await session.delete(person)
         await session.flush()
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="delete_blocked_by_related_data",
+            detail={
+                "code": "delete_blocked_by_related_data",
+                "message": str(exc.orig) if exc.orig else str(exc),
+            },
         ) from exc
 
     for upload_dir in purge.upload_dirs:
@@ -131,7 +143,10 @@ async def delete_all_persons(
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="delete_blocked_by_related_data",
+            detail={
+                "code": "delete_blocked_by_related_data",
+                "message": str(exc.orig) if exc.orig else str(exc),
+            },
         ) from exc
 
     for upload_dir in upload_dirs:

@@ -95,6 +95,9 @@ async def purge_person_cases_and_logs(session: AsyncSession, person: Person) -> 
     for applicant_id in deleted_applicant_ids:
         await delete_applicant_cascade(session, applicant_id)
 
+    if deleted_applicant_ids:
+        await session.flush()
+
     from ..settings import resolved_upload_root
 
     upload_dirs = [resolved_upload_root() / str(applicant_id) for applicant_id in deleted_applicant_ids]

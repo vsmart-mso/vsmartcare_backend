@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models.applicant import Applicant
 from ..models.economic import EconomicInfo
 from ..models.intake import CaseHandling
+from ..models.ocr_result import OcrResult
 from ..models.payment import FilePayment, WelfareDdaRef, WelfarePayment
+from ..models.review import WelfareReviewComment
+from ..models.status_log import WelfareRequestStatus
 from ..models.welfare import WelfareHistory
 
 
@@ -22,7 +25,7 @@ def applicant_delete_load_options():  # noqa: ANN201
         selectinload(Applicant.welfare_history).selectinload(WelfareHistory.history_details),
         selectinload(Applicant.welfare_request_types),
         selectinload(Applicant.welfare_evidences),
-        selectinload(Applicant.status_logs),
+        selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.review_comments),
         selectinload(Applicant.approve_cases),
         selectinload(Applicant.welfare_payments),
         selectinload(Applicant.case_handling).selectinload(CaseHandling.regulation_choice),
@@ -30,6 +33,26 @@ def applicant_delete_load_options():  # noqa: ANN201
         selectinload(Applicant.case_handling).selectinload(CaseHandling.ktb_corporate),
         selectinload(Applicant.satisfaction_surveys),
     ]
+
+
+async def purge_applicant_review_comments(session: AsyncSession, applicant_id: int) -> None:
+    """ลบ welfare_review_comment ก่อน status_logs — FK ไม่มี ON DELETE CASCADE ใน DB."""
+    status_ids = select(WelfareRequestStatus.id).where(
+        WelfareRequestStatus.applicant_id == applicant_id
+    )
+    await session.execute(
+        delete(WelfareReviewComment).where(
+            WelfareReviewComment.welfare_request_status_id.in_(status_ids)
+        )
+    )
+
+
+async def detach_ocr_results(session: AsyncSession, applicant_id: int) -> None:
+    await session.execute(
+        update(OcrResult)
+        .where(OcrResult.applicant_id == applicant_id)
+        .values(applicant_id=None)
+    )
 
 
 async def purge_applicant_payment_rows(session: AsyncSession, applicant_id: int) -> None:
@@ -75,6 +98,8 @@ async def load_applicant_for_delete(session: AsyncSession, applicant_id: int) ->
 
 async def delete_applicant_cascade(session: AsyncSession, applicant_id: int) -> None:
     await purge_applicant_payment_rows(session, applicant_id)
+    await purge_applicant_review_comments(session, applicant_id)
+    await detach_ocr_results(session, applicant_id)
     applicant = await load_applicant_for_delete(session, applicant_id)
     if applicant is None:
         return
