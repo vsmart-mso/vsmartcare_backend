@@ -216,6 +216,22 @@ class PorKor1WelfareRequestTypeItem(BaseModel):
 
     item: WelfareRequestTypeRead
     request_type_name: str | None = Field(None, max_length=255)
+    request_other_text: str | None = Field(
+        None,
+        max_length=500,
+        description=(
+            "ข้อความระบุรายละเอียดเมื่อขอประเภท 'ช่วยเหลือเรื่องอื่นๆ' — "
+            "คอลัมน์ `welfare_request_types.request_other_text` (สะดวกแสดงผลโดยไม่ต้องอ่านจาก `item`)"
+        ),
+    )
+    money_amount: Decimal | None = Field(
+        None,
+        ge=0,
+        description=(
+            "จำนวนเงินที่ช่วยเหลือ (หน้า 11) — `case_regulation_choice.money_amount` "
+            "ผ่าน `case_handling` ของ applicant (เดียวกันทุกแถวในคำร้องนี้หากมีข้อมูล)"
+        ),
+    )
 
 
 class PorKor1WelfareHistoryDetailRead(WelfareHistoryDetailRead):

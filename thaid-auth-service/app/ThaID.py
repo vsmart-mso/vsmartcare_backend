@@ -178,6 +178,41 @@ def _address_formatted(userinfo: Dict[str, Any]) -> str:
     return str(addr or "").strip()
 
 
+_TITLE_CLAIM_KEYS = ("titleTh", "title_th", "title", "nameTitle", "prefix")
+
+
+def _extract_title_th(userinfo: Dict[str, Any]) -> str:
+    """ดึงคำนำหน้าจาก claim ที่ ThaiD / OIDC อาจใช้ชื่อต่างกัน."""
+    for key in _TITLE_CLAIM_KEYS:
+        raw = userinfo.get(key)
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if s:
+            return s
+    return ""
+
+
+def merge_oidc_userinfo(
+    id_claims: Dict[str, Any] | None,
+    userinfo: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """
+    รวม id_token กับ userinfo — ค่าไม่ว่างจาก userinfo ชนะ;
+    ไม่ให้สตริงว่างใน userinfo ทับ title/ชื่อที่มีใน id_token แล้ว.
+    """
+    merged: Dict[str, Any] = dict(id_claims or {})
+    for key, value in (userinfo or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        merged[key] = value
+    return merged
+
+
 def normalize_profile(userinfo: Dict[str, Any]) -> Dict[str, str]:
     """Map ThaiD userinfo to stable keys for JWT and /v1/me (see THAID_FASTAPI_INTEGRATION.md)."""
     pid = userinfo.get("pid") or userinfo.get("sub")
@@ -185,7 +220,7 @@ def normalize_profile(userinfo: Dict[str, Any]) -> Dict[str, str]:
         "pid": str(pid).strip() if pid is not None else "",
         "given_name": str(userinfo.get("given_name") or "").strip(),
         "family_name": str(userinfo.get("family_name") or "").strip(),
-        "title_th": str(userinfo.get("titleTh") or userinfo.get("title") or "").strip(),
+        "title_th": _extract_title_th(userinfo),
         "address": _address_formatted(userinfo),
         "address_postcode": _address_postcode_from_userinfo(userinfo),
         "birthdate": str(userinfo.get("birthdate") or "").strip(),
