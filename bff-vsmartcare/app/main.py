@@ -48,6 +48,7 @@ _v1_api_key = [Depends(require_bff_api_key)]
 _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
     {"name": "applicants", "description": "การจัดการข้อมูล applicant"},
+    {"name": "persons", "description": "reset / ลบข้อมูล persons และเคสที่ผูกกับบุคคล"},
     {"name": "cases", "description": "การบันทึกข้อมูล case"},
     {"name": "case_for_staff", "description": "รายการคำร้องสำหรับการใช้งานฝั่งเจ้าหน้าที่"},
     {
@@ -385,6 +386,29 @@ class ApplicantDeleteByCidResponse(BaseModel):
     deleted_screening_log_count: int = Field(..., ge=0)
     deleted_welfare_request_consent_ids: list[int] = Field(default_factory=list)
     deleted_welfare_request_consent_count: int = Field(..., ge=0)
+
+
+class PersonDeleteByCidResponse(BaseModel):
+    cid: str = Field(..., min_length=13, max_length=13)
+    person_id: int
+    person_deleted: bool = True
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_count: int = Field(..., ge=0)
+    deleted_screening_log_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_ids: list[int] = Field(default_factory=list)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)
+    cleared_case_payment_refs: int = Field(0, ge=0)
+
+
+class PersonDeleteAllResponse(BaseModel):
+    deleted_person_count: int = Field(..., ge=0)
+    deleted_person_ids: list[int] = Field(default_factory=list)
+    deleted_applicant_count: int = Field(..., ge=0)
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)
+    cleared_case_payment_refs: int = Field(0, ge=0)
 
 
 class CaseForStaffWelfareRequestStatusBody(BaseModel):
@@ -1229,6 +1253,39 @@ async def delete_applicants_by_cid(
     base = settings.case_service_url.rstrip("/")
     data = await _delete(f"{base}/v1/applicants/by-cid?cid={cid}", timeout=120.0)
     return ApplicantDeleteByCidResponse.model_validate(data)
+
+
+@router.delete(
+    "/v1/persons/by-cid",
+    tags=["persons"],
+    summary="ลบ person ตามเลขบัตรประชาชน (reset บุคคลและเคส)",
+    description=(
+        "ส่งต่อ `DELETE …/v1/persons/by-cid?cid=…` ใน case-service — "
+        "ลบ applicants, screening_logs, welfare_request_consents และแถว persons"
+    ),
+    response_model=PersonDeleteByCidResponse,
+    dependencies=_v1_api_key,
+)
+async def delete_person_by_cid(
+    cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
+) -> PersonDeleteByCidResponse:
+    base = settings.case_service_url.rstrip("/")
+    data = await _delete(f"{base}/v1/persons/by-cid?cid={cid}", timeout=120.0)
+    return PersonDeleteByCidResponse.model_validate(data)
+
+
+@router.delete(
+    "/v1/persons/all",
+    tags=["persons"],
+    summary="ลบ persons ทั้งหมด (reset ข้อมูลบุคคลและเคสทั้งระบบ)",
+    description="ส่งต่อ `DELETE …/v1/persons/all` ใน case-service",
+    response_model=PersonDeleteAllResponse,
+    dependencies=_v1_api_key,
+)
+async def delete_all_persons() -> PersonDeleteAllResponse:
+    base = settings.case_service_url.rstrip("/")
+    data = await _delete(f"{base}/v1/persons/all", timeout=300.0)
+    return PersonDeleteAllResponse.model_validate(data)
 
 
 @router.get(

@@ -62,3 +62,30 @@ class PersonUpdate(BaseModel):
 class PersonRead(PersonBase):
     id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+class PersonDeleteByCidResponse(BaseModel):
+    cid: str = Field(..., min_length=13, max_length=13)
+    person_id: int
+    person_deleted: bool = True
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_count: int = Field(..., ge=0)
+    deleted_screening_log_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_ids: list[int] = Field(default_factory=list)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)
+    cleared_case_payment_refs: int = Field(
+        0,
+        ge=0,
+        description="จำนวนแถว case_payment ที่เคลียร์ agent/payee_person_id ก่อนลบ person",
+    )
+
+
+class PersonDeleteAllResponse(BaseModel):
+    deleted_person_count: int = Field(..., ge=0)
+    deleted_person_ids: list[int] = Field(default_factory=list)
+    deleted_applicant_count: int = Field(..., ge=0)
+    deleted_applicant_ids: list[int] = Field(default_factory=list)
+    deleted_screening_log_count: int = Field(..., ge=0)
+    deleted_welfare_request_consent_count: int = Field(..., ge=0)
+    cleared_case_payment_refs: int = Field(0, ge=0)
