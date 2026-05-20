@@ -12,6 +12,7 @@ See [BETA_DEPLOYMENT.md](BETA_DEPLOYMENT.md) — step-by-step Beta deploy for `h
 - `case-service`: create and track requests/cases
 - `notification-service`: queue + send notifications (starter)
 - `thaid-auth-service`: adapter for ThaiD login (real OIDC or mock; see `thaid-auth-service/.env.example`)
+- `ocr-service`: using ocr for scan book bank image
 
 ### Run locally
 
@@ -40,4 +41,5 @@ Services will be available on:
 - `case-service`: `http://localhost:8001`
 - `notification-service`: `http://localhost:8002`
 - `thaid-auth-service`: `http://localhost:8003`
+- `ocr-service`:`http://localhost:8004`
 
