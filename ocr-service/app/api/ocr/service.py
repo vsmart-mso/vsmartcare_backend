@@ -87,6 +87,22 @@ _TH_TITLES: set[str] = {
 }
 
 
+def _split_title_name(full_name: str) -> tuple[str, str]:
+    """แยกคำนำหน้าออกจากชื่อ-นามสกุล.
+
+    Returns (title, name_rest).
+    - title="" ถ้าไม่มีคำนำหน้า
+    - name_rest คือชื่อที่เหลือหลังตัดคำนำหน้าออก
+    """
+    full = full_name.strip()
+    for title in sorted(_TH_TITLES, key=len, reverse=True):
+        if full.startswith(title) and (len(full) > len(title) and full[len(title)] in (" ", "\u00a0")):
+            name_rest = full[len(title):].strip()
+            return title, name_rest
+    # ไม่เจอคำนำหน้า → ทั้งหมดเป็นชื่อ
+    return "", full
+
+
 def _titles_compatible(title_a: str, title_b: str) -> bool:
     """ตรวจสอบว่าคำนำหน้าชื่อทั้งสองเข้ากันได้ (ไม่ขัดแย้ง)."""
     title_a = title_a.strip()
@@ -222,23 +238,26 @@ async def run_ocr_pipeline(
     account_name = raw_bank.get("account_name")
     bank_name = raw_bank.get("bank_name")
 
-    # 5. Fuzzy match account_name vs target_name
+    # 5. Fuzzy match — แยกคำนำหน้าออก → match เฉพาะชื่อ-นามสกุล
     fuzzy_score = 0.0
     ocr_title = ""
     target_title = ""
+    ocr_name_only = ""
+    target_name_only = ""
 
     if account_name and target_name:
-        fuzzy_score = _fuzzy_score(account_name, target_name)
+        # แยกคำนำหน้ากับชื่อ-นามสกุล
+        ocr_title, ocr_name_only = _split_title_name(account_name)
+        target_title, target_name_only = _split_title_name(target_name)
 
-        # สกัดคำนำหน้าจาก target_name และ account_name
-        for title in sorted(_TH_TITLES, key=len, reverse=True):
-            if target_name.startswith(title):
-                target_title = title
-                break
-        for title in sorted(_TH_TITLES, key=len, reverse=True):
-            if account_name.startswith(title):
-                ocr_title = title
-                break
+        # fuzzy match บนชื่อ-นามสกุลเท่านั้น (ไม่มีคำนำหน้า)
+        fuzzy_score = _fuzzy_score(ocr_name_only, target_name_only)
+
+        logger.info(
+            f"Fuzzy: ocr_title={ocr_title!r} ocr_name={ocr_name_only!r} | "
+            f"target_title={target_title!r} target_name={target_name_only!r} | "
+            f"score={fuzzy_score:.2f}"
+        )
 
     # 6. ตัดสิน match_status
     match_status = _determine_match_status(

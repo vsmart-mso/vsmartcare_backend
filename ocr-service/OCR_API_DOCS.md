@@ -136,6 +136,10 @@ const { data } = await axios.post<OcrResponse>(
 6. Fuzzy < 75%                   → mismatch
 ```
 
+> **Fuzzy match แยกคำนำหน้าออกจากชื่อ-นามสกุล** — match เฉพาะชื่อ-นามสกุล ไม่นับคำนำหน้า  
+> เช่น target = `"นาย ภูริพัฒน ปัญญา"` vs OCR = `"ภูริพัฒน ปัญญา"` → fuzzy บน `"ภูริพัฒน ปัญญา"` เท่านั้น = 100%  
+> คำนำหน้าถูกตรวจสอบแยกในข้อ 3 (compatibility check)
+
 ---
 
 ## ⚠️ Error Responses
