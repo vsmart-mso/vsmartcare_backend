@@ -652,8 +652,8 @@ async def list_cases_for_staff(
     summary="รายการคำร้องสำหรับตารางการเงิน",
     description=(
         "ส่งต่อ `GET …/v1/case_for_staff/finance` — บังคับ `province_id`, เฉพาะเคสที่ approve_case.approve_status = true, "
-        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน dda_ref, have_dda_ref, count_037, count_038, is_037_or_038, "
-        "bank_name_id, bank_code, bank_account_no, email_address, mobile_phone, money_amount"
+        "รองรับกรอง type_money_id / current_status_id หลายค่า, คืน is_approved, dda_ref, have_dda_ref, count_037, count_038, "
+        "is_037_or_038, bank_name_id, bank_code, bank_account_no, email_address, mobile_phone, money_amount"
     ),
     response_model=CaseForStaffFinanceListResponse,
     dependencies=_v1_api_key,
@@ -719,7 +719,7 @@ async def list_cases_for_staff_finance(
         "ส่งต่อ `GET …/v1/case_for_staff/finance/with-dda-ref` — เหมือน /finance แต่ดึงเฉพาะ applicant "
         "ที่มีแถวใน welfare_payment ผูกกับ welfare_dda_ref แล้ว; "
         "ไม่รวมเคสที่ current_status_id >= 10 (อยู่ระหว่างการเบิกขึ้นไป); "
-        "คืนฟิลด์ธนาคาร/ติดต่อเหมือน /finance"
+        "คืน is_approved และฟิลด์ธนาคาร/ติดต่อเหมือน /finance"
     ),
     response_model=CaseForStaffFinanceListResponse,
     dependencies=_v1_api_key,
