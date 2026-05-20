@@ -343,13 +343,13 @@ async def create_welfare_case(
                 )
             )
 
-    _OTHER_TYPE_ID = 3
+    _OTHER_TYPE_IDS = {1, 3}
     for rt in req_ids:
         session.add(
             WelfareRequestType(
                 applicant_id=aid,
                 request_type_id=rt,
-                request_other_text=body.request_other_text if rt == _OTHER_TYPE_ID else None,
+                request_other_text=body.request_other_text if rt in _OTHER_TYPE_IDS else None,
             )
         )
 
@@ -511,14 +511,14 @@ async def update_welfare_case(
                 ))
 
     # ── Replace request_type_ids ─────────────────────────────────────────────────
-    _OTHER_TYPE_ID = 3
+    _OTHER_TYPE_IDS = {1, 3}
     if body.request_type_ids is not None:
         await session.execute(delete(WelfareRequestType).where(WelfareRequestType.applicant_id == applicant_id))
         for rt in _dedupe_preserve_order(body.request_type_ids):
             session.add(WelfareRequestType(
                 applicant_id=applicant_id,
                 request_type_id=rt,
-                request_other_text=body.request_other_text if rt == _OTHER_TYPE_ID else None,
+                request_other_text=body.request_other_text if rt in _OTHER_TYPE_IDS else None,
             ))
 
     # ── Replace welfare_history (1:1 — upsert by applicant_id) ──────────────────
