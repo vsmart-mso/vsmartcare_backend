@@ -7,6 +7,7 @@ import logging
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..constants.current_status import CURRENT_STATUS_PENDING_INTAKE
 from ..models.applicant import Applicant
 from ..models.lookup import CurrentStatus
 from ..settings import settings
@@ -24,6 +25,16 @@ async def enqueue_status_email(
 ) -> None:
     """POST ไป notification-service; ล้มเหลวแล้ว log เท่านั้น — ไม่ raise."""
     if not settings.status_email_enabled:
+        return
+
+    if current_status_id == CURRENT_STATUS_PENDING_INTAKE:
+        logger.info(
+            "status_email: skip applicant_id=%s status_log_id=%s "
+            "(current_status_id=%s ไม่ใช่ action ของเจ้าหน้าที่)",
+            applicant_id,
+            status_log_id,
+            current_status_id,
+        )
         return
 
     base_url = (settings.notification_service_url or "").strip().rstrip("/")
