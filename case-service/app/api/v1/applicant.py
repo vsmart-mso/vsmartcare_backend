@@ -6,6 +6,7 @@ import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +14,7 @@ from ...core.database import get_session
 from ...models.person import Person
 from ...schemas.applicant import ApplicantDeleteByCidResponse
 from ...schemas.person import validate_thai_cid
+from ...services.applicant_delete import delete_applicant_cascade
 from ...settings import resolved_upload_root
 
 router = APIRouter(prefix="/v1/applicants", tags=["applicants"])
@@ -67,9 +69,15 @@ async def delete_applicants_by_cid(
         await session.delete(screening_log)
     for consent in consents:
         await session.delete(consent)
-    for applicant in applicants:
-        await session.delete(applicant)
-    await session.flush()
+    try:
+        for applicant_id in deleted_applicant_ids:
+            await delete_applicant_cascade(session, applicant_id)
+        await session.flush()
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="delete_blocked_by_related_data",
+        ) from exc
 
     for upload_dir in upload_dirs:
         shutil.rmtree(upload_dir, ignore_errors=True)
