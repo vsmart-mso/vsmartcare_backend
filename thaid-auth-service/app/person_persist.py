@@ -157,17 +157,56 @@ async def _resolve_sub_district_postcode_id(
     return None
 
 
-async def _resolve_prefix_id(session: AsyncSession, title_th: str) -> int:
+# รหัส/ชื่อย่อจาก ThaiD → ชื่อใน master `prefix_type` (seed: นาย/นาง/นางสาว)
+_PREFIX_ALIASES: dict[str, str] = {
+    "1": "นาย",
+    "2": "นาง",
+    "3": "นางสาว",
+    "น.ส.": "นางสาว",
+    "น.ส": "นางสาว",
+    "น.": "นาย",
+    "น": "นาย",
+    "นาย": "นาย",
+    "นาง": "นาง",
+    "นางสาว": "นางสาว",
+}
+
+_PREFIX_ORDER_FOR_NAME = ("นางสาว", "นาง", "นาย")
+
+
+def _canonical_prefix_label(title_th: str) -> str:
     t = (title_th or "").strip()
     if not t:
+        return ""
+    return _PREFIX_ALIASES.get(t, t)
+
+
+def _extract_title_from_given_name(given_name: str) -> tuple[str, str]:
+    """กรณี ThaiD ไม่ส่ง title แต่รวมคำนำหน้าไว้ใน given_name."""
+    gn = (given_name or "").strip()
+    for prefix in _PREFIX_ORDER_FOR_NAME:
+        if gn.startswith(prefix + " "):
+            return prefix, gn[len(prefix) + 1 :].strip()
+    return "", gn
+
+
+async def _resolve_prefix_id(session: AsyncSession, title_th: str) -> int:
+    canonical = _canonical_prefix_label(title_th)
+    if not canonical:
+        logger.warning("prefix_resolve: empty title, defaulting prefix_id=1")
         return 1
     r = await session.execute(
         text("SELECT id FROM prefix_type WHERE TRIM(name) = :name LIMIT 1"),
-        {"name": t},
+        {"name": canonical},
     )
     row = r.first()
     if row:
         return int(row[0])
+    logger.warning(
+        "prefix_resolve: no prefix_type match for title_th=%r (canonical=%r), defaulting prefix_id=1",
+        title_th,
+        canonical,
+    )
     return 1
 
 
@@ -209,7 +248,10 @@ async def persist_new_person_if_absent(profile: Dict[str, str]) -> None:
             logger.info("person_persist_skip: row already exists for cid prefix=%s***", cid[:3])
             return
 
-        prefix_id = await _resolve_prefix_id(session, profile.get("title_th") or "")
+        title_for_prefix = (profile.get("title_th") or "").strip()
+        if not title_for_prefix:
+            title_for_prefix, _ = _extract_title_from_given_name(fn)
+        prefix_id = await _resolve_prefix_id(session, title_for_prefix)
 
         sdp_id = await _resolve_sub_district_postcode_id(
             session,

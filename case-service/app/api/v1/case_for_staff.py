@@ -285,10 +285,16 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         for e in sorted(orm.economic_infos, key=lambda x: x.id)
     ]
 
+    reg_money = None
+    if orm.case_handling is not None and orm.case_handling.regulation_choice is not None:
+        reg_money = orm.case_handling.regulation_choice.money_amount
+
     welfare_request_types = [
         PorKor1WelfareRequestTypeItem(
             item=WelfareRequestTypeRead.model_validate(w),
             request_type_name=w.request_type.name if w.request_type else None,
+            request_other_text=w.request_other_text,
+            money_amount=reg_money,
         )
         for w in sorted(orm.welfare_request_types, key=lambda x: x.request_type_id)
     ]
@@ -1358,7 +1364,8 @@ async def create_welfare_request_status_for_staff(
         "ดึงข้อมูลคำร้องครบถ้วน (รูปแบบจัดกลุ่มสำหรับ vsmartcare / ปศค 1) — "
         "`summary.type_money` เป็น null เมื่อ applicants.type_money_category_id ว่าง "
         "จัดเป็นกลุ่ม: สรุปคำร้อง, ข้อมูลบุคคล, ข้อมูลผู้ขอ, ที่อยู่, ภาระเลี้ยงดู, เศรษฐกิจ, "
-        "ประเภทคำร้อง, ประวัติสวัสดิการ, สถานะ, หลักฐานพร้อม path สำหรับ GET รูป"
+        "ประเภทคำร้อง (แต่ละรายการมี `request_other_text`, `money_amount` จากหน้า 11 / case_regulation_choice), "
+        "ประวัติสวัสดิการ, สถานะ, หลักฐานพร้อม path สำหรับ GET รูป"
     ),
 )
 async def get_por_kor_1_case_detail_for_staff(

@@ -465,8 +465,8 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
             raw_userinfo = {}
         id_tok = tokens.get("id_token")
         if isinstance(id_tok, str) and id_tok.strip():
-            merged = {**ThaID.claims_from_id_token_unverified(id_tok), **raw_userinfo}
-            raw_userinfo = merged
+            id_claims = ThaID.claims_from_id_token_unverified(id_tok)
+            raw_userinfo = ThaID.merge_oidc_userinfo(id_claims, raw_userinfo)
         profile = ThaID.normalize_profile(raw_userinfo)
         if not profile.get("pid"):
             raise HTTPException(status_code=400, detail="missing_pid_in_userinfo")

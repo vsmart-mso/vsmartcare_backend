@@ -22,6 +22,7 @@ from ...models.applicant import Applicant
 from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo
+from ...models.intake import CaseHandling
 from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
@@ -96,6 +97,7 @@ def _applicant_load_options():  # noqa: ANN001
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.income_sources),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.housing_type),
         selectinload(Applicant.dependency_loads),
+        selectinload(Applicant.case_handling).selectinload(CaseHandling.regulation_choice),
         selectinload(Applicant.welfare_request_types),
         selectinload(Applicant.welfare_history)
         .selectinload(WelfareHistory.history_details)
