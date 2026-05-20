@@ -37,6 +37,7 @@ from ...services.file_payment_upload import (
     save_file_payment_pdf,
 )
 from ...services.payment_upload_history import build_payment_upload_history
+from ...services.status_email_notification import enqueue_status_email
 from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
@@ -969,19 +970,27 @@ async def update_welfare_payment_for_staff(
 
     is_037_update = _welfare_payment_update_indicates_037(updates)
 
+    status_log: WelfareRequestStatus | None = None
     if is_037_update:
         if await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
-        session.add(
-            WelfareRequestStatus(
-                applicant_id=applicant_id,
-                current_status_id=CURRENT_STATUS_WITHDRAWING,
-                remarks="บันทึกผลจ่ายเงิน 037",
-                update_by_sdshv=updates.get("user_sdshv"),
-            ),
+        status_log = WelfareRequestStatus(
+            applicant_id=applicant_id,
+            current_status_id=CURRENT_STATUS_WITHDRAWING,
+            remarks="บันทึกผลจ่ายเงิน 037",
+            update_by_sdshv=updates.get("user_sdshv"),
         )
+        session.add(status_log)
 
     await session.commit()
+    if status_log is not None:
+        await enqueue_status_email(
+            session,
+            applicant_id=applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            remarks=status_log.remarks,
+        )
     await session.refresh(payment)
     return WelfarePaymentRead.model_validate(payment)
 
@@ -1347,6 +1356,13 @@ async def create_welfare_request_status_for_staff(
     )
     session.add(log)
     await session.commit()
+    await enqueue_status_email(
+        session,
+        applicant_id=log.applicant_id,
+        status_log_id=log.id,
+        current_status_id=log.current_status_id,
+        remarks=log.remarks,
+    )
     result = await session.execute(
         select(WelfareRequestStatus)
         .where(WelfareRequestStatus.id == log.id)
@@ -1497,6 +1513,13 @@ async def create_approve_case_for_staff(
     session.add(status_log)
 
     await session.commit()
+    await enqueue_status_email(
+        session,
+        applicant_id=status_log.applicant_id,
+        status_log_id=status_log.id,
+        current_status_id=status_log.current_status_id,
+        remarks=status_log.remarks,
+    )
     await session.refresh(row)
 
     # ดึงข้อมูลและแปลง File Path กลับไปเป็น Base64 เพื่อรักษาความเข้ากันได้หน้าบ้านเดิม
@@ -1628,6 +1651,13 @@ async def create_welfare_edit_request(
         comments.append(comment)
 
     await session.commit()
+    await enqueue_status_email(
+        session,
+        applicant_id=status_log.applicant_id,
+        status_log_id=status_log.id,
+        current_status_id=status_log.current_status_id,
+        remarks=status_log.remarks,
+    )
 
     return WelfareEditRequestRead(
         welfare_request_status_id=status_log.id,
