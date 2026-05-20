@@ -33,7 +33,7 @@ def upgrade() -> None:
                 created_at   TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
                 CONSTRAINT pk_satisfaction_surveys PRIMARY KEY (id),
                 CONSTRAINT fk_satisfaction_surveys_applicant_id
-                    FOREIGN KEY (applicant_id) REFERENCES applicants (id)
+                    FOREIGN KEY (applicant_id) REFERENCES applicants (id) ON DELETE CASCADE
             )
             """
         )

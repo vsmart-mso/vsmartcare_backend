@@ -17,7 +17,7 @@ class SatisfactionSurvey(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     applicant_id: Mapped[int] = mapped_column(
-        ForeignKey("applicants.id"),
+        ForeignKey("applicants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

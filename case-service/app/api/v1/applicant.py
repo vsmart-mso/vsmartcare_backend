@@ -24,8 +24,9 @@ router = APIRouter(prefix="/v1/applicants", tags=["applicants"])
     summary="ลบ applicants ตามเลขบัตรประชาชน",
     description=(
         "ค้นหา `persons.cid` แล้วลบ applicant ทุกแถวที่ผูกกับ person คนนั้น "
-        "(รวมตารางลูกที่ cascade ตาม applicant_id, ลบ `screening_logs`, "
-        "`welfare_request_consents` และลบโฟลเดอร์ไฟล์หลักฐานของ applicant แต่ละราย)"
+        "(รวมตารางลูกที่ cascade ตาม applicant_id เช่น `satisfaction_surveys`, "
+        "ลบ `screening_logs`, `welfare_request_consents` "
+        "และลบโฟลเดอร์ไฟล์หลักฐานของ applicant แต่ละราย)"
     ),
 )
 async def delete_applicants_by_cid(
