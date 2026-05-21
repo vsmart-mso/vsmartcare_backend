@@ -156,6 +156,9 @@ location /api-vsmartcare/ {
 | `DATABASE_URL` | จำเป็น | `postgresql+asyncpg://USER:PASS@host:5432/case_service` | asyncpg |
 | `UPLOAD_ROOT` | แนะนำ | path ใน volume | เก็บไฟล์หลักฐาน |
 | `MAX_UPLOAD_BYTES` | ไม่บังคับ | `10485760` | default 10 MiB |
+| `NOTIFICATION_SERVICE_URL` | จำเป็น | `http://notification-service:8000` | case-service เรียกส่งอีเมลเมื่อเจ้าหน้าที่เปลี่ยนสถานะ (ไม่ผ่าน BFF) |
+| `STATUS_EMAIL_ENABLED` | ไม่บังคับ | `true` | `false` = ข้ามการแจ้งเตือน |
+| `STATUS_EMAIL_TIMEOUT_SECONDS` | ไม่บังคับ | `5` | timeout เรียก notification-service |
 
 ### thaid-auth-service
 
@@ -179,7 +182,23 @@ location /api-vsmartcare/ {
 
 ### notification-service
 
-อ้างอิง [`notification-service/app/settings.py`](notification-service/app/settings.py) — ส่วนใหญ่ตั้ง `PORT=8000` ตาม compose
+อ้างอิง [`notification-service/app/settings.py`](notification-service/app/settings.py)
+
+| ตัวแปร | จำเป็น | ตัวอย่าง Beta (เฟส 1) | ตัวอย่าง Prod (เฟส 2) | หมายเหตุ |
+|--------|--------|------------------------|------------------------|----------|
+| `PORT` | จำเป็น | `8000` | `8000` | |
+| `EMAIL_MODE` | จำเป็น | `log` | `smtp` | `log` = พิมพ์ JSON ใน log ไม่ส่งออกเน็ต |
+| `EMAIL_AUTO_SEND` | ไม่บังคับ | `true` | `true` | ส่งทันทีหลัง `POST /v1/notifications` |
+| `SMTP_FROM` | แนะนำ | `noreply@vsmart-demo.m-society.go.th` | `noreply@m-society.go.th` | |
+| `SMTP_HOST` | เมื่อ `smtp` | — | relay องค์กร | |
+| `SMTP_PORT` | เมื่อ `smtp` | — | `587` | |
+| `SMTP_USER` / `SMTP_PASSWORD` | เมื่อ relay ต้อง auth | — | จาก secret store | อย่า commit |
+| `SMTP_USE_TLS` | เมื่อ `smtp` | — | `true` (port 587) | |
+| `SMTP_USE_SSL` | เมื่อ `smtp` | — | `false` | ใช้ `true` กับ port 465 |
+
+**Beta เฟส 1 (แนะนำก่อน UAT SMTP):** `EMAIL_MODE=log`, `EMAIL_AUTO_SEND=true` — ตรวจ `docker logs notification-service` หลังเจ้าหน้าที่เปลี่ยนสถานะ
+
+**case-service บน Beta:** ตั้ง `NOTIFICATION_SERVICE_URL` และ `STATUS_EMAIL_ENABLED=true` เหมือนตาราง case-service ด้านบน
 
 ---
 

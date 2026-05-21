@@ -31,11 +31,16 @@ services:
       - SERVICE_NAME=case-service
       - PORT=8000
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8000
+      - STATUS_EMAIL_ENABLED=true
+      - STATUS_EMAIL_TIMEOUT_SECONDS=5
     ports:
       - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      notification-service:
+        condition: service_started
     env_file:
       - ./case-service/.env
 
@@ -59,8 +64,12 @@ services:
     image: service-notification-service:latest
     build:
       context: ./notification-service
+    env_file:
+      - ./notification-service/.env
     environment:
       - PORT=8000
+      # ไม่มี .env → ใช้ default ใน app: EMAIL_MODE=log
+      # ส่งจริง: สร้าง notification-service/.env จาก smtp.env.example
     ports:
       - "8002:8000"
 
