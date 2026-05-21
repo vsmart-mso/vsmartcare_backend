@@ -204,6 +204,8 @@ curl -s -X POST "http://localhost:8002/v1/notifications/{message_id}/send?succee
 
 BFF มี `POST /v1/notifications` ที่ส่งต่อ body ไป notification-service (ต้องมี API key ตามที่ BFF กำหนด) — ดู `bff-vsmartcare/app/main.py` คลาส `CreateNotificationRequest`
 
+เอกสาร **อีเมลสรุปคำร้องรายวัน (staff digest)** สำหรับระบบภายนอก (เช่น VSmart cron): [`docs/STAFF_DIGEST.md`](docs/STAFF_DIGEST.md)
+
 ---
 
 ## Environment

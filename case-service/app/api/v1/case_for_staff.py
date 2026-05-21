@@ -37,7 +37,8 @@ from ...services.file_payment_upload import (
     save_file_payment_pdf,
 )
 from ...services.payment_upload_history import build_payment_upload_history
-from ...services.status_email_notification import enqueue_status_email
+from ...services.staff_digest_summary import fetch_staff_digest_summary
+from ...services.status_email_notification import applicant_person_name, enqueue_status_email
 from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
@@ -64,6 +65,7 @@ from ...schemas.case_for_staff import (
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead,
     CaseForStaffListResponse,
+    CaseForStaffStatusSummaryResponse,
     CaseForStaffPorKor1DetailResponse,
     CaseForStaffRead,
     CaseForStaffWelfareRequestStatusCreate,
@@ -999,8 +1001,10 @@ async def update_welfare_payment_for_staff(
     is_037_update = _welfare_payment_update_indicates_037(updates)
 
     status_log: WelfareRequestStatus | None = None
+    withdrawing_status: CurrentStatus | None = None
     if is_037_update:
-        if await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING) is None:
+        withdrawing_status = await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING)
+        if withdrawing_status is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
         status_log = WelfareRequestStatus(
             applicant_id=applicant_id,
@@ -1012,11 +1016,14 @@ async def update_welfare_payment_for_staff(
 
     await session.commit()
     if status_log is not None:
+        applicant = await session.get(Applicant, applicant_id)
         await enqueue_status_email(
             session,
             applicant_id=applicant_id,
+            person_name=applicant_person_name(applicant) if applicant else None,
             status_log_id=status_log.id,
             current_status_id=status_log.current_status_id,
+            current_status_color=withdrawing_status.color if withdrawing_status else None,
             remarks=status_log.remarks,
         )
     await session.refresh(payment)
@@ -1245,6 +1252,21 @@ async def get_attachment_type_for_staff(
     return AttachmentTypeRead.model_validate(row)
 
 
+@router.get(
+    "/status-summary",
+    response_model=CaseForStaffStatusSummaryResponse,
+    summary="สรุปจำนวนคำร้องตาม bucket สำหรับ staff digest",
+)
+async def get_case_for_staff_status_summary(
+    province_id: int = Query(..., description="รหัสจังหวัด"),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffStatusSummaryResponse:
+    summary = await fetch_staff_digest_summary(session, province_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
+    return summary
+
+
 @router.get("/current-status", response_model=list[CurrentStatusRead])
 async def list_current_status_for_staff(
     session: AsyncSession = Depends(get_session),
@@ -1373,7 +1395,8 @@ async def create_welfare_request_status_for_staff(
     applicant = await session.get(Applicant, body.applicant_id)
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
-    if await _get_row(session, CurrentStatus, body.current_status_id) is None:
+    current_status = await _get_row(session, CurrentStatus, body.current_status_id)
+    if current_status is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
 
     log = WelfareRequestStatus(
@@ -1387,8 +1410,10 @@ async def create_welfare_request_status_for_staff(
     await enqueue_status_email(
         session,
         applicant_id=log.applicant_id,
+        person_name=applicant_person_name(applicant),
         status_log_id=log.id,
         current_status_id=log.current_status_id,
+        current_status_color=current_status.color,
         remarks=log.remarks,
     )
     result = await session.execute(
@@ -1532,6 +1557,9 @@ async def create_approve_case_for_staff(
     # อนุมัติ (True) -> ID 3: อยู่ระหว่างการเบิก
     # ปฏิเสธ (False) -> ID 8: ดำเนินการแก้ไขข้อมูล
     new_status_id = 3 if body.approve_status else 8
+    current_status = await _get_row(session, CurrentStatus, new_status_id)
+    if current_status is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
     status_log = WelfareRequestStatus(
         applicant_id=body.applicant_id,
         current_status_id=new_status_id,
@@ -1544,8 +1572,10 @@ async def create_approve_case_for_staff(
     await enqueue_status_email(
         session,
         applicant_id=status_log.applicant_id,
+        person_name=applicant_person_name(applicant),
         status_log_id=status_log.id,
         current_status_id=status_log.current_status_id,
+        current_status_color=current_status.color,
         remarks=status_log.remarks,
     )
     await session.refresh(row)
@@ -1651,7 +1681,8 @@ async def create_welfare_edit_request(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
     _EDIT_REQUEST_STATUS_ID = 8
-    if await _get_row(session, CurrentStatus, _EDIT_REQUEST_STATUS_ID) is None:
+    current_status = await _get_row(session, CurrentStatus, _EDIT_REQUEST_STATUS_ID)
+    if current_status is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
 
     status_log = WelfareRequestStatus(
@@ -1682,8 +1713,10 @@ async def create_welfare_edit_request(
     await enqueue_status_email(
         session,
         applicant_id=status_log.applicant_id,
+        person_name=applicant_person_name(applicant),
         status_log_id=status_log.id,
         current_status_id=status_log.current_status_id,
+        current_status_color=current_status.color,
         remarks=status_log.remarks,
     )
 

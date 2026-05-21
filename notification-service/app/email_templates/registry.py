@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import welfare_status_updated
+from . import staff_case_status_digest, welfare_status_updated
 from .types import EmailParts, EmailRenderer
 
 _REGISTRY: dict[str, EmailRenderer] = {
     welfare_status_updated.TEMPLATE_CODE: welfare_status_updated.render,
+    staff_case_status_digest.TEMPLATE_CODE: staff_case_status_digest.render,
 }
 
 

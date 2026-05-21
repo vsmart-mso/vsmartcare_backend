@@ -70,6 +70,15 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CaseForStaffStatusSummaryResponse(BaseModel):
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_applicants: int = Field(..., ge=0)
+    social_worker_pending: int = Field(0, ge=0)
+    pmj_pending_approve: int = Field(0, ge=0)
+    finance_pending: int = Field(0, ge=0)
+
+
 class CaseForStaffFinanceRead(CaseForStaffRead):
     bank_name_id: int | None = Field(None, ge=1)
     bank_code: str | None = Field(None, max_length=10)

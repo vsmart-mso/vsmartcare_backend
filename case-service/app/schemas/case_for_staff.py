@@ -80,6 +80,29 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CaseForStaffStatusSummaryResponse(BaseModel):
+    """สรุปจำนวนคำร้องตาม bucket สำหรับ staff digest (จังหวัดเดียว)."""
+
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_applicants: int = Field(..., ge=0, description="จำนวน Applicant ทั้งหมดในจังหวัด")
+    social_worker_pending: int = Field(
+        0,
+        ge=0,
+        description="current_status_id = 1 (รอรับเรื่อง)",
+    )
+    pmj_pending_approve: int = Field(
+        0,
+        ge=0,
+        description="current_status_id = 2 และยังไม่มี approve_case.approve_status = true",
+    )
+    finance_pending: int = Field(
+        0,
+        ge=0,
+        description="current_status_id = 3 (รอเบิก)",
+    )
+
+
 class CaseForStaffFinanceRead(CaseForStaffRead):
     """แถวตารางการเงิน — ข้อมูลพื้นฐาน + สรุป welfare_payment (count_037/038) + DDA และธนาคาร."""
 

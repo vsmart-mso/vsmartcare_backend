@@ -14,12 +14,26 @@ from ..settings import settings
 logger = logging.getLogger(__name__)
 
 
+def applicant_person_name(applicant: Applicant) -> str | None:
+    """ชื่อ-สกุลพร้อมคำนำหน้า สำหรับอีเมลแจ้งสถานะ."""
+    person = applicant.person
+    if person is None:
+        return None
+    prefix = (person.prefix.name if person.prefix else "").strip()
+    first = (person.first_name or "").strip()
+    last = (person.last_name or "").strip()
+    parts = [p for p in (prefix, first, last) if p]
+    return " ".join(parts) if parts else None
+
+
 async def enqueue_status_email(
     session: AsyncSession,
     *,
     applicant_id: int,
+    person_name: str | None = None,
     status_log_id: int,
     current_status_id: int,
+    current_status_color: str | None = None,
     remarks: str | None = None,
 ) -> None:
     """POST ไป notification-service; ล้มเหลวแล้ว log เท่านั้น — ไม่ raise."""
@@ -54,11 +68,19 @@ async def enqueue_status_email(
         )
         return
 
+    resolved_person_name = (person_name or "").strip() or applicant_person_name(applicant)
+    resolved_status_color = (current_status_color or "").strip() or (status_row.color or "").strip()
+
     payload: dict[str, object] = {
         "status_label": status_row.description_public,
         "applicant_id": applicant_id,
         "remarks": remarks or "",
     }
+    if resolved_person_name:
+        payload["person_name"] = resolved_person_name
+        payload["citizen_name"] = resolved_person_name
+    if resolved_status_color:
+        payload["current_status_color"] = resolved_status_color
     if applicant.case_number:
         payload["case_ref"] = applicant.case_number
 

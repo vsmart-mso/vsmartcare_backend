@@ -1,4 +1,6 @@
-# พัฒนาแบบ hot-reload: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# พัฒนา hot-reload: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# อีเมลจำลอง (Mailpit): dev.yml ตั้ง SMTP_HOST=mailpit — ดู http://localhost:8025
+# อีเมล Gmail จริง: เพิ่ม -f docker-compose.smtp-gmail.yml ท้ายสุด หรืออย่าใช้ dev.yml กับ notification
 version: "3.9"
 
 services:
@@ -68,6 +70,7 @@ services:
       - ./notification-service/.env
     environment:
       - PORT=8000
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173/}
       # ไม่มี .env → ใช้ default ใน app: EMAIL_MODE=log
       # ส่งจริง: สร้าง notification-service/.env จาก smtp.env.example
     ports:

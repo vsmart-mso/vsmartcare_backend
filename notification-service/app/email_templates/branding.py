@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import base64
 from functools import lru_cache
 from pathlib import Path
+
+from .types import InlineImage
 
 # สีอ้างอิงจาก frontend (พม. CARE / vsmartcare)
 COLOR_BRAND = "#BE185D"
@@ -22,12 +23,25 @@ COLOR_SURFACE = "#FFFFFF"
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 _LOGO_PATH = _STATIC_DIR / "Logo_origin.png"
+MSDHS_LOGO_CONTENT_ID = "msdhs-logo"
 
 
 @lru_cache(maxsize=1)
-def msdhs_logo_data_uri() -> str:
-    """Embed MSDHS logo for email clients (no public URL required)."""
+def _msdhs_logo_bytes() -> bytes:
     if not _LOGO_PATH.is_file():
         raise FileNotFoundError(f"email logo not found: {_LOGO_PATH}")
-    encoded = base64.standard_b64encode(_LOGO_PATH.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return _LOGO_PATH.read_bytes()
+
+
+def msdhs_logo_cid_src() -> str:
+    """src สำหรับ <img> — Gmail/Outlook ไม่แสดง data: URI ต้องใช้ cid + inline attachment."""
+    return f"cid:{MSDHS_LOGO_CONTENT_ID}"
+
+
+def msdhs_logo_inline_image() -> InlineImage:
+    return InlineImage(
+        content_id=MSDHS_LOGO_CONTENT_ID,
+        data=_msdhs_logo_bytes(),
+        subtype="png",
+        filename="Logo_origin.png",
+    )

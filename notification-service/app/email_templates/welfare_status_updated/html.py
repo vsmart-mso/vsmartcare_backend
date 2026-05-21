@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..branding import msdhs_logo_data_uri
+from ..branding import msdhs_logo_cid_src
 from ..loader import fill, load_html
 from .context import WelfareStatusContext
 
@@ -16,10 +16,15 @@ def _optional_fragment(fragment_name: str, **values: str) -> str:
 
 
 def build_html_body(ctx: WelfareStatusContext, subject: str) -> str:
+    box = ctx.status_box
     content = fill(
         load_html("welfare_status_updated/content.html"),
         greeting_name=ctx.greeting_name,
         status_label=ctx.status_label,
+        status_bg_color=box.background,
+        status_border_color=box.border,
+        status_accent_color=box.accent,
+        status_label_color=box.label,
         case_ref_block=_optional_fragment("case_ref.html", case_ref=ctx.case_ref)
         if ctx.case_ref
         else "",
@@ -29,12 +34,13 @@ def build_html_body(ctx: WelfareStatusContext, subject: str) -> str:
         tracking_block=_optional_fragment("tracking_button.html", tracking_url=ctx.tracking_url)
         if ctx.tracking_url
         else "",
+        tracking_url=ctx.tracking_url,
     )
 
     return fill(
         load_html("layout.html"),
         title=subject,
-        logo_url=msdhs_logo_data_uri(),
+        logo_url=msdhs_logo_cid_src(),
         header_title=_HEADER_TITLE,
         content=content,
         footer_text=_FOOTER_TEXT,

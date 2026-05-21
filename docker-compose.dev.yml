@@ -2,8 +2,6 @@
 # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 # docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 #
-# อีเมล dev: Mailpit UI http://localhost:8025 (notification-service ส่ง SMTP ไป mailpit อัตโนมัติ)
-#
 # PYTHONPATH: uvicorn --reload สปอว์น subprocess ถ้าไม่มีค่านี้มักได้ ModuleNotFoundError: No module named 'app'
 services:
   bff-vsmartcare:
@@ -50,6 +48,7 @@ services:
       - SMTP_PORT=1025
       - SMTP_USE_TLS=false
       - SMTP_USE_SSL=false
+      - FRONTEND_URL=http://localhost:5173/
       - SMTP_FROM=dev-noreply@selfservice.local
     volumes:
       - ./notification-service/app:/app/app

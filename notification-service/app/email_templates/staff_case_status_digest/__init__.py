@@ -9,7 +9,7 @@ from .html import build_html_body
 from .plain import build_plain_text
 from .subject import build_subject
 
-TEMPLATE_CODE = "WELFARE_STATUS_UPDATED"
+TEMPLATE_CODE = "STAFF_CASE_STATUS_DIGEST"
 
 
 def render(payload: dict[str, Any]) -> EmailParts:

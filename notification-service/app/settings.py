@@ -21,5 +21,11 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = Field(default=True, validation_alias="SMTP_USE_TLS")
     smtp_use_ssl: bool = Field(default=False, validation_alias="SMTP_USE_SSL")
 
+    # URL ระบบ พม. CARE สำหรับลิงก์ในอีเมลแจ้งสถานะ (override ได้ด้วย payload.tracking_url)
+    frontend_url: str = Field(
+        default="http://localhost:5173/",
+        validation_alias="FRONTEND_URL",
+    )
+
 
 settings = Settings()

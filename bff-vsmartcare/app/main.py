@@ -22,6 +22,12 @@ from .case_for_staff_schema import (
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
     CaseForStaffListResponse,
     CaseForStaffRead as CaseForStaffListItem,
+    CaseForStaffStatusSummaryResponse,
+)
+from .services.staff_digest_dispatch import (
+    StaffDigestDispatchResult,
+    StaffDigestRequest,
+    dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
 from .settings import cors_origin_list, settings
@@ -1881,6 +1887,44 @@ class ThaidLoginBody(BaseModel):
 async def create_notification(body: CreateNotificationRequest):
     """รับคำขอแจ้งเตือนแล้วส่งต่อ POST ไป notification-service."""
     return await _post(f"{settings.notification_service_url}/v1/notifications", json=body.model_dump())
+
+
+@router.get(
+    "/v1/case_for_staff/status-summary",
+    tags=["case_for_staff"],
+    summary="สรุปจำนวนคำร้องตาม bucket สำหรับ staff digest",
+    description="ส่งต่อ `GET …/v1/case_for_staff/status-summary` ใน case-service",
+    response_model=CaseForStaffStatusSummaryResponse,
+    dependencies=_v1_api_key,
+)
+async def get_case_for_staff_status_summary(
+    province_id: int = Query(..., description="รหัสจังหวัด"),
+) -> CaseForStaffStatusSummaryResponse:
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/case_for_staff/status-summary?province_id={province_id}")
+    return CaseForStaffStatusSummaryResponse.model_validate(data)
+
+
+@router.post(
+    "/v1/notifications/staff-digest",
+    tags=["notifications"],
+    summary="ส่งอีเมลสรุปคำร้องรายวัน (staff digest)",
+    description=(
+        "ดึง status-summary ต่อจังหวัดจาก case-service แล้วส่งอีเมล STAFF_CASE_STATUS_DIGEST "
+        "ผ่าน notification-service (idempotency: staff-digest-{date}-{external_user_id})"
+    ),
+    response_model=StaffDigestDispatchResult,
+    dependencies=_v1_api_key,
+)
+async def post_staff_digest(body: StaffDigestRequest) -> StaffDigestDispatchResult:
+    return await dispatch_staff_digest(
+        case_service_url=settings.case_service_url,
+        notification_service_url=settings.notification_service_url,
+        frontend_url=settings.frontend_url,
+        body=body,
+        post_json=_post,
+        get_json=_get,
+    )
 
 
 @router.get(
