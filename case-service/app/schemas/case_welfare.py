@@ -163,6 +163,11 @@ class WelfareCaseRead(BaseModel):
         None,
         description="เวลา created_at ของ applicant — ความสะดวกฝั่ง client",
     )
+    count_037: int = Field(
+        0,
+        ge=0,
+        description="จำนวน welfare_payment ที่ is_037_or_038 = false (ฟอร์ม 037)",
+    )
     model_config = ConfigDict(from_attributes=True)
 
 

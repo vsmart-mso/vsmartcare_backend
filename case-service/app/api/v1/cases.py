@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, select
+from sqlalchemy import case as sql_case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,6 +26,7 @@ from ...models.intake import CaseHandling
 from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
+from ...models.payment import WelfarePayment
 from ...models.welfare import (
     WelfareEvidence,
     WelfareHistory,
@@ -150,7 +151,7 @@ async def _load_full_applicant(
     return r.scalar_one_or_none()
 
 
-async def applicant_to_case_read(applicant: Applicant) -> WelfareCaseRead:
+async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> WelfareCaseRead:
     """แปลง ORM Applicant + relationship เป็น WelfareCaseRead (หลัง selectinload แล้ว)"""
     histories = sorted(applicant.status_logs, key=lambda s: (s.updated_at, s.id), reverse=True)
 
@@ -202,6 +203,7 @@ async def applicant_to_case_read(applicant: Applicant) -> WelfareCaseRead:
         if histories
         else None,
         created_at=applicant.created_at,
+        count_037=count_037,
     )
 
 
@@ -570,7 +572,19 @@ async def get_welfare_case(
     row = await _load_full_applicant(session, applicant_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
-    return await applicant_to_case_read(row)
+
+    # นับจำนวน welfare_payment ที่ is_037_or_038 = false (ฟอร์ม 037) ของ applicant นี้
+    count_037_row = await session.execute(
+        select(
+            func.coalesce(
+                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
+                0,
+            )
+        ).where(WelfarePayment.applicant_id == applicant_id)
+    )
+    count_037 = int(count_037_row.scalar_one())
+
+    return await applicant_to_case_read(row, count_037=count_037)
 
 
 @router.get(
