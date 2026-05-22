@@ -164,7 +164,13 @@ Do NOT include markdown fences or any other text.
 
 Rules:
 - Read EVERY character carefully. Do not guess or hallucinate.
-- For account_number: extract the full account number exactly as printed.
+- For account_number: extract the full account number exactly as printed ONLY when it passes validation.
+- account_number validation rules:
+  - Allowed characters are digits (0-9) and optional dashes (-) only.
+  - The account number may include dashes (-), but every non-dash character must be a digit (0-9).
+  - If it contains any letters or other symbols (e.g. X/x/*/#), treat it as invalid.
+  - If the number is masked/obfuscated (e.g. XXX, xxxxx, ***), treat it as invalid.
+  - If invalid or uncertain, set account_number to null.
 - For account_name: extract the FULL name including title (นาย/นาง/นางสาว).
 - For bank_name: recognize the bank logo or printed bank name.
 - If any field cannot be read, set its value to null.
@@ -280,3 +286,5 @@ async def run_ocr_pipeline(
         "target_name_checked": target_name,
         "pre_file": pre_file_uuid,
     }
+
+
