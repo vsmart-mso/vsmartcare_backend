@@ -248,7 +248,7 @@ STATUS_EMAIL_ENABLED=true
 STATUS_EMAIL_TIMEOUT_SECONDS=5
 ```
 
-Template สำหรับเปลี่ยนสถานะ: `WELFARE_STATUS_UPDATED` — payload มี `status_label`, `applicant_id`, `remarks`, `case_ref` (ถ้ามี)
+Template สำหรับเปลี่ยนสถานะ: `WELFARE_STATUS_UPDATED` — payload มี `status_label`, `applicant_id`, `remarks`, `case_ref` (ถ้ามี). ยืนยันการยื่น/แก้ไข: `WELFARE_CASE_SUBMITTED` — `submission_kind`: `initial` | `correction`. เงื่อนไขการส่งฝั่งประชาชน: [`docs/CITIZEN_STATUS_EMAIL.md`](docs/CITIZEN_STATUS_EMAIL.md) ( logic ใน case-service )
 
 อ้างอิง deploy Beta/Prod: [`../BETA_DEPLOYMENT.md`](../BETA_DEPLOYMENT.md)
 

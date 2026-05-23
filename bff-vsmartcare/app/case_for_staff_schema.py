@@ -75,8 +75,12 @@ class CaseForStaffStatusSummaryResponse(BaseModel):
     province_name: str = Field(..., min_length=1, max_length=255)
     total_applicants: int = Field(..., ge=0)
     social_worker_pending: int = Field(0, ge=0)
+    withdrawing_in_progress: int = Field(0, ge=0)
     pmj_pending_approve: int = Field(0, ge=0)
     finance_pending: int = Field(0, ge=0)
+    social_worker_emergency: int = Field(0, ge=0)
+    pmj_emergency: int = Field(0, ge=0)
+    finance_emergency: int = Field(0, ge=0)
 
 
 class CaseForStaffFinanceRead(CaseForStaffRead):

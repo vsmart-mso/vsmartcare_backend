@@ -178,9 +178,10 @@ async def save_file_payment_pdf(
     welfare_payment_id: int | None = None,
     upload_batch_id: UUID | None = None,
     file_payment_id: int | None = None,
-) -> FilePayment:
+) -> tuple[FilePayment, bool]:
+    """คืน (แถว file_payment, is_new_upload) — is_new_upload=False เมื่อแทนที่ไฟล์เดิม."""
     if file_payment_id is not None:
-        return await replace_file_payment_pdf(
+        row = await replace_file_payment_pdf(
             session,
             applicant_id=applicant_id,
             file_payment_id=file_payment_id,
@@ -188,6 +189,7 @@ async def save_file_payment_pdf(
             file=file,
             welfare_payment_id=welfare_payment_id,
         )
+        return row, False
 
     if welfare_payment_id is not None and upload_batch_id is None:
         existing = await _find_file_payment_for_welfare_row(
@@ -197,7 +199,7 @@ async def save_file_payment_pdf(
             attachment_type_id=attachment_type_id,
         )
         if existing is not None:
-            return await replace_file_payment_pdf(
+            row = await replace_file_payment_pdf(
                 session,
                 applicant_id=applicant_id,
                 file_payment_id=existing.id,
@@ -205,6 +207,7 @@ async def save_file_payment_pdf(
                 file=file,
                 welfare_payment_id=welfare_payment_id,
             )
+            return row, False
     payment = await resolve_welfare_payment_for_upload(
         session,
         applicant_id,
@@ -250,4 +253,4 @@ async def save_file_payment_pdf(
     session.add(row)
     await session.flush()
     await session.refresh(row)
-    return row
+    return row, True

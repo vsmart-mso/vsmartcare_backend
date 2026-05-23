@@ -1911,7 +1911,10 @@ async def get_case_for_staff_status_summary(
     summary="ส่งอีเมลสรุปคำร้องรายวัน (staff digest)",
     description=(
         "ดึง status-summary ต่อจังหวัดจาก case-service แล้วส่งอีเมล STAFF_CASE_STATUS_DIGEST "
-        "ผ่าน notification-service (idempotency: staff-digest-{date}-{external_user_id})"
+        "ผ่าน notification-service — แสดงเฉพาะ bucket ตาม role ของผู้รับ + คำร้องเร่งด่วน (is_emergency). "
+        "ส่งอีเมลทุกครั้งที่เรียก API (ระบบต้นทางควบคุมความถี่ด้วย cron). "
+        "Request body: digest_date, idempotency_bucket (optional, อ้างอิงเท่านั้น), skip_if_all_zero, recipients — "
+        "ตัวอย่าง: notification-service/docs/STAFF_DIGEST.md"
     ),
     response_model=StaffDigestDispatchResult,
     dependencies=_v1_api_key,

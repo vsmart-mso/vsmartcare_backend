@@ -45,6 +45,9 @@ from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
 from ...services.process_sla import process_sla_fields_dict
+from ...services.status_email_notification import (
+    enqueue_case_submitted_email,
+)
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
@@ -80,7 +83,7 @@ def _dedupe_preserve_order(ids: list[int]) -> list[int]:
 
 def _applicant_load_options():  # noqa: ANN001
     return [
-        selectinload(Applicant.person),
+        selectinload(Applicant.person).selectinload(Person.prefix),
         selectinload(Applicant.type_money_category),
         selectinload(Applicant.requester_relation_type),
         selectinload(Applicant.marital_status),
@@ -375,19 +378,25 @@ async def create_welfare_case(
                 )
             )
 
-    session.add(
-        WelfareRequestStatus(
-            applicant_id=aid,
-            current_status_id=body.initial_current_status_id,
-            remarks=None,
-            update_by_sdshv=None,
-        )
+    status_log = WelfareRequestStatus(
+        applicant_id=aid,
+        current_status_id=body.initial_current_status_id,
+        remarks=None,
+        update_by_sdshv=None,
     )
+    session.add(status_log)
 
     try:
         await session.flush()
     except IntegrityError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+
+    await enqueue_case_submitted_email(
+        session,
+        applicant_id=aid,
+        idempotency_key=f"welfare-case-submitted-{status_log.id}",
+        submission_kind="initial",
+    )
 
     reloaded = await _load_full_applicant(session, aid)
     if reloaded is None:

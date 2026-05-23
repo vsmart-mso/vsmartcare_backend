@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..province_summary import province_total_plain_line
 from .context import StaffDigestContext
 
 
@@ -13,16 +14,16 @@ def build_plain_text(ctx: StaffDigestContext) -> str:
         lines.append(f"ตำแหน่ง: {ctx.position}")
     if ctx.province_name:
         lines.append(f"จังหวัด: {ctx.province_name}")
+        province_total = province_total_plain_line(ctx.province_name, ctx.total_applicants)
+        if province_total:
+            lines.append(province_total)
 
     lines.extend(
         [
             "",
             f"{ctx.highlight_label}: {ctx.highlight_count} รายการ",
-            "",
-            f"รอรับเรื่อง (นักสังคม): {ctx.social_worker_pending}",
-            f"รออนุมัติ (พมจ.): {ctx.pmj_pending_approve}",
-            f"รอเบิก (การเงิน): {ctx.finance_pending}",
-            f"คำร้องทั้งหมดในจังหวัด: {ctx.total_applicants}",
+            f"{ctx.emergency_label}: {ctx.emergency_count} รายการ",
+            "(คำร้องเร่งด่วน: applicants.is_emergency = true ใน bucket ของท่าน)",
         ]
     )
 

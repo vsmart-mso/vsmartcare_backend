@@ -31,14 +31,24 @@ from ...services.process_sla import (
     apply_process_sla_to_applicant,
     process_sla_fields_dict,
 )
-from ...constants.current_status import CURRENT_STATUS_WITHDRAWING
+from ...constants.current_status import (
+    CURRENT_STATUS_EDIT_REQUESTED,
+    CURRENT_STATUS_PENDING_INTAKE,
+    CURRENT_STATUS_WITHDRAWING,
+)
 from ...services.file_payment_upload import (
+    ATTACHMENT_PDF_037_ID,
     file_payment_upload_root,
     save_file_payment_pdf,
 )
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
-from ...services.status_email_notification import applicant_person_name, enqueue_status_email
+from ...services.citizen_status_email_policy import CitizenStatusEmailTrigger, fetch_previous_status_id
+from ...services.status_email_notification import (
+    enqueue_case_submitted_email,
+    enqueue_payment_037_upload_email,
+    enqueue_status_email,
+)
 from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
@@ -1016,15 +1026,14 @@ async def update_welfare_payment_for_staff(
 
     await session.commit()
     if status_log is not None:
-        applicant = await session.get(Applicant, applicant_id)
         await enqueue_status_email(
             session,
             applicant_id=applicant_id,
-            person_name=applicant_person_name(applicant) if applicant else None,
             status_log_id=status_log.id,
             current_status_id=status_log.current_status_id,
             current_status_color=withdrawing_status.color if withdrawing_status else None,
             remarks=status_log.remarks,
+            trigger=CitizenStatusEmailTrigger.PAYMENT_037_RECORDED,
         )
     await session.refresh(payment)
     return WelfarePaymentRead.model_validate(payment)
@@ -1083,7 +1092,7 @@ async def upload_file_payment_pdf(
     file: UploadFile = File(..., description="ไฟล์ PDF"),
     session: AsyncSession = Depends(get_session),
 ) -> FilePaymentUploadRead:
-    row = await save_file_payment_pdf(
+    row, is_new_upload = await save_file_payment_pdf(
         session,
         applicant_id=applicant_id,
         attachment_type_id=attachment_type_id,
@@ -1092,6 +1101,12 @@ async def upload_file_payment_pdf(
         upload_batch_id=upload_batch_id,
         file_payment_id=file_payment_id,
     )
+    if is_new_upload and attachment_type_id == ATTACHMENT_PDF_037_ID:
+        await enqueue_payment_037_upload_email(
+            session,
+            applicant_id=applicant_id,
+            file_payment_id=row.id,
+        )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
         view_path=(
@@ -1406,16 +1421,35 @@ async def create_welfare_request_status_for_staff(
         update_by_sdshv=body.update_by_sdshv,
     )
     session.add(log)
-    await session.commit()
-    await enqueue_status_email(
+    await session.flush()
+
+    previous_status_id = await fetch_previous_status_id(
         session,
-        applicant_id=log.applicant_id,
-        person_name=applicant_person_name(applicant),
-        status_log_id=log.id,
-        current_status_id=log.current_status_id,
-        current_status_color=current_status.color,
-        remarks=log.remarks,
+        applicant_id=body.applicant_id,
+        before_status_log_id=log.id,
     )
+
+    await session.commit()
+
+    if (
+        log.current_status_id == CURRENT_STATUS_PENDING_INTAKE
+        and previous_status_id == CURRENT_STATUS_EDIT_REQUESTED
+    ):
+        await enqueue_case_submitted_email(
+            session,
+            applicant_id=log.applicant_id,
+            idempotency_key=f"welfare-case-correction-{log.id}",
+            submission_kind="correction",
+        )
+    else:
+        await enqueue_status_email(
+            session,
+            applicant_id=log.applicant_id,
+            status_log_id=log.id,
+            current_status_id=log.current_status_id,
+            current_status_color=current_status.color,
+            remarks=log.remarks,
+        )
     result = await session.execute(
         select(WelfareRequestStatus)
         .where(WelfareRequestStatus.id == log.id)
@@ -1572,7 +1606,6 @@ async def create_approve_case_for_staff(
     await enqueue_status_email(
         session,
         applicant_id=status_log.applicant_id,
-        person_name=applicant_person_name(applicant),
         status_log_id=status_log.id,
         current_status_id=status_log.current_status_id,
         current_status_color=current_status.color,
@@ -1713,7 +1746,6 @@ async def create_welfare_edit_request(
     await enqueue_status_email(
         session,
         applicant_id=status_log.applicant_id,
-        person_name=applicant_person_name(applicant),
         status_log_id=status_log.id,
         current_status_id=status_log.current_status_id,
         current_status_color=current_status.color,

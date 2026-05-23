@@ -7,9 +7,11 @@
   {{province_line}}
 </p>
 
+{{province_total_block}}
+
 <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"
   style="
-      margin:24px 0;
+      margin:24px 0 16px;
       background:#FDF2F8;
       border:1px solid #FBCFE8;
       border-left:4px solid #BE185D;
@@ -28,33 +30,37 @@
           color:#BE185D;
           line-height:1.2;
       ">
-        {{highlight_count}}
-      </p>
-      <p style="margin:6px 0 0; font-size:14px; color:#64748B;">
-        รายการ
+        {{highlight_count}} <span style="font-size:18px; font-weight:600; color:#9D174D;">รายการ</span>
       </p>
     </td>
   </tr>
 </table>
 
 <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"
-  style="margin:0 0 24px; font-size:15px; color:#334155;"
+  style="
+      margin:0 0 24px;
+      background:#FFF7ED;
+      border:1px solid #FED7AA;
+      border-left:4px solid #EA580C;
+      border-radius:2px;
+  "
 >
   <tr>
-    <td style="padding:8px 0; border-bottom:1px solid #E2E8F0;">รอรับเรื่อง (นักสังคม)</td>
-    <td align="right" style="padding:8px 0; border-bottom:1px solid #E2E8F0; font-weight:600;">{{social_worker_pending}}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 0; border-bottom:1px solid #E2E8F0;">รออนุมัติ (พมจ.)</td>
-    <td align="right" style="padding:8px 0; border-bottom:1px solid #E2E8F0; font-weight:600;">{{pmj_pending_approve}}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 0; border-bottom:1px solid #E2E8F0;">รอเบิก (การเงิน)</td>
-    <td align="right" style="padding:8px 0; border-bottom:1px solid #E2E8F0; font-weight:600;">{{finance_pending}}</td>
-  </tr>
-  <tr>
-    <td style="padding:8px 0;">คำร้องทั้งหมดในจังหวัด</td>
-    <td align="right" style="padding:8px 0; font-weight:600;">{{total_applicants}}</td>
+    <td style="padding:18px 20px;">
+      <p style="margin:0; color:#9A3412; font-size:13px; font-weight:600; letter-spacing:0.02em;">
+        {{emergency_label}}
+      </p>
+      <p style="
+          margin:8px 0 0;
+          font-size:28px;
+          font-weight:700;
+          color:#EA580C;
+          line-height:1.2;
+      ">
+        {{emergency_count}} <span style="font-size:17px; font-weight:600; color:#9A3412;">รายการ</span>
+      </p>
+     
+    </td>
   </tr>
 </table>
 

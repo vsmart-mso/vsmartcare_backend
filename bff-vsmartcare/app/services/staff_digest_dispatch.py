@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from datetime import date
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 StaffDigestRole = Literal["social_worker", "pmj", "finance"]
 
+# ตัวอย่างใน Swagger (Example Value) — เนื้อหาเดียวกับใน STAFF_DIGEST.md
 _STAFF_DIGEST_REQUEST_EXAMPLE = {
     "digest_date": "2026-05-21",
     "skip_if_all_zero": False,
@@ -22,29 +28,13 @@ _STAFF_DIGEST_REQUEST_EXAMPLE = {
             "province_id": 10,
             "roles": ["social_worker"],
         },
-        {
-            "external_user_id": "dev-pmj-1",
-            "email": "pmj@example.test",
-            "full_name": "นางทดสอบ พมจ",
-            "position": "พมจ.",
-            "province_id": 10,
-            "roles": ["pmj"],
-        },
-        {
-            "external_user_id": "dev-fin-1",
-            "email": "finance@example.test",
-            "full_name": "นายทดสอบ การเงิน",
-            "position": "เจ้าหน้าที่การเงิน",
-            "province_id": 10,
-            "roles": ["finance"],
-        },
     ],
 }
 
 ROLE_HIGHLIGHT_LABEL: dict[StaffDigestRole, str] = {
     "social_worker": "รอรับเรื่อง",
     "pmj": "รออนุมัติ",
-    "finance": "รอเบิก",
+    "finance": "รอการเบิกจ่าย",
 }
 
 ROLE_SUMMARY_FIELD: dict[StaffDigestRole, str] = {
@@ -53,54 +43,234 @@ ROLE_SUMMARY_FIELD: dict[StaffDigestRole, str] = {
     "finance": "finance_pending",
 }
 
+ROLE_EMERGENCY_FIELD: dict[StaffDigestRole, str] = {
+    "social_worker": "social_worker_emergency",
+    "pmj": "pmj_emergency",
+    "finance": "finance_emergency",
+}
+
+ROLE_EMERGENCY_LABEL: dict[StaffDigestRole, str] = {
+    "social_worker": "คำร้องเร่งด่วน (รอรับเรื่อง)",
+    "pmj": "คำร้องเร่งด่วน (รออนุมัติ)",
+    "finance": "คำร้องเร่งด่วน (รอการเบิกจ่าย)",
+}
+
 TEMPLATE_CODE = "STAFF_CASE_STATUS_DIGEST"
+
+# ค่าที่รับจากระบบต้นทาง → บทบาท canonical (เนื้อหาอีเมลไม่ใช้ฟิลด์ position โดยตรง)
+_ROLE_ALIASES: dict[str, StaffDigestRole] = {
+    "social_worker": "social_worker",
+    "socialworker": "social_worker",
+    "sw": "social_worker",
+    "pmj": "pmj",
+    "finance": "finance",
+    "นักสังคม": "social_worker",
+    "นักสังคมสงเคราะห์": "social_worker",
+    "นักสังคมสงเคมชนสงเคราะห์": "social_worker",
+    "พมจ": "pmj",
+    "พม.จ.": "pmj",
+    "พม.": "pmj",
+    "ปกครอง": "pmj",
+    "การเงิน": "finance",
+    "เจ้าหน้าที่การเงิน": "finance",
+}
+
+
+def _normalize_role_token(raw: object) -> StaffDigestRole | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if text in _ROLE_ALIASES:
+        return _ROLE_ALIASES[text]
+    compact = re.sub(r"[\s.]+", "", text).lower()
+    return _ROLE_ALIASES.get(compact)
+
+
+def _infer_role_from_position(position: str) -> StaffDigestRole | None:
+    """เดาบทบาทจากตำแหน่งเมื่อ roles ไม่ตรง (เช่น ส่ง position=พมจ แต่ roles ผิด)."""
+    p = position.strip()
+    if not p:
+        return None
+    if "การเงิน" in p:
+        return "finance"
+    if "นักสังคม" in p:
+        return "social_worker"
+    compact = re.sub(r"[\s.]+", "", p)
+    if compact.startswith("พม") or "พมจ" in compact:
+        return "pmj"
+    return None
+
+
+def resolve_primary_role(
+    *,
+    roles: list[StaffDigestRole],
+    position: str,
+    explicit_role: StaffDigestRole | None = None,
+) -> StaffDigestRole:
+    """เลือกบทบาทสำหรับเนื้อหาอีเมล — ไม่ใช้แค่ roles[0] ถ้าขัดกับตำแหน่ง."""
+    if explicit_role is not None:
+        return explicit_role
+
+    inferred = _infer_role_from_position(position)
+    if len(roles) == 1:
+        sole = roles[0]
+        if inferred and inferred != sole:
+            logger.info(
+                "staff_digest: roles=%s ไม่ตรง position=%r — ใช้บทบาทจากตำแหน่ง %s",
+                sole,
+                position,
+                inferred,
+            )
+            return inferred
+        return sole
+    if inferred:
+        return inferred
+    return roles[0]
 
 
 class StaffDigestRecipient(BaseModel):
     external_user_id: str = Field(..., min_length=1, max_length=255, examples=["dev-sw-1"])
     email: str = Field(..., min_length=3, max_length=255, examples=["user@example.test"])
     full_name: str = Field(..., min_length=1, max_length=255, examples=["นายทดสอบ นักสังคม"])
-    position: str = Field(default="", max_length=255, examples=["นักสังคมสงเคมชนชั้นกลาง"])
-    province_id: int = Field(..., ge=1, examples=[10])
-    roles: list[StaffDigestRole] = Field(
-        ...,
-        min_length=1,
-        description="ต้องเป็น social_worker | pmj | finance เท่านั้น (ไม่ใช่ชื่อภาษาไทย)",
-        examples=[["social_worker"]],
+    position: str = Field(
+        default="",
+        max_length=255,
+        examples=["นักสังคมสงเคมชนชั้นกลาง"],
+        description="แสดงในอีเมลเท่านั้น — ไม่กำหนด bucket; ใช้ role / roles",
     )
+    province_id: int = Field(..., ge=1, examples=[10])
+    role: StaffDigestRole | None = Field(
+        default=None,
+        description="บทบาทหลัก (แนะนำ) — ชนะ roles ถ้าระบุ",
+        examples=["pmj"],
+    )
+    roles: list[StaffDigestRole] = Field(
+        default_factory=list,
+        min_length=0,
+        description=(
+            "social_worker | pmj | finance หรือชื่อไทย (พมจ, นักสังคม, การเงิน). "
+            "ถ้าว่างจะเดาจาก role หรือ position"
+        ),
+        examples=[["pmj"]],
+    )
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _normalize_role_field(cls, value: object) -> StaffDigestRole | None:
+        if value is None or value == "":
+            return None
+        mapped = _normalize_role_token(value)
+        if mapped is None:
+            raise ValueError(
+                "role ต้องเป็น social_worker, pmj, finance หรือชื่อไทย (พมจ / นักสังคม / การเงิน)"
+            )
+        return mapped
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def _normalize_roles_field(cls, value: object) -> list[StaffDigestRole]:
+        if value is None:
+            return []
+        items: list[object]
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, list):
+            items = value
+        else:
+            raise ValueError("roles ต้องเป็น string หรือ array")
+
+        mapped: list[StaffDigestRole] = []
+        for item in items:
+            role = _normalize_role_token(item)
+            if role is None:
+                raise ValueError(
+                    f"roles ไม่รู้จัก: {item!r} — ใช้ social_worker | pmj | finance "
+                    "หรือ พมจ / นักสังคม / การเงิน"
+                )
+            if role not in mapped:
+                mapped.append(role)
+        return mapped
+
+    @model_validator(mode="after")
+    def _require_resolvable_role(self) -> StaffDigestRecipient:
+        if self.role is not None:
+            return self
+        if self.roles:
+            return self
+        if _infer_role_from_position(self.position) is not None:
+            return self
+        raise ValueError(
+            "ต้องระบุ role หรือ roles (social_worker | pmj | finance) "
+            "หรือ position ที่ระบุตำแหน่งชัดเจน (เช่น พมจ, นักสังคมสงเคราะห์)"
+        )
 
 
 class StaffDigestRequest(BaseModel):
     model_config = ConfigDict(
-        json_schema_extra={"examples": [_STAFF_DIGEST_REQUEST_EXAMPLE]},
+        json_schema_extra={"example": _STAFF_DIGEST_REQUEST_EXAMPLE},
     )
 
     digest_date: date = Field(
         ...,
-        description="รูปแบบ YYYY-MM-DD เท่านั้น (เช่น 2026-05-21)",
+        description="วันที่แสดงในอีเมล รูปแบบ YYYY-MM-DD",
         examples=["2026-05-21"],
     )
+    idempotency_bucket: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "รอบอ้างอิงจากระบบต้นทาง (บันทึกใน response เท่านั้น — ไม่ใช้กันส่งซ้ำ). "
+            "การส่งอีเมลทุกครั้งที่เรียก API จะส่งจริง (idempotency ต่อคำขอ)"
+        ),
+        examples=["2026-05-21T08"],
+    )
     skip_if_all_zero: bool = Field(
-        default=True,
-        description="true = ข้ามผู้รับเมื่อตัวเลขของทุก role ใน roles เป็น 0",
+        default=False,
+        description=(
+            "true = ข้ามผู้รับเมื่อตัวเลข bucket ของ role เป็น 0 ทั้งหมด "
+            "(ค่าเริ่มต้น false — ส่งอีเมลทุกครั้งที่ระบบต้นทางเรียก)"
+        ),
     )
     recipients: list[StaffDigestRecipient] = Field(..., min_length=1)
 
 
 class StaffDigestDispatchResult(BaseModel):
     digest_date: date
+    idempotency_bucket: str = Field(
+        ...,
+        description="ค่าอ้างอิงจาก request (หรือ fallback digest_date) — ไม่บล็อกการส่งซ้ำ",
+    )
     sent: list[dict[str, Any]] = Field(default_factory=list)
     skipped: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def _highlight_count_for_role(summary: dict[str, Any], role: StaffDigestRole) -> int:
-    field = ROLE_SUMMARY_FIELD[role]
+def resolve_idempotency_bucket(digest_date: date, idempotency_bucket: str | None) -> str:
+    """ค่าอ้างอิงรอบจากระบบต้นทาง — ไม่ใช้กันส่งซ้ำที่ notification-service."""
+    cleaned = (idempotency_bucket or "").strip()
+    return cleaned if cleaned else digest_date.isoformat()
+
+
+def _count_for_role(summary: dict[str, Any], field: str) -> int:
     return int(summary.get(field) or 0)
 
 
+def _highlight_count_for_role(summary: dict[str, Any], role: StaffDigestRole) -> int:
+    return _count_for_role(summary, ROLE_SUMMARY_FIELD[role])
+
+
+def _emergency_count_for_role(summary: dict[str, Any], role: StaffDigestRole) -> int:
+    return _count_for_role(summary, ROLE_EMERGENCY_FIELD[role])
+
+
 def _role_counts_all_zero(summary: dict[str, Any], roles: list[StaffDigestRole]) -> bool:
-    return all(_highlight_count_for_role(summary, role) == 0 for role in roles)
+    return all(
+        _highlight_count_for_role(summary, role) == 0
+        and _emergency_count_for_role(summary, role) == 0
+        for role in roles
+    )
 
 
 def _build_notification_payload(
@@ -112,20 +282,20 @@ def _build_notification_payload(
     tracking_url: str,
 ) -> dict[str, Any]:
     highlight_count = _highlight_count_for_role(summary, role)
+    emergency_count = _emergency_count_for_role(summary, role)
     return {
         "staff_name": recipient.full_name,
         "full_name": recipient.full_name,
         "position": recipient.position,
         "province_name": summary.get("province_name") or "",
+        "total_applicants": int(summary.get("total_applicants") or 0),
         "digest_date": digest_date.isoformat(),
+        "role": role,
         "highlight_label": ROLE_HIGHLIGHT_LABEL[role],
         "highlight_count": highlight_count,
-        "social_worker_pending": summary.get("social_worker_pending", 0),
-        "pmj_pending_approve": summary.get("pmj_pending_approve", 0),
-        "finance_pending": summary.get("finance_pending", 0),
-        "total_applicants": summary.get("total_applicants", 0),
+        "emergency_label": ROLE_EMERGENCY_LABEL[role],
+        "emergency_count": emergency_count,
         "tracking_url": tracking_url,
-        "role": role,
     }
 
 
@@ -157,6 +327,8 @@ async def dispatch_staff_digest(
             f"{case_base}/v1/case_for_staff/status-summary?province_id={province_id}"
         )
 
+    bucket = resolve_idempotency_bucket(body.digest_date, body.idempotency_bucket)
+
     sent: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -178,13 +350,17 @@ async def dispatch_staff_digest(
                 {
                     "external_user_id": recipient.external_user_id,
                     "email": recipient.email,
-                    "reason": "all_role_counts_zero",
+                    "province_id": recipient.province_id,
+                    "reason": "recipient_role_counts_zero",
                 }
             )
             continue
 
-        idempotency_key = f"staff-digest-{body.digest_date.isoformat()}-{recipient.external_user_id}"
-        primary_role = recipient.roles[0]
+        primary_role = resolve_primary_role(
+            roles=recipient.roles,
+            position=recipient.position,
+            explicit_role=recipient.role,
+        )
         payload = _build_notification_payload(
             recipient=recipient,
             role=primary_role,
@@ -192,6 +368,7 @@ async def dispatch_staff_digest(
             digest_date=body.digest_date,
             tracking_url=tracking_url,
         )
+        idempotency_key = f"staff-digest-{uuid4().hex}"
 
         try:
             result = await post_json(
@@ -210,6 +387,9 @@ async def dispatch_staff_digest(
                     "email": recipient.email,
                     "role": primary_role,
                     "highlight_count": payload["highlight_count"],
+                    "emergency_count": payload["emergency_count"],
+                    "idempotency_key": idempotency_key,
+                    "idempotency_bucket": bucket,
                     "notification": result,
                 }
             )
@@ -233,6 +413,7 @@ async def dispatch_staff_digest(
 
     return StaffDigestDispatchResult(
         digest_date=body.digest_date,
+        idempotency_bucket=bucket,
         sent=sent,
         skipped=skipped,
         errors=errors,

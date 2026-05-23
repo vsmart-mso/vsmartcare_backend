@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+from ..thai_date import format_thai_date
 from ..welfare_status_updated.context import resolve_tracking_url
+
+StaffDigestRole = Literal["social_worker", "pmj", "finance"]
 
 
 @dataclass(frozen=True)
@@ -11,13 +14,13 @@ class StaffDigestContext:
     staff_name: str
     position: str
     province_name: str
+    total_applicants: int
     digest_date: str
+    role: StaffDigestRole
     highlight_label: str
     highlight_count: int
-    social_worker_pending: int
-    pmj_pending_approve: int
-    finance_pending: int
-    total_applicants: int
+    emergency_label: str
+    emergency_count: int
     tracking_url: str
 
     @property
@@ -28,18 +31,46 @@ class StaffDigestContext:
     def highlight_count_text(self) -> str:
         return str(self.highlight_count)
 
+    @property
+    def emergency_count_text(self) -> str:
+        return str(self.emergency_count)
+
+
+_ROLE_ALIASES: dict[str, StaffDigestRole] = {
+    "social_worker": "social_worker",
+    "socialworker": "social_worker",
+    "pmj": "pmj",
+    "finance": "finance",
+    "นักสังคม": "social_worker",
+    "นักสังคมสงเคราะห์": "social_worker",
+    "พมจ": "pmj",
+    "พม.จ.": "pmj",
+    "การเงิน": "finance",
+}
+
+
+def _parse_role(raw: object | None) -> StaffDigestRole:
+    if raw is None:
+        return "social_worker"
+    text = str(raw).strip()
+    if text in _ROLE_ALIASES:
+        return _ROLE_ALIASES[text]
+    compact = text.lower().replace(" ", "").replace(".", "")
+    return _ROLE_ALIASES.get(compact, "social_worker")
+
 
 def parse_payload(payload: dict[str, Any]) -> StaffDigestContext:
+    role = _parse_role(payload.get("role"))
     return StaffDigestContext(
         staff_name=str(payload.get("staff_name") or payload.get("full_name") or ""),
         position=str(payload.get("position") or ""),
         province_name=str(payload.get("province_name") or ""),
-        digest_date=str(payload.get("digest_date") or ""),
+        total_applicants=int(payload.get("total_applicants") or 0),
+        digest_date=format_thai_date(payload.get("digest_date")),
+        role=role,
         highlight_label=str(payload.get("highlight_label") or ""),
         highlight_count=int(payload.get("highlight_count") or 0),
-        social_worker_pending=int(payload.get("social_worker_pending") or 0),
-        pmj_pending_approve=int(payload.get("pmj_pending_approve") or 0),
-        finance_pending=int(payload.get("finance_pending") or 0),
-        total_applicants=int(payload.get("total_applicants") or 0),
+        emergency_label=str(payload.get("emergency_label") or ""),
+        emergency_count=int(payload.get("emergency_count") or 0),
         tracking_url=resolve_tracking_url(payload.get("tracking_url")),
     )
