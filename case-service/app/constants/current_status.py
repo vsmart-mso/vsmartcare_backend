@@ -1,4 +1,21 @@
-"""รหัส current_status — ใช้ใน workflow ฝั่งเจ้าหน้าที่."""
+"""รหัส current_status — ใช้ใน workflow ฝั่งเจ้าหน้าที่และอีเมลแจ้งประชาชน."""
 
-# อยู่ระหว่างการเบิก (vsmart_id=6) — หลังบันทึกผลจ่าย 037
+from typing import Final
+
+# รอรับเรื่อง
+CURRENT_STATUS_PENDING_INTAKE: Final[int] = 1
+# รับเรื่องเรียบร้อย
+CURRENT_STATUS_RECEIVED: Final[int] = 2
+# อยู่ระหว่างการเบิก (หลังอนุมัติพมจ.)
+CURRENT_STATUS_WITHDRAWING_APPROVED: Final[int] = 3
+# ช่วยเหลือแล้ว (ฝั่งเจ้าหน้าที่) — ประชาชนเห็น "เบิกจ่ายสำเร็จ" เมื่ออัปโหลด 037
+CURRENT_STATUS_AID_COMPLETED: Final[int] = 4
+# คุณสมบัติไม่ตรงตามหลักเกณฑ์
+CURRENT_STATUS_INELIGIBLE: Final[int] = 5
+# ดำเนินการแก้ไขข้อมูล
+CURRENT_STATUS_EDIT_REQUESTED: Final[int] = 8
+# อยู่ระหว่างการเบิก (หลังบันทึกผลจ่าย 037) — ประชาชนเห็น "เบิกจ่ายสำเร็จ"
 CURRENT_STATUS_WITHDRAWING = 10
+
+# ข้อความสถานะสาธารณะสำหรับอีเมล "เบิกจ่ายสำเร็จ" (id 10 และ ช่วยเหลือแล้ว+037)
+PUBLIC_STATUS_PAYMENT_SUCCESS: Final[str] = "เบิกจ่ายสำเร็จ"

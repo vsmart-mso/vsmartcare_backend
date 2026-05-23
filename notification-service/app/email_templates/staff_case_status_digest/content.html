@@ -1,0 +1,75 @@
+<p style="margin-top:0; font-size:16px; color:#0F172A;">
+  เรียน {{greeting_name}}
+</p>
+
+<p style="margin:16px 0 0; font-size:16px; line-height:1.75; color:#334155;">
+  สรุปจำนวนคำร้องสวัสดิการในจังหวัดของท่าน ณ วันที่ <strong>{{digest_date}}</strong>
+  {{province_line}}
+</p>
+
+{{province_total_block}}
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"
+  style="
+      margin:24px 0 16px;
+      background:#FDF2F8;
+      border:1px solid #FBCFE8;
+      border-left:4px solid #BE185D;
+      border-radius:2px;
+  "
+>
+  <tr>
+    <td style="padding:18px 20px;">
+      <p style="margin:0; color:#9D174D; font-size:13px; font-weight:600; letter-spacing:0.02em;">
+        {{highlight_label}}
+      </p>
+      <p style="
+          margin:8px 0 0;
+          font-size:32px;
+          font-weight:700;
+          color:#BE185D;
+          line-height:1.2;
+      ">
+        {{highlight_count}} <span style="font-size:18px; font-weight:600; color:#9D174D;">รายการ</span>
+      </p>
+    </td>
+  </tr>
+</table>
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"
+  style="
+      margin:0 0 24px;
+      background:#FFF7ED;
+      border:1px solid #FED7AA;
+      border-left:4px solid #EA580C;
+      border-radius:2px;
+  "
+>
+  <tr>
+    <td style="padding:18px 20px;">
+      <p style="margin:0; color:#9A3412; font-size:13px; font-weight:600; letter-spacing:0.02em;">
+        {{emergency_label}}
+      </p>
+      <p style="
+          margin:8px 0 0;
+          font-size:28px;
+          font-weight:700;
+          color:#EA580C;
+          line-height:1.2;
+      ">
+        {{emergency_count}} <span style="font-size:17px; font-weight:600; color:#9A3412;">รายการ</span>
+      </p>
+     
+    </td>
+  </tr>
+</table>
+
+<p style="
+    margin-top:24px;
+    font-size:14px;
+    color:#64748B;
+    line-height:1.7;
+">
+  กรุณาตรวจสอบและดำเนินการผ่านระบบ
+  <a href="{{tracking_url}}" style="font-weight:600; color:#BE185D; text-decoration:none;">พม. CARE</a>
+</p>

@@ -80,6 +80,49 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CaseForStaffStatusSummaryResponse(BaseModel):
+    """สรุปจำนวนคำร้องตาม bucket สำหรับ staff digest (จังหวัดเดียว)."""
+
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_applicants: int = Field(..., ge=0, description="จำนวน Applicant ทั้งหมดในจังหวัด")
+    social_worker_pending: int = Field(
+        0,
+        ge=0,
+        description="สถานะล่าสุด รอรับเรื่อง (current_status_id = 1)",
+    )
+    withdrawing_in_progress: int = Field(
+        0,
+        ge=0,
+        description="สถานะล่าสุด อยู่ระหว่างการเบิก (current_status_id 3 หรือ 10)",
+    )
+    pmj_pending_approve: int = Field(
+        0,
+        ge=0,
+        description="อยู่ระหว่างการเบิก และยังไม่มี approve_case.approve_status = true (รออนุมัติ)",
+    )
+    finance_pending: int = Field(
+        0,
+        ge=0,
+        description="อยู่ระหว่างการเบิก และมี approve_case.approve_status = true (รอการเบิกจ่าย)",
+    )
+    social_worker_emergency: int = Field(
+        0,
+        ge=0,
+        description="รอรับเรื่อง และ applicants.is_emergency = true",
+    )
+    pmj_emergency: int = Field(
+        0,
+        ge=0,
+        description="รออนุมัติ (อยู่ระหว่างเบิก ยังไม่อนุมัติ) และ is_emergency = true",
+    )
+    finance_emergency: int = Field(
+        0,
+        ge=0,
+        description="รอการเบิกจ่าย (อยู่ระหว่างเบิก อนุมัติแล้ว) และ is_emergency = true",
+    )
+
+
 class CaseForStaffFinanceRead(CaseForStaffRead):
     """แถวตารางการเงิน — ข้อมูลพื้นฐาน + สรุป welfare_payment (count_037/038) + DDA และธนาคาร."""
 

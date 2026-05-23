@@ -434,22 +434,22 @@ async def check_existing_case_by_cid(
     normalized = _normalize_cid(cid)
     timeout = settings.external_check_timeout_seconds
 
-    self_task = _check_self_database(session, normalized)
-    mso_task = _check_mso_logbook(normalized, timeout)
-    print("mso_task", mso_task)
-    print("--------------------------------")
-    vsmart_task = _check_external_source(
-        source="vsmart_main",
-        base_url=settings.vsmart_main_base_url,
-        path=settings.vsmart_main_check_path,
-        cid=normalized,
-        query_param=settings.vsmart_main_cid_query_param,
-        api_key=settings.vsmart_main_api_key,
-        api_key_header=settings.vsmart_main_api_key_header,
-        timeout=timeout,
+    # AsyncSession ไม่รองรับการใช้พร้อมกันใน gather — แยก query DB ออกจาก HTTP ภายนอก
+    self_result = await _check_self_database(session, normalized)
+    mso_result, vsmart_result = await asyncio.gather(
+        _check_mso_logbook(normalized, timeout),
+        _check_external_source(
+            source="vsmart_main",
+            base_url=settings.vsmart_main_base_url,
+            path=settings.vsmart_main_check_path,
+            cid=normalized,
+            query_param=settings.vsmart_main_cid_query_param,
+            api_key=settings.vsmart_main_api_key,
+            api_key_header=settings.vsmart_main_api_key_header,
+            timeout=timeout,
+        ),
     )
-  
-    sources = list(await asyncio.gather(self_task, mso_task, vsmart_task))
+    sources = [self_result, mso_result, vsmart_result]
     is_existing = any(s.found for s in sources if s.available)
   
     return ExistingCaseCheckResult(

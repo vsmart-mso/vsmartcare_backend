@@ -37,8 +37,19 @@ services:
       ]
 
   notification-service:
+    depends_on:
+      - mailpit
     environment:
       - PYTHONPATH=/app
+      # Dev + Mailpit: ส่ง SMTP ไป mailpit (ดู UI ที่ http://localhost:8025)
+      - EMAIL_MODE=smtp
+      - EMAIL_AUTO_SEND=true
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_USE_TLS=false
+      - SMTP_USE_SSL=false
+      - FRONTEND_URL=http://localhost:5173/
+      - SMTP_FROM=dev-noreply@selfservice.local
     volumes:
       - ./notification-service/app:/app/app
     command:
@@ -53,6 +64,13 @@ services:
         "8000",
         "--reload",
       ]
+
+  # Inbox จำลองสำหรับ dev — Web UI http://localhost:8025 , SMTP mailpit:1025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
 
   thaid-auth-service:
     environment:

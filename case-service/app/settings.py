@@ -75,6 +75,17 @@ class Settings(BaseSettings):
         validation_alias="EXTERNAL_CHECK_TIMEOUT_SECONDS",
     )
 
+    #: แจ้งอีเมลเมื่อเจ้าหน้าที่เปลี่ยนสถานะ — เรียก notification-service โดยตรง
+    notification_service_url: str = Field(
+        default="http://notification-service:8000",
+        validation_alias="NOTIFICATION_SERVICE_URL",
+    )
+    status_email_enabled: bool = Field(default=True, validation_alias="STATUS_EMAIL_ENABLED")
+    status_email_timeout_seconds: float = Field(
+        default=5.0,
+        validation_alias="STATUS_EMAIL_TIMEOUT_SECONDS",
+    )
+
 
 settings = Settings()
 
