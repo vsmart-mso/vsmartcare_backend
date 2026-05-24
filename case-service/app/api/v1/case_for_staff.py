@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case as sql_case, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -35,11 +35,17 @@ from ...constants.current_status import (
     CURRENT_STATUS_EDIT_REQUESTED,
     CURRENT_STATUS_PENDING_INTAKE,
     CURRENT_STATUS_WITHDRAWING,
+    CURRENT_STATUS_WITHDRAWING_APPROVED,
 )
 from ...services.file_payment_upload import (
     ATTACHMENT_PDF_037_ID,
     file_payment_upload_root,
     save_file_payment_pdf,
+)
+from ...services.payment_round_metrics import (
+    applicant_payment_metrics,
+    load_payments_by_applicant_ids,
+    round_has_038_in_dda,
 )
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
@@ -387,38 +393,19 @@ def _clean_text_filter(value: str | None) -> str | None:
     return value or None
 
 
-def _welfare_payment_stats_subquery():
-    return (
-        select(
-            WelfarePayment.applicant_id.label("applicant_id"),
-            func.coalesce(
-                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
-                0,
-            ).label("count_037"),
-            func.coalesce(
-                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(True), 1), else_=0)),
-                0,
-            ).label("count_038"),
+def _merge_payment_metrics_into_rows(
+    rows: list,
+    payments_by_applicant: dict[int, list[WelfarePayment]],
+) -> list[dict]:
+    merged: list[dict] = []
+    for row in rows:
+        data = dict(row)
+        metrics = applicant_payment_metrics(
+            payments_by_applicant.get(data["applicant_id"], []),
         )
-        .group_by(WelfarePayment.applicant_id)
-        .subquery()
-    )
-
-
-def _latest_welfare_payment_subquery():
-    return (
-        select(
-            WelfarePayment.applicant_id.label("applicant_id"),
-            WelfarePayment.is_037_or_038.label("is_037_or_038"),
-            func.row_number()
-            .over(
-                partition_by=WelfarePayment.applicant_id,
-                order_by=WelfarePayment.id.desc(),
-            )
-            .label("rn"),
-        )
-        .subquery()
-    )
+        data.update(metrics)
+        merged.append(data)
+    return merged
 
 
 def _applicant_have_dda_ref_exists():
@@ -456,6 +443,48 @@ def _welfare_payment_update_indicates_037(updates: dict) -> bool:
 def _welfare_payment_update_indicates_038(updates: dict) -> bool:
     """True เมื่อ request บันทึกผลจ่ายแบบ 038 (is_037_or_038 = true)."""
     return updates.get("is_037_or_038") is True
+
+
+async def _apply_037_status_if_needed(
+    session: AsyncSession,
+    applicant_id: int,
+    payment: WelfarePayment,
+    updates: dict,
+) -> tuple[WelfareRequestStatus | None, CurrentStatus | None]:
+    """ตั้งสถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมี 038 ในรอบเดียวกัน."""
+    if payment.is_037_or_038 is not False:
+        return None, None
+
+    batch_id = updates.get("upload_batch_id")
+    if batch_id is None:
+        batch_id = payment.upload_batch_id
+
+    has_038 = await round_has_038_in_dda(
+        session,
+        applicant_id,
+        payment.dda_ref_id,
+        payment_id=payment.id,
+        upload_batch_id=batch_id,
+    )
+    if has_038:
+        target_status_id = CURRENT_STATUS_WITHDRAWING_APPROVED
+        remarks = "บันทึกผลจ่ายเงิน 037/038"
+    else:
+        target_status_id = CURRENT_STATUS_WITHDRAWING
+        remarks = "บันทึกผลจ่ายเงิน 037"
+
+    status_row = await _get_row(session, CurrentStatus, target_status_id)
+    if status_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+
+    status_log = WelfareRequestStatus(
+        applicant_id=applicant_id,
+        current_status_id=target_status_id,
+        remarks=remarks,
+        update_by_sdshv=updates.get("user_sdshv"),
+    )
+    session.add(status_log)
+    return status_log, status_row
 
 
 @router.get("", response_model=CaseForStaffListResponse)
@@ -517,8 +546,6 @@ async def list_cases_for_staff(
         Person.sub_district_postcode_id,
     )
 
-    payment_stats_sq = _welfare_payment_stats_subquery()
-    latest_payment_sq = _latest_welfare_payment_subquery()
     have_dda_ref = _applicant_have_dda_ref_exists()
     is_approved = _applicant_is_approved_exists()
 
@@ -551,9 +578,6 @@ async def list_cases_for_staff(
             SubDistrict.name.label("subdistrict_name"),
             SubDistrictPostcode.id.label("subdistrict_postcode_id"),
             Postcode.name.label("postcode"),
-            func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
-            func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
-            latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
             have_dda_ref.label("have_dda_ref"),
             is_approved.label("is_approved"),
         )
@@ -581,17 +605,6 @@ async def list_cases_for_staff(
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
-        .outerjoin(
-            payment_stats_sq,
-            payment_stats_sq.c.applicant_id == Applicant.id,
-        )
-        .outerjoin(
-            latest_payment_sq,
-            and_(
-                latest_payment_sq.c.applicant_id == Applicant.id,
-                latest_payment_sq.c.rn == 1,
-            ),
-        )
         .where(Province.id == province_id)
         .order_by(Applicant.created_at.desc(), Applicant.id.desc())
     )
@@ -637,12 +650,15 @@ async def list_cases_for_staff(
     filtered_applicants = await session.scalar(filtered_count_stmt)
     result = await session.execute(stmt)
     rows = result.mappings().all()
+    applicant_ids = [row["applicant_id"] for row in rows]
+    payments_by_applicant = await load_payments_by_applicant_ids(session, applicant_ids)
+    enriched_rows = _merge_payment_metrics_into_rows(rows, payments_by_applicant)
     return CaseForStaffListResponse(
         province_id=province.id,
         province_name=province.name,
         total_applicants=total_applicants or 0,
         filtered_applicants=filtered_applicants or 0,
-        items=[_row_to_case_for_staff_read(row) for row in rows],
+        items=[_row_to_case_for_staff_read(row) for row in enriched_rows],
     )
 
 
@@ -707,9 +723,6 @@ async def _list_cases_for_staff_finance_impl(
         Person.sub_district_postcode_id,
     )
 
-    payment_stats_sq = _welfare_payment_stats_subquery()
-    latest_payment_sq = _latest_welfare_payment_subquery()
-
     latest_dda_sq = (
         select(
             WelfarePayment.applicant_id.label("applicant_id"),
@@ -760,9 +773,6 @@ async def _list_cases_for_staff_finance_impl(
             SubDistrictPostcode.id.label("subdistrict_postcode_id"),
             Postcode.name.label("postcode"),
             latest_dda_sq.c.dda_ref.label("dda_ref"),
-            func.coalesce(payment_stats_sq.c.count_037, 0).label("count_037"),
-            func.coalesce(payment_stats_sq.c.count_038, 0).label("count_038"),
-            latest_payment_sq.c.is_037_or_038.label("is_037_or_038"),
             welfare_payment_with_dda_exists.label("have_dda_ref"),
             is_approved.label("is_approved"),
             Applicant.bank_name_id.label("bank_name_id"),
@@ -803,21 +813,10 @@ async def _list_cases_for_staff_finance_impl(
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
         .outerjoin(
-            payment_stats_sq,
-            payment_stats_sq.c.applicant_id == Applicant.id,
-        )
-        .outerjoin(
             latest_dda_sq,
             and_(
                 latest_dda_sq.c.applicant_id == Applicant.id,
                 latest_dda_sq.c.rn == 1,
-            ),
-        )
-        .outerjoin(
-            latest_payment_sq,
-            and_(
-                latest_payment_sq.c.applicant_id == Applicant.id,
-                latest_payment_sq.c.rn == 1,
             ),
         )
         .where(Province.id == province_id)
@@ -876,12 +875,15 @@ async def _list_cases_for_staff_finance_impl(
     filtered_applicants = await session.scalar(filtered_count_stmt)
     result = await session.execute(stmt)
     rows = result.mappings().all()
+    applicant_ids = [row["applicant_id"] for row in rows]
+    payments_by_applicant = await load_payments_by_applicant_ids(session, applicant_ids)
+    enriched_rows = _merge_payment_metrics_into_rows(rows, payments_by_applicant)
     return CaseForStaffFinanceListResponse(
         province_id=province.id,
         province_name=province.name,
         total_applicants=total_applicants or 0,
         filtered_applicants=filtered_applicants or 0,
-        items=[_row_to_case_for_staff_finance_read(row) for row in rows],
+        items=[_row_to_case_for_staff_finance_read(row) for row in enriched_rows],
     )
 
 
@@ -995,7 +997,7 @@ async def update_welfare_payment_for_staff(
     """บันทึก 037/038 ตามกฎรอบ DDA — คืนแถว welfare_payment ที่ถูกสร้างหรือแก้ (ใช้ id อัปโหลด PDF).
 
     038 ครั้งแรก: PATCH แถว is_037_or_038=null จาก bundle; ครั้งถัดไป: INSERT แถวใหม่
-    037: ครั้งเดียวต่อรอบ DDA — ถ้าบันทึก 037 จะเพิ่ม welfare_request_status เป็น current_status_id=10
+    037: สถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมี 038 ในรอบเดียวกัน
     """
     updates = body.model_dump(exclude_unset=True)
     if not updates:
@@ -1008,30 +1010,24 @@ async def update_welfare_payment_for_staff(
     else:
         payment = await apply_fields_on_active_dda(session, applicant_id, updates)
 
-    is_037_update = _welfare_payment_update_indicates_037(updates)
-
     status_log: WelfareRequestStatus | None = None
-    withdrawing_status: CurrentStatus | None = None
-    if is_037_update:
-        withdrawing_status = await _get_row(session, CurrentStatus, CURRENT_STATUS_WITHDRAWING)
-        if withdrawing_status is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
-        status_log = WelfareRequestStatus(
-            applicant_id=applicant_id,
-            current_status_id=CURRENT_STATUS_WITHDRAWING,
-            remarks="บันทึกผลจ่ายเงิน 037",
-            update_by_sdshv=updates.get("user_sdshv"),
+    status_row: CurrentStatus | None = None
+    if _welfare_payment_update_indicates_037(updates):
+        status_log, status_row = await _apply_037_status_if_needed(
+            session,
+            applicant_id,
+            payment,
+            updates,
         )
-        session.add(status_log)
 
     await session.commit()
-    if status_log is not None:
+    if status_log is not None and status_log.current_status_id == CURRENT_STATUS_WITHDRAWING:
         await enqueue_status_email(
             session,
             applicant_id=applicant_id,
             status_log_id=status_log.id,
             current_status_id=status_log.current_status_id,
-            current_status_color=withdrawing_status.color if withdrawing_status else None,
+            current_status_color=status_row.color if status_row else None,
             remarks=status_log.remarks,
             trigger=CitizenStatusEmailTrigger.PAYMENT_037_RECORDED,
         )
@@ -1061,7 +1057,28 @@ async def update_welfare_payment_by_id_for_staff(
         welfare_payment_id,
         updates,
     )
+
+    status_log: WelfareRequestStatus | None = None
+    status_row: CurrentStatus | None = None
+    if _welfare_payment_update_indicates_037(updates):
+        status_log, status_row = await _apply_037_status_if_needed(
+            session,
+            applicant_id,
+            payment,
+            updates,
+        )
+
     await session.commit()
+    if status_log is not None and status_log.current_status_id == CURRENT_STATUS_WITHDRAWING:
+        await enqueue_status_email(
+            session,
+            applicant_id=applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            current_status_color=status_row.color if status_row else None,
+            remarks=status_log.remarks,
+            trigger=CitizenStatusEmailTrigger.PAYMENT_037_RECORDED,
+        )
     await session.refresh(payment)
     return WelfarePaymentRead.model_validate(payment)
 
