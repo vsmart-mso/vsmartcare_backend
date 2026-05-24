@@ -22,6 +22,14 @@ from ..schemas.payment import (
     PaymentUploadHistoryRead,
     PaymentUploadHistoryRound,
 )
+from .payment_round_metrics import (
+    PaymentRound,
+    batch_id_for_round,
+    group_payment_rounds,
+    payment_ids_for_round,
+    payment_rows_for_rounds,
+    rows_in_round,
+)
 
 ATTACHMENT_PDF_037_ID = 9
 ATTACHMENT_PDF_038_ID = 10
@@ -31,9 +39,7 @@ FILE_LABEL_BY_ATTACHMENT_ID: dict[int, str] = {
     ATTACHMENT_PDF_038_ID: "cft038",
 }
 
-SAME_UPLOAD_SESSION_MAX_SECONDS = 60
-
-HistoryPaymentGroup = WelfarePayment | tuple[WelfarePayment, ...]
+HistoryPaymentGroup = PaymentRound
 
 
 def _view_path(applicant_id: int, file_payment_id: int) -> str:
@@ -48,17 +54,11 @@ def _normalize_payment_number(value: str | None) -> str | None:
 
 
 def _history_payment_rows(all_payments: list[WelfarePayment]) -> list[WelfarePayment]:
-    return [
-        row
-        for row in all_payments
-        if row.is_037_or_038 is True or row.is_037_or_038 is False
-    ]
+    return payment_rows_for_rounds(all_payments)
 
 
 def _rows_in_group(group: HistoryPaymentGroup) -> list[WelfarePayment]:
-    if isinstance(group, tuple):
-        return list(group)
-    return [group]
+    return rows_in_round(group)
 
 
 def _group_sort_key(group: HistoryPaymentGroup) -> int:
@@ -66,75 +66,15 @@ def _group_sort_key(group: HistoryPaymentGroup) -> int:
 
 
 def _batch_id_for_group(group: HistoryPaymentGroup) -> UUID | None:
-    for row in _rows_in_group(group):
-        if row.upload_batch_id is not None:
-            return row.upload_batch_id
-    return None
-
-
-def _uploaded_in_same_session(row_038: WelfarePayment, row_037: WelfarePayment) -> bool:
-    if row_037.is_037_or_038 is not False or row_038.is_037_or_038 is not True:
-        return False
-    if row_037.dda_ref_id != row_038.dda_ref_id:
-        return False
-    if row_037.id <= row_038.id:
-        return False
-    if row_038.created_at is None or row_037.created_at is None:
-        return row_037.id == row_038.id + 1
-    gap = (row_037.created_at - row_038.created_at).total_seconds()
-    return 0 <= gap <= SAME_UPLOAD_SESSION_MAX_SECONDS
-
-
-def _group_payment_rows_legacy(payment_rows: list[WelfarePayment]) -> list[HistoryPaymentGroup]:
-    groups: list[HistoryPaymentGroup] = []
-    index = 0
-    while index < len(payment_rows):
-        current = payment_rows[index]
-        if (
-            current.is_037_or_038 is True
-            and index + 1 < len(payment_rows)
-            and _uploaded_in_same_session(current, payment_rows[index + 1])
-        ):
-            groups.append((current, payment_rows[index + 1]))
-            index += 2
-            continue
-        groups.append(current)
-        index += 1
-    return groups
-
-
-def _group_payment_rows_by_batch(
-    payment_rows: list[WelfarePayment],
-) -> list[HistoryPaymentGroup]:
-    by_batch: dict[UUID, list[WelfarePayment]] = defaultdict(list)
-    for row in payment_rows:
-        if row.upload_batch_id is not None:
-            by_batch[row.upload_batch_id].append(row)
-
-    groups: list[HistoryPaymentGroup] = []
-    for batch_id in sorted(by_batch.keys(), key=lambda bid: min(r.id for r in by_batch[bid])):
-        rows = sorted(by_batch[batch_id], key=lambda row: row.id)
-        if len(rows) == 1:
-            groups.append(rows[0])
-        else:
-            groups.append(tuple(rows))
-    return groups
+    return batch_id_for_round(group)
 
 
 def _build_display_groups(payment_rows: list[WelfarePayment]) -> list[HistoryPaymentGroup]:
-    with_batch = [row for row in payment_rows if row.upload_batch_id is not None]
-    without_batch = [row for row in payment_rows if row.upload_batch_id is None]
-
-    batch_groups = _group_payment_rows_by_batch(with_batch)
-    legacy_groups = _group_payment_rows_legacy(without_batch)
-
-    merged = batch_groups + legacy_groups
-    merged.sort(key=_group_sort_key)
-    return merged
+    return group_payment_rounds(payment_rows)
 
 
 def _payment_ids_for_group(group: HistoryPaymentGroup) -> list[int]:
-    return [row.id for row in _rows_in_group(group)]
+    return payment_ids_for_round(group)
 
 
 def _assign_orphan_files_to_payment_rows(

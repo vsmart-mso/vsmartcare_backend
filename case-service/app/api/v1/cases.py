@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import case as sql_case, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -27,6 +27,7 @@ from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.payment import WelfarePayment
+from ...services.payment_round_metrics import applicant_payment_metrics
 from ...models.welfare import (
     WelfareEvidence,
     WelfareHistory,
@@ -582,16 +583,13 @@ async def get_welfare_case(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
 
-    # นับจำนวน welfare_payment ที่ is_037_or_038 = false (ฟอร์ม 037) ของ applicant นี้
-    count_037_row = await session.execute(
-        select(
-            func.coalesce(
-                func.sum(sql_case((WelfarePayment.is_037_or_038.is_(False), 1), else_=0)),
-                0,
-            )
-        ).where(WelfarePayment.applicant_id == applicant_id)
+    payments_result = await session.execute(
+        select(WelfarePayment)
+        .where(WelfarePayment.applicant_id == applicant_id)
+        .order_by(WelfarePayment.id.asc()),
     )
-    count_037 = int(count_037_row.scalar_one())
+    metrics = applicant_payment_metrics(list(payments_result.scalars().all()))
+    count_037 = int(metrics["count_037"])
 
     return await applicant_to_case_read(row, count_037=count_037)
 

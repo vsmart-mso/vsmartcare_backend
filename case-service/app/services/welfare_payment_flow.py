@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.payment import FilePayment, WelfarePayment
+from .payment_round_metrics import is_dda_closed_for_038
 
 PAYMENT_CYCLE_CLOSED = "payment_cycle_closed"
 ATTACHMENT_PDF_037_ID = 9
@@ -24,24 +25,6 @@ async def resolve_active_dda_ref_id(session: AsyncSession, applicant_id: int) ->
     if dda_ref_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
     return dda_ref_id
-
-
-async def has_037_for_dda(
-    session: AsyncSession,
-    applicant_id: int,
-    dda_ref_id: int,
-) -> bool:
-    """มีแถว 037 (is_037_or_038 = false) ในรอบ DDA นี้หรือไม่."""
-    found = await session.scalar(
-        select(WelfarePayment.id)
-        .where(
-            WelfarePayment.applicant_id == applicant_id,
-            WelfarePayment.dda_ref_id == dda_ref_id,
-            WelfarePayment.is_037_or_038.is_(False),
-        )
-        .limit(1),
-    )
-    return found is not None
 
 
 def _raise_cycle_closed() -> None:
@@ -173,7 +156,7 @@ async def apply_038_update(
 ) -> WelfarePayment:
     """PATCH แถว null ครั้งแรก; INSERT แถวใหม่เมื่อ 038 ครั้งถัดไป."""
     dda_ref_id = await resolve_active_dda_ref_id(session, applicant_id)
-    if await has_037_for_dda(session, applicant_id, dda_ref_id):
+    if await is_dda_closed_for_038(session, applicant_id, dda_ref_id):
         _raise_cycle_closed()
 
     open_row = await get_open_payment_row(session, applicant_id, dda_ref_id)
@@ -261,7 +244,7 @@ async def apply_fields_on_active_dda(
 ) -> WelfarePayment:
     """อัปเดตฟิลด์อื่นโดยไม่เปลี่ยนประเภท 037/038 — ใช้แถวล่าสุดใน DDA ปัจจุบัน."""
     dda_ref_id = await resolve_active_dda_ref_id(session, applicant_id)
-    if await has_037_for_dda(session, applicant_id, dda_ref_id):
+    if await is_dda_closed_for_038(session, applicant_id, dda_ref_id):
         _raise_cycle_closed()
 
     target = await _latest_payment_for_dda(session, applicant_id, dda_ref_id)
@@ -278,7 +261,7 @@ async def assert_payment_cycle_open(
 ) -> int:
     """คืน dda_ref_id ปัจจุบัน หรือ 403 ถ้าปิดรอบด้วย 037 แล้ว."""
     dda_ref_id = await resolve_active_dda_ref_id(session, applicant_id)
-    if await has_037_for_dda(session, applicant_id, dda_ref_id):
+    if await is_dda_closed_for_038(session, applicant_id, dda_ref_id):
         _raise_cycle_closed()
     return dda_ref_id
 
@@ -291,16 +274,26 @@ async def validate_welfare_payment_for_upload(
     active_dda_ref_id: int,
     attachment_type_id: int | None = None,
 ) -> WelfarePayment:
+    """ยืนยันแถว welfare_payment ที่ระบุ — แก้ไขประวัติไม่บังคับ DDA ล่าสุด."""
     payment = await session.get(WelfarePayment, welfare_payment_id)
     if payment is None or payment.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
 
-    if attachment_type_id == ATTACHMENT_PDF_037_ID and payment.is_037_or_038 is False:
-        return payment
-
-    if attachment_type_id == ATTACHMENT_PDF_038_ID and payment.is_037_or_038 is not False:
-        if payment.dda_ref_id == active_dda_ref_id or payment.is_037_or_038 is None:
+    if attachment_type_id == ATTACHMENT_PDF_037_ID:
+        if payment.is_037_or_038 is False:
             return payment
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="welfare_payment_attachment_type_mismatch",
+        )
+
+    if attachment_type_id == ATTACHMENT_PDF_038_ID:
+        if payment.is_037_or_038 is not False:
+            return payment
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="welfare_payment_attachment_type_mismatch",
+        )
 
     if payment.dda_ref_id != active_dda_ref_id:
         raise HTTPException(
@@ -329,7 +322,7 @@ async def resolve_welfare_payment_for_upload(
 
     if attachment_type_id == ATTACHMENT_PDF_037_ID:
         dda_ref_id = await resolve_dda_ref_id_for_037(session, applicant_id)
-        if await has_037_for_dda(session, applicant_id, dda_ref_id):
+        if await is_dda_closed_for_038(session, applicant_id, dda_ref_id):
             existing = await get_037_payment_row(session, applicant_id, dda_ref_id)
             if existing is not None:
                 return existing
