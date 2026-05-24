@@ -1,4 +1,4 @@
-"""Gemini OCR Service — เรียก Gemini API เพื่อทำ OCR จากรูปภาพ พร้อมสกัดข้อมูลบัญชีธนาคาร."""
+﻿"""Gemini OCR Service — เรียก Gemini API เพื่อทำ OCR จากรูปภาพ พร้อมสกัดข้อมูลบัญชีธนาคาร."""
 
 from __future__ import annotations
 
@@ -73,6 +73,38 @@ def _fuzzy_score(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
     return SequenceMatcher(None, _normalize_text(a), _normalize_text(b)).ratio() * 100.0
+
+
+def _clean_optional_text(value: object) -> str | None:
+    """Normalize nullable text from model output."""
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _validate_account_number(value: object) -> str | None:
+    """Allow only digits and dashes for account number."""
+    text = _clean_optional_text(value)
+    if not text:
+        return None
+    if re.search(r"[A-Za-z*#]", text):
+        return None
+    if not re.fullmatch(r"[0-9-]+", text):
+        return None
+    if not re.search(r"[0-9]", text):
+        return None
+    return text
+
+
+def _validate_branch_code(value: object) -> str | None:
+    """Allow only numeric branch code."""
+    text = _clean_optional_text(value)
+    if not text:
+        return None
+    if not re.fullmatch(r"[0-9]{2,6}", text):
+        return None
+    return text
 
 
 # คำนำหน้าที่ใช้เปรียบเทียบ
@@ -156,9 +188,12 @@ Do NOT include markdown fences or any other text.
 {
   "markdown": "full OCR text in markdown format, preserving structure",
   "bank_info": {
-    "account_number": "account number as shown on the book (no dashes/spaces unless present)",
+    "account_number": "account number as shown on the book (dashes are allowed)",
     "account_name": "full account holder name in Thai",
-    "bank_name": "bank name in Thai"
+    "bank_name": "bank name in Thai",
+    "deposit_type": "deposit product type (e.g. savings/current/fixed deposit)",
+    "branch_name": "bank branch name in Thai",
+    "branch_code": "numeric branch code"
   }
 }
 
@@ -173,6 +208,9 @@ Rules:
   - If invalid or uncertain, set account_number to null.
 - For account_name: extract the FULL name including title (นาย/นาง/นางสาว).
 - For bank_name: recognize the bank logo or printed bank name.
+- For deposit_type: extract only real deposit type text. If unclear, masked, or not present, set to null.
+- For branch_name: extract only real branch name text. If unclear, masked, or not present, set to null.
+- For branch_code: extract only digits (0-9), length 2-6. If it contains non-digits, set to null.
 - If any field cannot be read, set its value to null.
 - The markdown field must contain ALL visible text on the page, formatted as markdown."""
 
@@ -240,9 +278,12 @@ async def run_ocr_pipeline(
     # 4. เช็กว่ามี text จริงหรือไม่
     has_text = bool(markdown.strip()) if markdown else False
 
-    account_number = raw_bank.get("account_number")
-    account_name = raw_bank.get("account_name")
-    bank_name = raw_bank.get("bank_name")
+    account_number = _validate_account_number(raw_bank.get("account_number"))
+    account_name = _clean_optional_text(raw_bank.get("account_name"))
+    bank_name = _clean_optional_text(raw_bank.get("bank_name"))
+    deposit_type = _clean_optional_text(raw_bank.get("deposit_type"))
+    branch_name = _clean_optional_text(raw_bank.get("branch_name"))
+    branch_code = _validate_branch_code(raw_bank.get("branch_code"))
 
     # 5. Fuzzy match — แยกคำนำหน้าออก → match เฉพาะชื่อ-นามสกุล
     fuzzy_score = 0.0
@@ -280,6 +321,9 @@ async def run_ocr_pipeline(
             account_number=account_number,
             account_name=account_name,
             bank_name=bank_name,
+            deposit_type=deposit_type,
+            branch_name=branch_name,
+            branch_code=branch_code,
             match_status=match_status,
             fuzzy_score=round(fuzzy_score, 2),
         ).model_dump(),

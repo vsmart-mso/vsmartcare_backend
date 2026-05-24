@@ -1,4 +1,4 @@
-"""Pydantic schemas สำหรับ OCR Pipeline."""
+"""Pydantic schemas for OCR pipeline."""
 
 from __future__ import annotations
 
@@ -17,25 +17,27 @@ class MatchStatus(str, Enum):
 
 
 class BankInfo(BaseModel):
-    account_number: str | None = Field(None, description="หมายเลขบัญชีที่ OCR อ่านได้")
-    account_name: str | None = Field(None, description="ชื่อบัญชีที่ OCR อ่านได้")
-    bank_name: str | None = Field(None, description="ชื่อธนาคารที่ OCR อ่านได้")
-    match_status: MatchStatus = Field(..., description="สถานะการจับคู่เทียบกับชื่อเป้าหมาย")
-    fuzzy_score: float = Field(0.0, description="คะแนน fuzzy match 0-100")
+    account_number: str | None = Field(None, description="OCR extracted account number")
+    account_name: str | None = Field(None, description="OCR extracted account holder name")
+    bank_name: str | None = Field(None, description="OCR extracted bank name")
+    deposit_type: str | None = Field(None, description="OCR extracted deposit type")
+    branch_name: str | None = Field(None, description="OCR extracted branch name")
+    branch_code: str | None = Field(None, description="OCR extracted branch code")
+    match_status: MatchStatus = Field(..., description="Name matching status")
+    fuzzy_score: float = Field(0.0, description="Fuzzy match score 0-100")
 
 
 class OcrResponse(BaseModel):
-    id: int = Field(..., description="ID ของผล OCR ใน DB — ใช้สำหรับ PATCH link ทีหลัง")
-    markdown: str = Field("", description="ข้อความเต็มจาก OCR ในรูปแบบ Markdown")
-    bank_info: BankInfo | None = Field(None, description="ข้อมูลบัญชีธนาคารที่สกัดได้")
-    target_name_checked: str = Field("", description="ชื่อเป้าหมายที่ใช้ในการตรวจสอบ")
-    pre_file: str = Field("", description="uuid ของไฟล์ต้นฉบับที่อัปโหลด")
+    id: int = Field(..., description="OCR result ID in DB")
+    markdown: str = Field("", description="Full OCR text in markdown format")
+    bank_info: BankInfo | None = Field(None, description="Extracted bank account information")
+    target_name_checked: str = Field("", description="Target name used for matching")
+    pre_file: str = Field("", description="Uploaded file UUID")
 
-
-# ── DB read schemas ─────────────────────────────────────────────
 
 class OcrResultRead(BaseModel):
-    """อ่านผล OCR ที่บันทึกใน DB."""
+    """Read OCR result record from DB."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
