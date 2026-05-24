@@ -48,6 +48,9 @@ class OcrResultRead(BaseModel):
     account_number: str | None = None
     account_name: str | None = None
     bank_name: str | None = None
+    deposit_type: str | None = None
+    branch_name: str | None = None
+    branch_code: str | None = None
     match_status: MatchStatus
     fuzzy_score: float
     created_at: datetime

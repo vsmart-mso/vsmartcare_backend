@@ -129,6 +129,9 @@ async def ocr_bank_book(
         account_number=bi.get("account_number"),
         account_name=bi.get("account_name"),
         bank_name=bi.get("bank_name"),
+        deposit_type=bi.get("deposit_type"),
+        branch_name=bi.get("branch_name"),
+        branch_code=bi.get("branch_code"),
         match_status=bi["match_status"].value if hasattr(bi["match_status"], "value") else bi["match_status"],
         fuzzy_score=bi["fuzzy_score"],
     )

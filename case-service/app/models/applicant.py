@@ -78,6 +78,13 @@ class Applicant(Base):
         index=True,
     )
     bank_account_no: Mapped[str | None] = mapped_column(String(50))
+    # ประเภทเงินฝาก — FK ไปยัง master bank_account_type (เก็บค่าที่ OCR อ่าน+map แล้ว)
+    bank_account_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_account_type.id"),
+        index=True,
+    )
+    # ชื่อสาขา — ข้อความจาก OCR (ไม่ผูก lookup)
+    bank_branch_name: Mapped[str | None] = mapped_column(String(255))
     type_money_category_id: Mapped[int | None] = mapped_column(
         ForeignKey("type_money_category.id"),
         index=True,
