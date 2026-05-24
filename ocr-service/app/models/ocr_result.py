@@ -33,6 +33,9 @@ class OcrResult(Base):
     account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     account_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     bank_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deposit_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    branch_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    branch_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     match_status: Mapped[str] = mapped_column(String(20), nullable=False, default="no_text")
     fuzzy_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 

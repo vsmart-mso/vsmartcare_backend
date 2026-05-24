@@ -23,7 +23,7 @@ from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo
 from ...models.intake import CaseHandling
-from ...models.lookup import BankName, CurrentStatus, TypeMoneyCategory
+from ...models.lookup import BankAccountType, BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.payment import WelfarePayment
@@ -229,6 +229,16 @@ async def _ensure_bank_name_exists(session: AsyncSession, bank_name_id: int) -> 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="bank_name_not_found")
 
 
+async def _ensure_bank_account_type_exists(session: AsyncSession, bank_account_type_id: int) -> None:
+    r = await session.execute(
+        select(BankAccountType.id).where(BankAccountType.id == bank_account_type_id)
+    )
+    if r.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="bank_account_type_not_found"
+        )
+
+
 async def _ensure_type_money_category_exists(
     session: AsyncSession,
     type_money_category_id: int,
@@ -252,6 +262,8 @@ async def create_welfare_case(
     await _ensure_current_status_exists(session, body.initial_current_status_id)
     if body.applicant.bank_name_id is not None:
         await _ensure_bank_name_exists(session, body.applicant.bank_name_id)
+    if body.applicant.bank_account_type_id is not None:
+        await _ensure_bank_account_type_exists(session, body.applicant.bank_account_type_id)
     if body.applicant.type_money_category_id is not None:
         await _ensure_type_money_category_exists(session, body.applicant.type_money_category_id)
 
@@ -279,6 +291,8 @@ async def create_welfare_case(
         problem_details=a.problem_details,
         bank_name_id=a.bank_name_id,
         bank_account_no=a.bank_account_no,
+        bank_account_type_id=a.bank_account_type_id,
+        bank_branch_name=a.bank_branch_name,
         type_money_category_id=a.type_money_category_id,
         sw_explorer_sdshv=a.sw_explorer_sdshv,
         age=a.age,
@@ -462,6 +476,11 @@ async def update_welfare_case(
             applicant_row.bank_name_id = a.bank_name_id
         if a.bank_account_no is not None:
             applicant_row.bank_account_no = a.bank_account_no
+        if a.bank_account_type_id is not None:
+            await _ensure_bank_account_type_exists(session, a.bank_account_type_id)
+            applicant_row.bank_account_type_id = a.bank_account_type_id
+        if a.bank_branch_name is not None:
+            applicant_row.bank_branch_name = a.bank_branch_name
         if a.age is not None:
             applicant_row.age = a.age
         if a.reset_processing_state:
