@@ -25,6 +25,7 @@ from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyC
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.intake import CaseHandling, CaseRegulationChoice
+from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from ...services.process_sla import (
     apply_emergency_flag_for_money_category,
@@ -85,6 +86,8 @@ from ...schemas.case_for_staff import (
     CaseForStaffPorKor1DetailResponse,
     CaseForStaffRead,
     CaseForStaffWelfareRequestStatusCreate,
+    MoreMsoRead,
+    MoreMsoUpsert,
     PorKor1AddressItem,
     PorKor1ApplicantSection,
     PorKor1DependencyItem,
@@ -97,6 +100,9 @@ from ...schemas.case_for_staff import (
     PorKor1WelfareHistoryRead,
     PorKor1WelfareRequestStatusSection,
     PorKor1WelfareRequestTypeItem,
+    SendDataCreate,
+    SendDataRead,
+    TypeSendRead,
 )
 from ...schemas.case_welfare import WelfareCaseRead
 from ...schemas.dependency import DependencyLoadRead
@@ -1775,4 +1781,116 @@ async def create_welfare_edit_request(
             WelfareReviewCommentRead.model_validate(c) for c in comments
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# TypeSend — master ประเภทการส่งข้อมูล
+# ---------------------------------------------------------------------------
+
+
+@router.get("/type-sends", response_model=list[TypeSendRead], summary="รายการประเภทการส่งข้อมูล (master)")
+async def list_type_sends(
+    session: AsyncSession = Depends(get_session),
+) -> list[TypeSendRead]:
+    result = await session.execute(select(TypeSend).order_by(TypeSend.id))
+    return [TypeSendRead.model_validate(row) for row in result.scalars().all()]
+
+
+# ---------------------------------------------------------------------------
+# MoreMso — ข้อมูล MSO เพิ่มเติม 1:1 case_handling (เข้าถึงผ่าน applicant_id)
+# ---------------------------------------------------------------------------
+
+
+async def _get_case_handling_for_applicant(session: AsyncSession, applicant_id: int) -> CaseHandling:
+    row = await session.scalar(select(CaseHandling).where(CaseHandling.applicant_id == applicant_id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_handling_not_found")
+    return row
+
+
+@router.get(
+    "/applicant/{applicant_id}/more-mso",
+    response_model=MoreMsoRead | None,
+    summary="ดึงข้อมูล MSO เพิ่มเติมของ applicant (null ถ้ายังไม่มี)",
+)
+async def get_more_mso(
+    applicant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> MoreMsoRead | None:
+    case_handling = await _get_case_handling_for_applicant(session, applicant_id)
+    row = await session.scalar(select(MoreMso).where(MoreMso.case_handling_id == case_handling.id))
+    if row is None:
+        return None
+    return MoreMsoRead.model_validate(row)
+
+
+@router.put(
+    "/applicant/{applicant_id}/more-mso",
+    response_model=MoreMsoRead,
+    summary="สร้างหรืออัปเดตข้อมูล MSO เพิ่มเติม (upsert)",
+)
+async def upsert_more_mso(
+    applicant_id: int,
+    body: MoreMsoUpsert = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> MoreMsoRead:
+    case_handling = await _get_case_handling_for_applicant(session, applicant_id)
+    row = await session.scalar(select(MoreMso).where(MoreMso.case_handling_id == case_handling.id))
+    payload = body.model_dump()
+    if row is None:
+        row = MoreMso(case_handling_id=case_handling.id, **payload)
+        session.add(row)
+    else:
+        for field, value in payload.items():
+            setattr(row, field, value)
+    await session.commit()
+    await session.refresh(row)
+    return MoreMsoRead.model_validate(row)
+
+
+# ---------------------------------------------------------------------------
+# SendData — บันทึกการส่งข้อมูลคำร้อง N:1 applicants
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/applicant/{applicant_id}/send-data",
+    response_model=list[SendDataRead],
+    summary="ประวัติการส่งข้อมูลของ applicant",
+)
+async def list_send_data(
+    applicant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[SendDataRead]:
+    applicant = await session.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+    result = await session.execute(
+        select(SendData).where(SendData.applicant_id == applicant_id).order_by(SendData.id.asc())
+    )
+    return [SendDataRead.model_validate(row) for row in result.scalars().all()]
+
+
+@router.post(
+    "/applicant/{applicant_id}/send-data",
+    response_model=SendDataRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึกการส่งข้อมูลคำร้อง",
+)
+async def create_send_data(
+    applicant_id: int,
+    body: SendDataCreate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> SendDataRead:
+    applicant = await session.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+    type_send = await session.get(TypeSend, body.type_send_id)
+    if type_send is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="type_send_not_found")
+    row = SendData(applicant_id=applicant_id, **body.model_dump())
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return SendDataRead.model_validate(row)
 
