@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .process_sla import ProcessSlaFields
 from .address import AddressRead
@@ -350,3 +351,91 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
         default_factory=list,
         description="หลักฐานแนบ (รูป) พร้อม path สำหรับนำไปแสดง",
     )
+
+
+# ---------------------------------------------------------------------------
+# TypeSend — master ประเภทการส่งข้อมูล
+# ---------------------------------------------------------------------------
+
+
+class TypeSendRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    detail: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# MoreMso — ข้อมูล MSO เพิ่มเติม 1:1 case_handling
+# ---------------------------------------------------------------------------
+
+
+class MoreMsoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    case_handling_id: int
+    follow_date: str | None = None
+    help_number: str | None = None
+    help_date: date | None = None
+    approve_name: str | None = None
+    approve_number: str | None = None
+    approve_date: date | None = None
+    receive_date: date | None = None
+    cashier: str | None = None
+    cashier_name: str | None = None
+    follower_name: str | None = None
+    follower_position_vsmart_id: str | None = None
+    follower_department_vsmart_id: str | None = None
+    follower_tel: str | None = None
+    follower_date: date | None = None
+    follower_result: str | None = None
+    follower_method: int | None = None
+    follower_type: int | None = None
+
+
+class MoreMsoUpsert(BaseModel):
+    follow_date: str | None = Field(None, max_length=255)
+    help_number: str | None = Field(None, max_length=255)
+    help_date: date | None = None
+    approve_name: str | None = Field(None, max_length=255)
+    approve_number: str | None = Field(None, max_length=255)
+    approve_date: date | None = None
+    receive_date: date | None = None
+    cashier: str | None = Field(None, max_length=255)
+    cashier_name: str | None = Field(None, max_length=255)
+    follower_name: str | None = Field(None, max_length=255)
+    follower_position_vsmart_id: str | None = Field(None, max_length=255)
+    follower_department_vsmart_id: str | None = Field(None, max_length=255)
+    follower_tel: str | None = Field(None, max_length=255)
+    follower_date: date | None = None
+    follower_result: str | None = None
+    follower_method: int | None = None
+    follower_type: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# SendData — บันทึกการส่งข้อมูลคำร้อง
+# ---------------------------------------------------------------------------
+
+
+class SendDataRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    applicant_id: int
+    type_send_id: int
+    type_send: TypeSendRead | None = None
+    send_by_sdshv: str | None = None
+    json_case: dict[str, Any] | None = None
+    response_code: str | None = None
+    response_text: str | None = None
+
+
+class SendDataCreate(BaseModel):
+    type_send_id: int = Field(..., ge=1)
+    send_by_sdshv: str | None = Field(None, max_length=255)
+    json_case: dict[str, Any] | None = None
+    response_code: str | None = Field(None, max_length=255)
+    response_text: str | None = None
