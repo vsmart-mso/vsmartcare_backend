@@ -19,8 +19,8 @@ depends_on: str | Sequence[str] | None = None
 
 UQ_037_PER_DDA = "uq_welfare_payment_applicant_dda_037"
 IX_PAYMENT_APPLICANT_DDA_TYPE = "ix_welfare_payment_applicant_dda_type"
-FK_FILE_PAYMENT_WELFARE_PAYMENT = op.f("fk_file_payment_welfare_payment_id_welfare_payment")
-IX_FILE_PAYMENT_WELFARE_PAYMENT = op.f("ix_file_payment_welfare_payment_id")
+FK_FILE_PAYMENT_WELFARE_PAYMENT = "fk_file_payment_welfare_payment_id_welfare_payment"
+IX_FILE_PAYMENT_WELFARE_PAYMENT = "ix_file_payment_welfare_payment_id"
 
 
 def upgrade() -> None:
