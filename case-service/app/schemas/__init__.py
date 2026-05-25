@@ -1,6 +1,7 @@
 """Re-export Pydantic schemas เพื่อให้ import จาก app.schemas ได้สะดวก"""
 
 from .address import AddressBase, AddressCreate, AddressRead, AddressUpdate
+from .article import ArticleCreate, ArticleRead, ArticleUpdate
 from .applicant import (
     ApplicantBase,
     ApplicantCreate,
@@ -109,6 +110,9 @@ __all__ = [
     "AddressTypeCreate",
     "AddressTypeRead",
     "AddressUpdate",
+    "ArticleCreate",
+    "ArticleRead",
+    "ArticleUpdate",
     "ApplicantBase",
     "ApplicantCreate",
     "ApplicantRead",

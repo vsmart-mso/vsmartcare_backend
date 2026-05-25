@@ -17,6 +17,8 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import BaseModel, Field
 
 from .case_for_staff_schema import (
+    ArticleCreateBody,
+    ArticleUpdateBody,
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
@@ -1141,6 +1143,54 @@ async def create_approve_case_for_staff(body: ApproveCaseCreateBody) -> Any:
 async def list_approve_case_for_staff(applicant_id: int = Query(..., ge=1)) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/case_for_staff/approve-case?applicant_id={applicant_id}")
+
+
+@router.get(
+    "/v1/case_for_staff/article",
+    tags=["case_for_staff"],
+    summary="ดึง article ตาม applicant_id",
+    description="ส่งต่อ `GET …/v1/case_for_staff/article?applicant_id=…` — 404 เมื่อยังไม่มี article",
+    dependencies=_v1_api_key,
+)
+async def get_article_for_staff(applicant_id: int = Query(..., ge=1)) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/article?applicant_id={applicant_id}")
+
+
+@router.post(
+    "/v1/case_for_staff/article",
+    tags=["case_for_staff"],
+    summary="บันทึก article (ครั้งแรก)",
+    description=(
+        "ส่งต่อ `POST …/v1/case_for_staff/article` — สร้างเนื้อหา article อย่างเดียว. "
+        "อนุมัติ/เปลี่ยนสถานะใช้ POST /v1/case_for_staff/approve-case"
+    ),
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_article_for_staff(body: ArticleCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True, mode="json")
+    return await _post(f"{base}/v1/case_for_staff/article", json=payload)
+
+
+@router.patch(
+    "/v1/case_for_staff/article",
+    tags=["case_for_staff"],
+    summary="อัปเดต article (ไม่เปลี่ยนสถานะ)",
+    description="ส่งต่อ `PATCH …/v1/case_for_staff/article?applicant_id=…` — แก้ฟิลด์เนื้อหา article อย่างเดียว",
+    dependencies=_v1_api_key,
+)
+async def patch_article_for_staff(
+    applicant_id: int = Query(..., ge=1),
+    body: ArticleUpdateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True, mode="json")
+    return await _patch(
+        f"{base}/v1/case_for_staff/article?applicant_id={applicant_id}",
+        json=payload,
+    )
 
 
 @router.get(

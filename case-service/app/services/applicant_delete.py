@@ -26,6 +26,7 @@ def applicant_delete_load_options():  # noqa: ANN201
         selectinload(Applicant.welfare_request_types),
         selectinload(Applicant.welfare_evidences),
         selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.review_comments),
+        selectinload(Applicant.article),
         selectinload(Applicant.approve_cases),
         selectinload(Applicant.welfare_payments),
         selectinload(Applicant.case_handling).selectinload(CaseHandling.regulation_choice),
