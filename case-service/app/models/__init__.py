@@ -2,6 +2,7 @@
 
 from .address import Address
 from .applicant import Applicant
+from .article import Article
 from .dependency import DependencyLoad
 from .economic import EconomicIncomeSource, EconomicInfo
 from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
@@ -52,6 +53,7 @@ __all__ = [
     "AddressType",
     "AnnouncementRegulation",
     "Applicant",
+    "Article",
     "AttachmentType",
     "BankAccountType",
     "BankName",

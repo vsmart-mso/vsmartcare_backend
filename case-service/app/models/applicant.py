@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .intake import CaseHandling
     from .lookup import BankName, MaritalStatusType, RequesterRelationType, TypeMoneyCategory
     from .mso_send import SendData
+    from .article import Article
     from .payment import ApproveCase, WelfarePayment
     from .person import Person
     from .satisfaction import SatisfactionSurvey
@@ -149,6 +150,11 @@ class Applicant(Base):
         back_populates="applicant",
         cascade="all, delete-orphan",
         order_by="WelfareRequestStatus.updated_at.desc()",
+    )
+    article: Mapped["Article | None"] = relationship(
+        back_populates="applicant",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
     approve_cases: Mapped[list["ApproveCase"]] = relationship(
         back_populates="applicant",

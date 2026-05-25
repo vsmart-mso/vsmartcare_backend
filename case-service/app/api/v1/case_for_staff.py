@@ -10,12 +10,15 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-import base64
-import uuid
-from pathlib import Path
 from uuid import UUID
 
-from ...settings import resolved_upload_root
+from ...services.esignature_storage import load_esignature_base64 as _load_esignature_base64
+from ...services.article_approval import (
+    get_article_by_applicant_id,
+    record_approve_case_with_status,
+    resolve_article_id_for_applicant,
+    upsert_article,
+)
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
 from ...core.database import get_session
 from ...models.address import Address
@@ -64,6 +67,7 @@ from ...services.welfare_payment_flow import (
     file_payment_owned_by_applicant,
 )
 from ...schemas.address import AddressRead
+from ...schemas.article import ArticleCreate, ArticleRead, ArticleUpdate
 from ...schemas.payment import (
     ApproveCaseCreate,
     ApproveCaseRead,
@@ -122,64 +126,6 @@ from ...schemas.welfare import (
     WelfareHistoryDetailRead,
     WelfareRequestTypeRead,
 )
-
-
-def _save_esignature_base64(applicant_id: int, base64_str: str | None) -> str | None:
-    """แปลง Base64 data URL ของลายเซ็นให้กลายเป็นไฟล์รูปภาพเก็บลง Disk และคืนค่า Relative Path (Prototype)"""
-    if not base64_str or not base64_str.startswith("data:image/"):
-        return base64_str
-
-    try:
-        header, encoded = base64_str.split(",", 1)
-        ext = ".png"
-        if "image/jpeg" in header:
-            ext = ".jpg"
-        elif "image/webp" in header:
-            ext = ".webp"
-
-        image_data = base64.b64decode(encoded)
-        
-        base_path = resolved_upload_root()
-        dest_dir = (base_path / "signatures" / str(applicant_id)).resolve()
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = f"{uuid.uuid4().hex}{ext}"
-        file_path = dest_dir / filename
-        file_path.write_bytes(image_data)
-
-        # เก็บเฉพาะ relative path จาก upload root ลงในฐานข้อมูล
-        return f"signatures/{applicant_id}/{filename}"
-    except Exception:
-        # Fallback: หากเกิดปัญหา ให้ยอมเก็บ Base64 ตัวเดิมลง DB เพื่อไม่ให้ระบบล่ม
-        return base64_str
-
-
-def _load_esignature_base64(esignature_path: str | None) -> str | None:
-    """อ่านไฟล์ภาพลายเซ็นและแปลงกลับเป็น Base64 data URL ส่งให้ frontend (Transparent Wrapper)"""
-    if not esignature_path or esignature_path.startswith("data:image/"):
-        return esignature_path
-
-    try:
-        base_path = resolved_upload_root()
-        full_path = (base_path / esignature_path).resolve()
-        
-        # ตรวจเช็ค Path Traversal ป้องกันด้านความปลอดภัย
-        full_path.relative_to(base_path.resolve())
-
-        if full_path.exists() and full_path.is_file():
-            ext = full_path.suffix.lower()
-            mime_type = "image/png"
-            if ext in [".jpg", ".jpeg"]:
-                mime_type = "image/jpeg"
-            elif ext == ".webp":
-                mime_type = "image/webp"
-
-            binary_data = full_path.read_bytes()
-            encoded = base64.b64encode(binary_data).decode("utf-8")
-            return f"data:{mime_type};base64,{encoded}"
-    except Exception:
-        pass
-    return esignature_path
 
 
 router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
@@ -1584,6 +1530,76 @@ async def create_welfare_dda_ref_bundle(
     )
 
 
+@router.get(
+    "/article",
+    response_model=ArticleRead,
+    summary="ดึง article ตาม applicant_id",
+    description="คืนเนื้อหา article สำหรับแสดง — 404 เมื่อยังไม่เคยบันทึก",
+)
+async def get_article_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    session: AsyncSession = Depends(get_session),
+) -> ArticleRead:
+    row = await get_article_by_applicant_id(session, applicant_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="article_not_found")
+    return ArticleRead.model_validate(row)
+
+
+@router.post(
+    "/article",
+    response_model=ArticleRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึก article (ครั้งแรก)",
+    description=(
+        "สร้าง article เก็บเนื้อหาอย่างเดียว (ครั้งแรกเท่านั้น, 409 ถ้ามีแล้ว). "
+        "การอนุมัติและเปลี่ยนสถานะใช้ POST /approve-case แยก"
+    ),
+)
+async def create_article_for_staff(
+    body: ArticleCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ArticleRead:
+    applicant = await session.get(Applicant, body.applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    if await get_article_by_applicant_id(session, body.applicant_id) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="article_already_exists")
+
+    article_fields = body.model_dump(exclude={"applicant_id"}, exclude_none=True)
+    article = await upsert_article(session, body.applicant_id, article_fields)
+    await session.commit()
+    await session.refresh(article)
+    return ArticleRead.model_validate(article)
+
+
+@router.patch(
+    "/article",
+    response_model=ArticleRead,
+    summary="อัปเดต article (ไม่เปลี่ยนสถานะ/approve_case)",
+    description="แก้ไขฟิลด์เนื้อหา article อย่างเดียว — 404 เมื่อยังไม่มี article",
+)
+async def patch_article_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: ArticleUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> ArticleRead:
+    if await get_article_by_applicant_id(session, applicant_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="article_not_found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        row = await get_article_by_applicant_id(session, applicant_id)
+        assert row is not None
+        return ArticleRead.model_validate(row)
+
+    row = await upsert_article(session, applicant_id, updates)
+    await session.commit()
+    await session.refresh(row)
+    return ArticleRead.model_validate(row)
+
+
 @router.post(
     "/approve-case",
     response_model=ApproveCaseRead,
@@ -1599,32 +1615,15 @@ async def create_approve_case_for_staff(
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
-    # 1. บันทึกลายเซ็นลง Disk แทนการยัด Base64 ลง DB โดยตรง เพื่อแก้ปัญหา DB Bloat
-    final_esign = _save_esignature_base64(body.applicant_id, body.esignature)
-
-    row = ApproveCase(
+    article_id = await resolve_article_id_for_applicant(session, body.applicant_id)
+    row, status_log, current_status = await record_approve_case_with_status(
+        session,
         applicant_id=body.applicant_id,
         approve_status=body.approve_status,
-        esignature=final_esign,
+        esignature=body.esignature,
         user_sdshv=body.user_sdshv,
+        article_id=article_id,
     )
-    session.add(row)
-
-    # 2. อัปเดตประวัติสถานะ (Workflow Auto-transition)
-    # อนุมัติ (True) -> ID 3: อยู่ระหว่างการเบิก
-    # ปฏิเสธ (False) -> ID 8: ดำเนินการแก้ไขข้อมูล
-    new_status_id = 3 if body.approve_status else 8
-    current_status = await _get_row(session, CurrentStatus, new_status_id)
-    if current_status is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
-    status_log = WelfareRequestStatus(
-        applicant_id=body.applicant_id,
-        current_status_id=new_status_id,
-        remarks="บันทึกผลการอนุมัติเคสสำเร็จ" if body.approve_status else "ปฏิเสธคำร้องขอสวัสดิการ",
-        update_by_sdshv=body.user_sdshv,
-    )
-    session.add(status_log)
-
     await session.commit()
     await enqueue_status_email(
         session,
@@ -1636,7 +1635,6 @@ async def create_approve_case_for_staff(
     )
     await session.refresh(row)
 
-    # ดึงข้อมูลและแปลง File Path กลับไปเป็น Base64 เพื่อรักษาความเข้ากันได้หน้าบ้านเดิม
     res_data = ApproveCaseRead.model_validate(row)
     res_data.esignature = _load_esignature_base64(res_data.esignature)
     return res_data

@@ -21,6 +21,7 @@ class ApproveCaseCreate(ApproveCaseBase):
 
 class ApproveCaseRead(ApproveCaseBase):
     id: int
+    article_id: int | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

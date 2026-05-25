@@ -14,6 +14,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
+    from .article import Article
     from .lookup import AttachmentType
 
 
@@ -28,11 +29,17 @@ class ApproveCase(Base):
         nullable=False,
         index=True,
     )
+    article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("article.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     approve_status: Mapped[bool] = mapped_column(default=False, nullable=False)
     esignature: Mapped[str | None] = mapped_column(Text)
     user_sdshv: Mapped[str | None] = mapped_column(String(255))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="approve_cases")
+    article: Mapped["Article | None"] = relationship(back_populates="approve_cases")
 
 
 class WelfareDdaRef(Base):
