@@ -37,6 +37,8 @@ services:
       ]
 
   notification-service:
+    # ไม่โหลด notification-service/.env (มักตั้ง Gmail) — ใช้ Mailpit ใน dev เท่านั้น
+    env_file: []
     depends_on:
       - mailpit
     environment:
@@ -46,6 +48,8 @@ services:
       - EMAIL_AUTO_SEND=true
       - SMTP_HOST=mailpit
       - SMTP_PORT=1025
+      - SMTP_USER=
+      - SMTP_PASSWORD=
       - SMTP_USE_TLS=false
       - SMTP_USE_SSL=false
       - FRONTEND_URL=http://localhost:5173/
