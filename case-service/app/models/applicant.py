@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .economic import EconomicInfo
     from .intake import CaseHandling
     from .lookup import BankName, MaritalStatusType, RequesterRelationType, TypeMoneyCategory
+    from .mso_send import SendData
     from .payment import ApproveCase, WelfarePayment
     from .person import Person
     from .satisfaction import SatisfactionSurvey
@@ -163,5 +164,9 @@ class Applicant(Base):
         cascade="all, delete-orphan",
     )
     satisfaction_surveys: Mapped[list["SatisfactionSurvey"]] = relationship(
+        cascade="all, delete-orphan",
+    )
+    send_data_rows: Mapped[list["SendData"]] = relationship(
+        back_populates="applicant",
         cascade="all, delete-orphan",
     )

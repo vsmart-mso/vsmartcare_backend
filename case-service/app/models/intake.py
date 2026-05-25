@@ -8,6 +8,8 @@
   - CasePayment             (วิธีจ่ายเงินตอนรับเรื่อง หน้า 13)
   - CaseKtbCorporate        (ข้อมูล KTB Corporate หน้า 20)
   - type_money (lookup)     FK บน case_handling.type_money_id
+  - more_mso (mso_send)     1:1 case_handling
+  - type_send, send_data    (mso_send) ส่งข้อมูลออกระบบ
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from ..core.base import Base
 if TYPE_CHECKING:
     from .applicant import Applicant
     from .lookup import BankAccountType, BankName, TypeMoney, TypeMoneyCategory
+    from .mso_send import MoreMso
     from .person import Person
 
 
@@ -131,6 +134,11 @@ class CaseHandling(Base):
         cascade="all, delete-orphan",
     )
     ktb_corporate: Mapped["CaseKtbCorporate | None"] = relationship(
+        back_populates="case_handling",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    more_mso: Mapped["MoreMso | None"] = relationship(
         back_populates="case_handling",
         uselist=False,
         cascade="all, delete-orphan",

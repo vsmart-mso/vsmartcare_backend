@@ -15,6 +15,7 @@ from .intake import (
     KtbRecipientCategory,
     PaymentMethod,
 )
+from .mso_send import MoreMso, SendData, TypeSend
 from .lookup import (
     AddressType,
     AttachmentType,
@@ -69,6 +70,7 @@ __all__ = [
     "KtbNotifyChannel",
     "KtbRecipientCategory",
     "MaritalStatusType",
+    "MoreMso",
     "OcrResult",
     "PaymentMethod",
     "Person",
@@ -81,10 +83,12 @@ __all__ = [
     "RequestType",
     "RequesterRelationType",
     "ScreeningLog",
+    "SendData",
     "SubDistrict",
     "SubDistrictPostcode",
     "TypeMoney",
     "TypeMoneyCategory",
+    "TypeSend",
     "WelfareDdaRef",
     "WelfareEvidence",
     "WelfareHistory",
