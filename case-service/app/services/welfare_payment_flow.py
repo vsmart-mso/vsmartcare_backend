@@ -98,6 +98,25 @@ async def get_037_payment_row(
     )
 
 
+async def get_037_payment_row_by_batch(
+    session: AsyncSession,
+    applicant_id: int,
+    dda_ref_id: int,
+    upload_batch_id: object,
+) -> WelfarePayment | None:
+    return await session.scalar(
+        select(WelfarePayment)
+        .where(
+            WelfarePayment.applicant_id == applicant_id,
+            WelfarePayment.dda_ref_id == dda_ref_id,
+            WelfarePayment.is_037_or_038.is_(False),
+            WelfarePayment.upload_batch_id == upload_batch_id,
+        )
+        .order_by(WelfarePayment.id.desc())
+        .limit(1),
+    )
+
+
 async def get_038_target_for_upload(
     session: AsyncSession,
     applicant_id: int,
@@ -124,11 +143,7 @@ async def get_or_create_037_row_for_upload(
     applicant_id: int,
     dda_ref_id: int,
 ) -> WelfarePayment:
-    """แถว 037 สำหรับผูกไฟล์ — ไม่ใช้แถว 038 ล่าสุด."""
-    existing = await get_037_payment_row(session, applicant_id, dda_ref_id)
-    if existing is not None:
-        return existing
-
+    """แถว 037 สำหรับผูกไฟล์ — ใช้แถวเปิด หรือสร้างรอบ 037 ใหม่."""
     open_row = await get_open_payment_row(session, applicant_id, dda_ref_id)
     if open_row is not None:
         return open_row
@@ -189,7 +204,12 @@ async def apply_037_update(
     """บันทึก 037 ครั้งเดียวต่อรอบ DDA — INSERT แถวใหม่ ไม่ PATCH ทับแถว 038."""
     dda_ref_id = await resolve_dda_ref_id_for_037(session, applicant_id)
 
-    existing_037 = await get_037_payment_row(session, applicant_id, dda_ref_id)
+    batch_id = updates.get("upload_batch_id")
+    if batch_id is not None:
+        existing_037 = await get_037_payment_row_by_batch(session, applicant_id, dda_ref_id, batch_id)
+    else:
+        existing_037 = None
+
     if existing_037 is not None:
         _apply_fields(existing_037, updates)
         existing_037.is_037_or_038 = False
@@ -231,6 +251,16 @@ async def apply_payment_update_by_id(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
 
     type_flag = updates.get("is_037_or_038")
+    if (
+        type_flag is not None
+        and payment.is_037_or_038 is not None
+        and type_flag != payment.is_037_or_038
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="welfare_payment_type_change_not_allowed",
+        )
+
     _apply_fields(payment, updates)
     if type_flag is not None:
         payment.is_037_or_038 = type_flag
