@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -488,6 +488,17 @@ class WelfareEditRequestCreateBody(BaseModel):
     update_by_sdshv: Optional[str] = Field(None, max_length=255)
     remarks: Optional[str] = None
     comments: list[WelfareReviewCommentCreateBody] = Field(..., min_length=1)
+
+
+class MsoForwardCreateBody(BaseModel):
+    send_channel: Literal["ministry", "logbook"] = Field(
+        ...,
+        description="`ministry` = ส่งต่อเข้าหระทรวง, `logbook` = ส่งต่อ MSO logbook",
+    )
+    send_by_sdshv: Optional[str] = Field(None, max_length=255)
+    json_case: Optional[dict[str, Any]] = None
+    response_code: Optional[str] = Field(None, max_length=255)
+    response_text: Optional[str] = None
 
 
 class MoreMsoUpsertBody(BaseModel):
@@ -1248,6 +1259,41 @@ async def upsert_more_mso_for_staff(
     base = settings.case_service_url.rstrip("/")
     payload = body.model_dump(mode="json")
     return await _put(f"{base}/v1/case_for_staff/applicant/{applicant_id}/more-mso", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/mso-forward-status",
+    tags=["case_for_staff"],
+    summary="ตรวจสถานะการส่งต่อกระทรวง / MSO logbook",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff/applicant/{applicant_id}/mso-forward-status` — "
+        "ใช้ disabled ปุ่มส่งต่อเมื่อ `ministry.sent` หรือ `logbook.sent` เป็น true"
+    ),
+    dependencies=_v1_api_key,
+)
+async def get_mso_forward_status_for_staff(applicant_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/applicant/{applicant_id}/mso-forward-status")
+
+
+@router.post(
+    "/v1/case_for_staff/applicant/{applicant_id}/mso-forward",
+    tags=["case_for_staff"],
+    status_code=201,
+    summary="บันทึกการส่งต่อ (กระทรวง หรือ MSO logbook)",
+    description=(
+        "ส่งต่อ `POST …/v1/case_for_staff/applicant/{applicant_id}/mso-forward` — "
+        "body ใช้ `send_channel`: `ministry` | `logbook`"
+    ),
+    dependencies=_v1_api_key,
+)
+async def create_mso_forward_for_staff(
+    applicant_id: int,
+    body: MsoForwardCreateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(mode="json")
+    return await _post(f"{base}/v1/case_for_staff/applicant/{applicant_id}/mso-forward", json=payload)
 
 
 @router.get(

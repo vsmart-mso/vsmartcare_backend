@@ -41,6 +41,7 @@ from ...constants.current_status import (
     CURRENT_STATUS_PENDING_INTAKE,
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
+    CURRENT_STATUS_MSO_FORWARDED,
 )
 from ...services.file_payment_upload import (
     ATTACHMENT_PDF_037_ID,
@@ -54,7 +55,11 @@ from ...services.payment_round_metrics import (
 )
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
-from ...services.citizen_status_email_policy import CitizenStatusEmailTrigger, fetch_previous_status_id
+from ...services.citizen_status_email_policy import (
+    CitizenStatusEmailTrigger,
+    fetch_latest_status_id,
+    fetch_previous_status_id,
+)
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
     enqueue_payment_037_upload_email,
@@ -105,10 +110,15 @@ from ...schemas.case_for_staff import (
     PorKor1WelfareHistoryRead,
     PorKor1WelfareRequestStatusSection,
     PorKor1WelfareRequestTypeItem,
+    MsoForwardCreate,
+    MsoForwardRead,
+    MsoForwardStatusRead,
     SendDataCreate,
     SendDataRead,
     TypeSendRead,
 )
+from ...constants.type_send import TYPE_SEND_ID_TO_CHANNEL
+from ...services.mso_forward import fetch_mso_forward_status, record_mso_forward
 from ...schemas.case_welfare import WelfareCaseRead
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
@@ -1914,4 +1924,101 @@ async def create_send_data(
     await session.commit()
     await session.refresh(row)
     return SendDataRead.model_validate(row)
+
+
+# ---------------------------------------------------------------------------
+# MSO forward — ส่งต่อกระทรวง / MSO logbook (คีย์ send_channel)
+# ---------------------------------------------------------------------------
+
+
+def _mso_forward_read_from_row(row: SendData) -> MsoForwardRead:
+    channel = TYPE_SEND_ID_TO_CHANNEL[row.type_send_id]
+    return MsoForwardRead(
+        id=row.id,
+        applicant_id=row.applicant_id,
+        send_channel=channel,
+        type_send_id=row.type_send_id,
+        send_by_sdshv=row.send_by_sdshv,
+        json_case=row.json_case,
+        response_code=row.response_code,
+        response_text=row.response_text,
+    )
+
+
+@router.get(
+    "/applicant/{applicant_id}/mso-forward-status",
+    response_model=MsoForwardStatusRead,
+    summary="ตรวจว่าส่งต่อกระทรวง / MSO logbook แล้วหรือยัง",
+)
+async def get_mso_forward_status(
+    applicant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> MsoForwardStatusRead:
+    data = await fetch_mso_forward_status(session, applicant_id)
+    return MsoForwardStatusRead.model_validate(data)
+
+
+@router.post(
+    "/applicant/{applicant_id}/mso-forward",
+    response_model=MsoForwardRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึกการส่งต่อ (กระทรวง หรือ MSO logbook)",
+)
+async def create_mso_forward(
+    applicant_id: int,
+    body: MsoForwardCreate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> MsoForwardRead:
+    row = await record_mso_forward(
+        session,
+        applicant_id=applicant_id,
+        send_channel=body.send_channel,
+        send_by_sdshv=body.send_by_sdshv,
+        json_case=body.json_case,
+        response_code=body.response_code,
+        response_text=body.response_text,
+    )
+
+    status_log: WelfareRequestStatus | None = None
+    if body.send_channel == "ministry":
+        latest_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
+        if latest_status_id != CURRENT_STATUS_MSO_FORWARDED:
+            applicant = await session.get(Applicant, applicant_id)
+            if applicant is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="applicant_not_found",
+                )
+            current_status = await session.get(CurrentStatus, CURRENT_STATUS_MSO_FORWARDED)
+            if current_status is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="current_status_not_found",
+                )
+
+            status_log = WelfareRequestStatus(
+                applicant_id=applicant_id,
+                current_status_id=CURRENT_STATUS_MSO_FORWARDED,
+                remarks="ส่งต่อข้อมูลเข้ากระทรวงเรียบร้อยแล้ว",
+                update_by_sdshv=body.send_by_sdshv,
+            )
+            session.add(status_log)
+            await session.flush()
+
+            # status id 11 ไม่ได้อยู่ในกลุ่ม freeze ของ SLA
+            maybe_freeze_process_sla_for_status(applicant, CURRENT_STATUS_MSO_FORWARDED)
+
+    await session.commit()
+
+    if status_log is not None:
+        await enqueue_status_email(
+            session,
+            applicant_id=status_log.applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            current_status_color=None,
+            remarks=status_log.remarks,
+        )
+
+    return _mso_forward_read_from_row(row)
 

@@ -17,5 +17,8 @@ CURRENT_STATUS_EDIT_REQUESTED: Final[int] = 8
 # อยู่ระหว่างการเบิก (หลังบันทึกผลจ่าย 037) — ประชาชนเห็น "เบิกจ่ายสำเร็จ"
 CURRENT_STATUS_WITHDRAWING = 10
 
+# ส่งต่อข้อมูลเรียบร้อยแล้ว (ฝั่งกระทรวง) — ใช้ใน workflow MSO forward
+CURRENT_STATUS_MSO_FORWARDED: Final[int] = 11
+
 # ข้อความสถานะสาธารณะสำหรับอีเมล "เบิกจ่ายสำเร็จ" (id 10 และ ช่วยเหลือแล้ว+037)
 PUBLIC_STATUS_PAYMENT_SUCCESS: Final[str] = "เบิกจ่ายสำเร็จ"
