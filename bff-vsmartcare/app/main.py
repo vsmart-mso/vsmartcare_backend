@@ -247,6 +247,15 @@ async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Di
         return r.json()
 
 
+async def _put(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+    """ยิง HTTP PUT JSON; ถ้า status >= 400 จะยก HTTPException."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.put(url, json=_json_safe_payload(json))
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
+        return r.json()
+
+
 async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -479,6 +488,26 @@ class WelfareEditRequestCreateBody(BaseModel):
     update_by_sdshv: Optional[str] = Field(None, max_length=255)
     remarks: Optional[str] = None
     comments: list[WelfareReviewCommentCreateBody] = Field(..., min_length=1)
+
+
+class MoreMsoUpsertBody(BaseModel):
+    follow_date: Optional[str] = Field(None, max_length=255)
+    help_number: Optional[str] = Field(None, max_length=255)
+    help_date: Optional[date] = None
+    approve_name: Optional[str] = Field(None, max_length=255)
+    approve_number: Optional[str] = Field(None, max_length=255)
+    approve_date: Optional[date] = None
+    receive_date: Optional[date] = None
+    cashier: Optional[str] = Field(None, max_length=255)
+    cashier_name: Optional[str] = Field(None, max_length=255)
+    follower_name: Optional[str] = Field(None, max_length=255)
+    follower_position_vsmart_id: Optional[str] = Field(None, max_length=255)
+    follower_department_vsmart_id: Optional[str] = Field(None, max_length=255)
+    follower_tel: Optional[str] = Field(None, max_length=255)
+    follower_date: Optional[date] = None
+    follower_result: Optional[str] = None
+    follower_method: Optional[int] = None
+    follower_type: Optional[int] = None
 
 
 def _case_for_staff_finance_query_pairs(
@@ -1191,6 +1220,34 @@ async def patch_article_for_staff(
         f"{base}/v1/case_for_staff/article?applicant_id={applicant_id}",
         json=payload,
     )
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/more-mso",
+    tags=["case_for_staff"],
+    summary="ดึงข้อมูล MSO เพิ่มเติมของ applicant",
+    description="ส่งต่อ `GET …/v1/case_for_staff/applicant/{applicant_id}/more-mso` — คืน null ถ้ายังไม่มี",
+    dependencies=_v1_api_key,
+)
+async def get_more_mso_for_staff(applicant_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/applicant/{applicant_id}/more-mso")
+
+
+@router.put(
+    "/v1/case_for_staff/applicant/{applicant_id}/more-mso",
+    tags=["case_for_staff"],
+    summary="สร้างหรืออัปเดตข้อมูล MSO เพิ่มเติม (upsert)",
+    description="ส่งต่อ `PUT …/v1/case_for_staff/applicant/{applicant_id}/more-mso` — upsert แถว more_mso",
+    dependencies=_v1_api_key,
+)
+async def upsert_more_mso_for_staff(
+    applicant_id: int,
+    body: MoreMsoUpsertBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(mode="json")
+    return await _put(f"{base}/v1/case_for_staff/applicant/{applicant_id}/more-mso", json=payload)
 
 
 @router.get(
