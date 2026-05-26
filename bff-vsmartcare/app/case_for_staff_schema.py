@@ -14,6 +14,7 @@ ProcessTrafficColor = Literal["green", "yellow", "orange", "red"]
 
 class ProcessSlaFields(BaseModel):
     process_started_at: datetime | None = None
+    process_completed_at: datetime | None = None
     process_sla_days: int | None = Field(None, ge=1)
     process_elapsed_days: int | None = Field(None, ge=0)
     process_remaining_days: int | None = None
