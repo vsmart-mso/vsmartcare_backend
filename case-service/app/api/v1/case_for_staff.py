@@ -33,6 +33,7 @@ from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePa
 from ...services.process_sla import (
     apply_emergency_flag_for_money_category,
     apply_process_sla_to_applicant,
+    maybe_freeze_process_sla_for_status,
     process_sla_fields_dict,
 )
 from ...constants.current_status import (
@@ -140,11 +141,25 @@ def _person_age_from_birth_date(birth_date: date) -> int:
     return max(age, 0)
 
 
+def _process_sla_fields_from_applicant(applicant: Applicant) -> dict[str, object]:
+    completed_at = applicant.process_completed_at
+    return process_sla_fields_dict(
+        applicant.process_started_at,
+        applicant.process_sla_days,
+        completed_at=completed_at,
+        frozen_elapsed=applicant.time_count_process if completed_at is not None else None,
+    )
+
+
 def _enrich_row_process_sla(data: dict[str, object]) -> None:
+    completed_at = data.get("process_completed_at")  # type: ignore[arg-type]
+    frozen = data.get("time_count_process") if completed_at is not None else None
     data.update(
         process_sla_fields_dict(
             data.get("process_started_at"),  # type: ignore[arg-type]
             data.get("process_sla_days"),  # type: ignore[arg-type]
+            completed_at=completed_at,
+            frozen_elapsed=frozen if isinstance(frozen, int) else None,  # type: ignore[arg-type]
         ),
     )
 
@@ -222,7 +237,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         sw_explorer_sdshv=orm.sw_explorer_sdshv,
         applicant_created_at=orm.created_at,
         applicant_updated_at=orm.updated_at,
-        **process_sla_fields_dict(orm.process_started_at, orm.process_sla_days),
+        **_process_sla_fields_from_applicant(orm),
     )
 
     person_orm = orm.person
@@ -436,6 +451,10 @@ async def _apply_037_status_if_needed(
         update_by_sdshv=updates.get("user_sdshv"),
     )
     session.add(status_log)
+    if target_status_id == CURRENT_STATUS_WITHDRAWING:
+        applicant = await session.get(Applicant, applicant_id)
+        if applicant is not None:
+            maybe_freeze_process_sla_for_status(applicant, target_status_id)
     return status_log, status_row
 
 
@@ -522,6 +541,7 @@ async def list_cases_for_staff(
             Applicant.is_existing_case.label("is_existing_case"),
             Applicant.process_started_at.label("process_started_at"),
             Applicant.process_sla_days.label("process_sla_days"),
+            Applicant.process_completed_at.label("process_completed_at"),
             Province.id.label("province_id"),
             Province.name.label("province_name"),
             District.id.label("district_id"),
@@ -716,6 +736,7 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.is_existing_case.label("is_existing_case"),
             Applicant.process_started_at.label("process_started_at"),
             Applicant.process_sla_days.label("process_sla_days"),
+            Applicant.process_completed_at.label("process_completed_at"),
             Province.id.label("province_id"),
             Province.name.label("province_name"),
             District.id.label("district_id"),
@@ -1358,7 +1379,7 @@ async def update_applicant_staff_fields_for_staff(
         sw_explorer_sdshv=applicant.sw_explorer_sdshv,
         is_emergency=applicant.is_emergency,
         updated_at=applicant.updated_at,
-        **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
+        **_process_sla_fields_from_applicant(applicant),
     )
 
 
@@ -1391,6 +1412,8 @@ async def create_welfare_request_status_for_staff(
     )
     session.add(log)
     await session.flush()
+
+    maybe_freeze_process_sla_for_status(applicant, body.current_status_id)
 
     previous_status_id = await fetch_previous_status_id(
         session,

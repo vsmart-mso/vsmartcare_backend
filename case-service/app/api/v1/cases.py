@@ -138,7 +138,14 @@ async def applicant_to_display_read(applicant: Applicant) -> CaseDisplayRead:
         is_existing_case=applicant.is_existing_case,
         current_status=CurrentStatusRead.model_validate(status) if status is not None else None,
         description_public=status.description_public if status is not None else None,
-        **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
+        **process_sla_fields_dict(
+            applicant.process_started_at,
+            applicant.process_sla_days,
+            completed_at=applicant.process_completed_at,
+            frozen_elapsed=applicant.time_count_process
+            if applicant.process_completed_at is not None
+            else None,
+        ),
     )
 
 
@@ -182,7 +189,14 @@ async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> We
     applicant_read = ApplicantRead.model_validate(
         {
             **ApplicantRead.model_validate(applicant).model_dump(),
-            **process_sla_fields_dict(applicant.process_started_at, applicant.process_sla_days),
+            **process_sla_fields_dict(
+                applicant.process_started_at,
+                applicant.process_sla_days,
+                completed_at=applicant.process_completed_at,
+                frozen_elapsed=applicant.time_count_process
+                if applicant.process_completed_at is not None
+                else None,
+            ),
         },
     )
     return WelfareCaseRead(
@@ -486,6 +500,8 @@ async def update_welfare_case(
         if a.reset_processing_state:
             applicant_row.process_started_at     = None
             applicant_row.process_sla_days       = None
+            applicant_row.process_completed_at   = None
+            applicant_row.time_count_process     = None
             applicant_row.type_money_category_id = None
 
     # ── Replace addresses ────────────────────────────────────────────────────────

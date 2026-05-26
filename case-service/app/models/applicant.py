@@ -100,6 +100,10 @@ class Applicant(Base):
         nullable=True,
     )
     process_sla_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    process_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     is_emergency: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_existing_case: Mapped[bool] = mapped_column(default=False, nullable=False)
