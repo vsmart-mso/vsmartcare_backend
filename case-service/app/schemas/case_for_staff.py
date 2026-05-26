@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -438,4 +438,55 @@ class SendDataCreate(BaseModel):
     send_by_sdshv: str | None = Field(None, max_length=255)
     json_case: dict[str, Any] | None = None
     response_code: str | None = Field(None, max_length=255)
+    response_text: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# MSO forward — ส่งต่อกระทรวง / MSO logbook (อ้างอิง send_data + type_send)
+# ---------------------------------------------------------------------------
+
+MsoForwardChannelLiteral = Literal["ministry", "logbook"]
+
+
+class MsoForwardCreate(BaseModel):
+    """บันทึกการส่งต่อ — ใช้ send_channel แทน type_send_id."""
+
+    send_channel: MsoForwardChannelLiteral = Field(
+        ...,
+        description="`ministry` = ส่งต่อเข้าหระทรวง (type_send_id=1), `logbook` = ส่งต่อ MSO logbook (type_send_id=2)",
+    )
+    send_by_sdshv: str | None = Field(None, max_length=255)
+    json_case: dict[str, Any] | None = Field(
+        None,
+        description="payload ที่ส่งออก (เก็บ audit)",
+    )
+    response_code: str | None = Field(None, max_length=255)
+    response_text: str | None = None
+
+
+class MsoForwardChannelStatus(BaseModel):
+    send_channel: MsoForwardChannelLiteral
+    type_send_id: int
+    sent: bool = Field(..., description="true ถ้ามีแถว send_data ของช่องทางนี้แล้ว (อย่างน้อย 1 ครั้ง)")
+    latest_send_data_id: int | None = None
+
+
+class MsoForwardStatusRead(BaseModel):
+    applicant_id: int
+    ministry: MsoForwardChannelStatus
+    logbook: MsoForwardChannelStatus
+
+
+class MsoForwardRead(BaseModel):
+    """ผลลัพธ์หลังบันทึกการส่งต่อ."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    applicant_id: int
+    send_channel: MsoForwardChannelLiteral
+    type_send_id: int
+    send_by_sdshv: str | None = None
+    json_case: dict[str, Any] | None = None
+    response_code: str | None = None
     response_text: str | None = None
