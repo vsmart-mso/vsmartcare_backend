@@ -50,12 +50,12 @@ def resolve_process_sla_days(
     is_existing_case: bool = False,
     bank_code: str | None = None,  # noqa: ARG001 — คงพารามิเตอร์เดิม ไม่ใช้แล้ว
 ) -> int | None:
-    """คืนจำนวนวัน SLA — สป.=7, ดย.=10, อื่น=10 (รายเดิม) หรือ 15 (รายใหม่)."""
+    """คืนจำนวนวัน SLA — สป.=10, ดย.=10, อื่น=10 (รายเดิม) หรือ 15 (รายใหม่)."""
     acronym = normalize_money_acronym(name_acronym)
     if not acronym:
         return None
     if acronym == _ACRONYM_SOP:
-        return 7
+        return 10
     if acronym == _ACRONYM_DOY:
         return 10
     return 10 if is_existing_case else 15
