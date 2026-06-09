@@ -61,6 +61,14 @@ class CaseForStaffRead(ProcessSlaFields):
         False,
         description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
     )
+    is_pmj_rejected: bool = Field(
+        False,
+        description="true เมื่อ approve_case ล่าสุดของ applicant เป็น approve_status=false",
+    )
+    pmj_reject_reason: str | None = Field(
+        None,
+        description="เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก approve_case ล่าสุด",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):

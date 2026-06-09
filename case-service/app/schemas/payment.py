@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ApproveCaseBase(BaseModel):
@@ -13,10 +13,27 @@ class ApproveCaseBase(BaseModel):
     approve_status: bool = False
     esignature: str | None = None
     user_sdshv: str | None = Field(None, max_length=255)
+    reject_reason: str | None = Field(
+        None,
+        min_length=1,
+        description="เหตุผลที่ พมจ. ไม่อนุมัติ บังคับเมื่อ approve_status=false",
+    )
 
 
 class ApproveCaseCreate(ApproveCaseBase):
-    pass
+    @model_validator(mode="after")
+    def validate_reject_reason(self) -> "ApproveCaseCreate":
+        if self.approve_status:
+            if self.reject_reason and self.reject_reason.strip():
+                raise ValueError("reject_reason_must_be_empty_when_approved")
+            self.reject_reason = None
+            return self
+
+        reason = (self.reject_reason or "").strip()
+        if not reason:
+            raise ValueError("reject_reason_required")
+        self.reject_reason = reason
+        return self
 
 
 class ApproveCaseRead(ApproveCaseBase):
