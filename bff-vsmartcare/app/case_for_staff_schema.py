@@ -61,6 +61,8 @@ class CaseForStaffRead(ProcessSlaFields):
         False,
         description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
     )
+    previous_status_id: Optional[int] = Field(None)
+    is_return_edit_resubmitted: bool = Field(False)
     is_pmj_rejected: bool = Field(
         False,
         description="true เมื่อ approve_case ล่าสุดของ applicant เป็น approve_status=false",

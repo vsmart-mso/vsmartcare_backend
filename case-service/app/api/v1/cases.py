@@ -26,6 +26,7 @@ from ...models.intake import CaseHandling
 from ...models.lookup import BankAccountType, BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
+from ...models.review import WelfareReviewComment
 from ...models.payment import WelfarePayment
 from ...services.payment_round_metrics import applicant_payment_metrics
 from ...models.welfare import (
@@ -109,6 +110,9 @@ def _applicant_load_options():  # noqa: ANN001
         .selectinload(WelfareHistoryDetail.received_welfare_type),
         selectinload(Applicant.welfare_evidences).selectinload(WelfareEvidence.attachment_type),
         selectinload(Applicant.status_logs).selectinload(WelfareRequestStatus.current_status),
+        selectinload(Applicant.status_logs)
+        .selectinload(WelfareRequestStatus.review_comments)
+        .selectinload(WelfareReviewComment.review_field),
     ]
 
 
