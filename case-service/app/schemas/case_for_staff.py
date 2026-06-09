@@ -21,6 +21,7 @@ from .welfare import (
     WelfareHistoryRead,
     WelfareRequestTypeRead,
 )
+from .review import ReviewFieldRead
 
 
 class CaseForStaffRead(ProcessSlaFields):
@@ -70,6 +71,14 @@ class CaseForStaffRead(ProcessSlaFields):
     is_approved: bool = Field(
         False,
         description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
+    )
+    previous_status_id: int | None = Field(
+        None,
+        description="current_status_id ของ log ก่อนหน้า (rn=2) — null เมื่อมีสถานะเดียว",
+    )
+    is_return_edit_resubmitted: bool = Field(
+        False,
+        description="true เมื่อ current_status_id=1 และ previous_status_id=8 (ประชาชนแก้กลับมาหลังถูกตีกลับ)",
     )
 
 
@@ -306,6 +315,22 @@ class PorKor1WelfareRequestStatusSection(BaseModel):
     history: list[WelfareRequestStatusRead] = Field(default_factory=list)
 
 
+class ReturnEditCommentItem(BaseModel):
+    """หนึ่งรายการ field ที่เคยถูกส่งกลับแก้ไข พร้อมเหตุผลและ step."""
+
+    review_field_id: int
+    label: str = Field(..., description="ชื่อ field จาก review_field.label")
+    step: int = Field(..., description="ขั้นตอนที่ field อยู่ (1-4)")
+    reason: str = Field(..., description="เหตุผลที่เจ้าหน้าที่กรอกตอนตีกลับ")
+
+
+class PorKor1ReturnEditSection(BaseModel):
+    """ข้อมูลการส่งกลับแก้ไขล่าสุด — comments ต่อ field + remarks รวม."""
+
+    comments: list[ReturnEditCommentItem] = Field(default_factory=list)
+    remarks: str | None = Field(None, description="หมายเหตุรวมจากเจ้าหน้าที่ (welfare_request_status.remarks)")
+
+
 class PorKor1EvidenceItem(BaseModel):
     """หลักฐานแนบหนึ่งไฟล์ พร้อมชื่อประเภทเอกสารและ path สำหรับ GET รูป."""
 
@@ -350,6 +375,12 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
     evidences: list[PorKor1EvidenceItem] = Field(
         default_factory=list,
         description="หลักฐานแนบ (รูป) พร้อม path สำหรับนำไปแสดง",
+    )
+    return_edit: PorKor1ReturnEditSection | None = Field(
+        None,
+        description=(
+            "ข้อมูลการส่งกลับแก้ไขล่าสุด (status 8) — null เมื่อไม่เคยถูกตีกลับหรือ review_comments ว่าง"
+        ),
     )
 
 

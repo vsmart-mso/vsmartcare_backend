@@ -28,6 +28,14 @@ class WelfareReviewCommentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WelfareReviewCommentWithFieldRead(BaseModel):
+    id: int
+    reason: str
+    review_field: ReviewFieldRead | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WelfareEditRequestCreate(BaseModel):
     applicant_id: int = Field(..., ge=1)
     update_by_sdshv: str | None = None

@@ -43,6 +43,7 @@ from ...constants.current_status import (
     CURRENT_STATUS_WITHDRAWING_APPROVED,
     CURRENT_STATUS_MSO_FORWARDED,
 )
+from ...models.review import WelfareReviewComment
 from ...services.file_payment_upload import (
     ATTACHMENT_PDF_037_ID,
     file_payment_upload_root,
@@ -110,6 +111,8 @@ from ...schemas.case_for_staff import (
     PorKor1WelfareHistoryRead,
     PorKor1WelfareRequestStatusSection,
     PorKor1WelfareRequestTypeItem,
+    PorKor1ReturnEditSection,
+    ReturnEditCommentItem,
     MsoForwardCreate,
     MsoForwardRead,
     MsoForwardStatusRead,
@@ -179,6 +182,11 @@ def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
     if birth_date is not None:
         data["person_age"] = _person_age_from_birth_date(birth_date)  # type: ignore[arg-type]
     _enrich_row_process_sla(data)
+    current = data.get("current_status_id")
+    previous = data.get("previous_status_id")
+    data["is_return_edit_resubmitted"] = (
+        current == CURRENT_STATUS_PENDING_INTAKE and previous == CURRENT_STATUS_EDIT_REQUESTED
+    )
 
 
 def _row_to_case_for_staff_read(row: object) -> CaseForStaffRead:
@@ -316,6 +324,37 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         history=case.welfare_request_status_logs,
     )
 
+    # ดึง return-edit comments จาก status 8 ล่าสุด
+    edit_logs = [
+        log for log in orm.status_logs
+        if log.current_status_id == CURRENT_STATUS_EDIT_REQUESTED
+    ]
+    latest_edit_log = (
+        sorted(edit_logs, key=lambda s: (s.updated_at, s.id), reverse=True)[0]
+        if edit_logs else None
+    )
+    return_edit: PorKor1ReturnEditSection | None = None
+    if latest_edit_log is not None and latest_edit_log.review_comments:
+        comments = [
+            ReturnEditCommentItem(
+                review_field_id=c.review_field_id,
+                label=c.review_field.label if c.review_field else str(c.review_field_id),
+                step=c.review_field.step if c.review_field else 0,
+                reason=c.reason,
+            )
+            for c in sorted(
+                latest_edit_log.review_comments,
+                key=lambda x: (
+                    x.review_field.step if x.review_field else 0,
+                    x.review_field.display_order if x.review_field else 0,
+                ),
+            )
+        ]
+        return_edit = PorKor1ReturnEditSection(
+            comments=comments,
+            remarks=latest_edit_log.remarks,
+        )
+
     welfare_history_section: PorKor1WelfareHistoryRead | None = None
     if case.welfare_history is not None and orm.welfare_history is not None:
         wh_orm = orm.welfare_history
@@ -360,6 +399,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         welfare_history=welfare_history_section,
         welfare_request_status=welfare_request_status,
         evidences=evidences,
+        return_edit=return_edit,
     )
 
 
@@ -508,6 +548,20 @@ async def list_cases_for_staff(
         .subquery()
     )
 
+    prev_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id.label("applicant_id"),
+            WelfareRequestStatus.current_status_id.label("previous_status_id"),
+            func.row_number()
+            .over(
+                partition_by=WelfareRequestStatus.applicant_id,
+                order_by=[WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
     primary_address_sq = (
         select(
             Address.applicant_id.label("applicant_id"),
@@ -562,6 +616,7 @@ async def list_cases_for_staff(
             Postcode.name.label("postcode"),
             have_dda_ref.label("have_dda_ref"),
             is_approved.label("is_approved"),
+            prev_status_sq.c.previous_status_id.label("previous_status_id"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -584,6 +639,13 @@ async def list_cases_for_staff(
             and_(
                 latest_status_sq.c.applicant_id == Applicant.id,
                 latest_status_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            prev_status_sq,
+            and_(
+                prev_status_sq.c.applicant_id == Applicant.id,
+                prev_status_sq.c.rn == 2,
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
