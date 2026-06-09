@@ -37,6 +37,7 @@ class ApproveCase(Base):
     approve_status: Mapped[bool] = mapped_column(default=False, nullable=False)
     esignature: Mapped[str | None] = mapped_column(Text)
     user_sdshv: Mapped[str | None] = mapped_column(String(255))
+    reject_reason: Mapped[str | None] = mapped_column(Text)
 
     applicant: Mapped["Applicant"] = relationship(back_populates="approve_cases")
     article: Mapped["Article | None"] = relationship(back_populates="approve_cases")

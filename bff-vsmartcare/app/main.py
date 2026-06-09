@@ -453,6 +453,11 @@ class ApproveCaseCreateBody(BaseModel):
     approve_status: bool = False
     esignature: Optional[str] = None
     user_sdshv: Optional[str] = Field(None, max_length=255)
+    reject_reason: Optional[str] = Field(
+        None,
+        min_length=1,
+        description="เหตุผลที่ พมจ. ไม่อนุมัติ ส่งต่อไป case-service เมื่อ approve_status=false",
+    )
 
 
 class WelfareDdaRefDetailCreateBody(BaseModel):

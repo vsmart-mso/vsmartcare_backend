@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -556,6 +556,15 @@ async def list_cases_for_staff(
             .over(
                 partition_by=WelfareRequestStatus.applicant_id,
                 order_by=[WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc()],
+    latest_approve_case_sq = (
+        select(
+            ApproveCase.applicant_id.label("applicant_id"),
+            ApproveCase.approve_status.label("latest_approve_status"),
+            ApproveCase.reject_reason.label("pmj_reject_reason"),
+            func.row_number()
+            .over(
+                partition_by=ApproveCase.applicant_id,
+                order_by=ApproveCase.id.desc(),
             )
             .label("rn"),
         )
@@ -617,6 +626,11 @@ async def list_cases_for_staff(
             have_dda_ref.label("have_dda_ref"),
             is_approved.label("is_approved"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
+            case(
+                (latest_approve_case_sq.c.latest_approve_status.is_(False), True),
+                else_=False,
+            ).label("is_pmj_rejected"),
+            latest_approve_case_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -646,6 +660,10 @@ async def list_cases_for_staff(
             and_(
                 prev_status_sq.c.applicant_id == Applicant.id,
                 prev_status_sq.c.rn == 2,
+            latest_approve_case_sq,
+            and_(
+                latest_approve_case_sq.c.applicant_id == Applicant.id,
+                latest_approve_case_sq.c.rn == 1,
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
@@ -1717,17 +1735,19 @@ async def create_approve_case_for_staff(
         approve_status=body.approve_status,
         esignature=body.esignature,
         user_sdshv=body.user_sdshv,
+        reject_reason=body.reject_reason,
         article_id=article_id,
     )
     await session.commit()
-    await enqueue_status_email(
-        session,
-        applicant_id=status_log.applicant_id,
-        status_log_id=status_log.id,
-        current_status_id=status_log.current_status_id,
-        current_status_color=current_status.color,
-        remarks=status_log.remarks,
-    )
+    if status_log is not None and current_status is not None:
+        await enqueue_status_email(
+            session,
+            applicant_id=status_log.applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            current_status_color=current_status.color,
+            remarks=status_log.remarks,
+        )
     await session.refresh(row)
 
     res_data = ApproveCaseRead.model_validate(row)
