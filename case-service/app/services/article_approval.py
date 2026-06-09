@@ -67,9 +67,10 @@ async def record_approve_case_with_status(
     approve_status: bool,
     esignature: str | None,
     user_sdshv: str | None,
+    reject_reason: str | None = None,
     article_id: int | None = None,
-) -> tuple[ApproveCase, WelfareRequestStatus, CurrentStatus]:
-    """บันทึก approve_case และ welfare_request_status (caller commit แล้ว enqueue อีเมล)."""
+) -> tuple[ApproveCase, WelfareRequestStatus | None, CurrentStatus | None]:
+    """บันทึก approve_case; reject ของ พมจ. ไม่เปลี่ยน status และไม่แจ้งประชาชน."""
     final_esign = save_esignature_base64(applicant_id, esignature)
 
     row = ApproveCase(
@@ -78,10 +79,15 @@ async def record_approve_case_with_status(
         approve_status=approve_status,
         esignature=final_esign,
         user_sdshv=user_sdshv,
+        reject_reason=reject_reason,
     )
     session.add(row)
 
-    new_status_id = 3 if approve_status else 8
+    if not approve_status:
+        await session.flush()
+        return row, None, None
+
+    new_status_id = 3
     current_status = await session.scalar(
         select(CurrentStatus).where(CurrentStatus.id == new_status_id)
     )
@@ -93,7 +99,7 @@ async def record_approve_case_with_status(
     status_log = WelfareRequestStatus(
         applicant_id=applicant_id,
         current_status_id=new_status_id,
-        remarks="บันทึกผลการอนุมัติเคสสำเร็จ" if approve_status else "ปฏิเสธคำร้องขอสวัสดิการ",
+        remarks="บันทึกผลการอนุมัติเคสสำเร็จ",
         update_by_sdshv=user_sdshv,
     )
     session.add(status_log)
