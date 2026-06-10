@@ -556,6 +556,12 @@ async def list_cases_for_staff(
             .over(
                 partition_by=WelfareRequestStatus.applicant_id,
                 order_by=[WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
     latest_approve_case_sq = (
         select(
             ApproveCase.applicant_id.label("applicant_id"),
@@ -660,6 +666,9 @@ async def list_cases_for_staff(
             and_(
                 prev_status_sq.c.applicant_id == Applicant.id,
                 prev_status_sq.c.rn == 2,
+            ),
+        )
+        .outerjoin(
             latest_approve_case_sq,
             and_(
                 latest_approve_case_sq.c.applicant_id == Applicant.id,
