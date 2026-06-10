@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field
+
+PhysicalCondition = Literal["normal", "disabled", "chronic_illness"]
 
 
 class WelfareApplicantUpsert(BaseModel):
@@ -50,6 +53,21 @@ class EconomicIncomeSourceInCase(BaseModel):
     other_details: str | None = Field(None, max_length=500)
 
 
+class HouseholdMemberInCase(BaseModel):
+    seq: int = Field(..., ge=1)
+    national_id: str | None = Field(None, max_length=13)
+    prefix_id: int | None = None
+    prefix_other: str | None = Field(None, max_length=50)
+    first_name: str = Field(..., max_length=255)
+    last_name: str = Field(..., max_length=255)
+    date_of_birth: date | None = None
+    relation_to_applicant_id: int | None = None
+    occupation: str | None = Field(None, max_length=255)
+    monthly_income: Decimal | None = None
+    physical_condition: PhysicalCondition = "normal"
+    self_care: bool = True
+
+
 class EconomicInfoInCase(BaseModel):
     housing_types_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
@@ -76,13 +94,13 @@ class WelfareCaseCreate(BaseModel):
     addresses: list[AddressInCase] = Field(default_factory=list)
     dependency_loads: list[DependencyLoadInCase] = Field(default_factory=list)
     economic_infos: list[EconomicInfoInCase] = Field(default_factory=list)
+    household_members: list[HouseholdMemberInCase] = Field(default_factory=list)
     request_type_ids: Annotated[
         list[int],
         Field(min_length=1),
     ]
-    # ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)
-    # — เพิ่มเข้ามาตามมติประชุม 2026-05-19 (textarea 10.1 ใน Step3Problem.vue)
     request_other_text: str | None = Field(None, max_length=500)
+    request_in_kind_text: str | None = Field(None, max_length=500)
     welfare_history: WelfareHistoryInCase | None = None
     initial_current_status_id: int = Field(
         1,

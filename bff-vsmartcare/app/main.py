@@ -1974,6 +1974,27 @@ async def bff_get_bank_account_type(bank_account_type_id: int):
 
 
 @router.get(
+    "/v1/lookups/household-member-relation-types",
+    tags=["lookups"],
+    summary="ความสัมพันธ์กับผู้ประสบปัญหา (บิดา/มารดา, บุตร, คู่สมรส ฯลฯ)",
+    description="ส่งต่อ `GET .../v1/lookups/household-member-relation-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_household_member_relation_types():
+    return await _get(_case_lookup_url("v1/lookups/household-member-relation-types"))
+
+
+@router.get(
+    "/v1/lookups/household-member-relation-types/{relation_type_id}",
+    tags=["lookups"],
+    summary="ดึงความสัมพันธ์กับผู้ประสบปัญหาตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_household_member_relation_type(relation_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/household-member-relation-types/{relation_type_id}"))
+
+
+@router.get(
     "/v1/geo/provinces",
     tags=["geo"],
     summary="รายการจังหวัด",

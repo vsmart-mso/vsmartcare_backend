@@ -17,7 +17,7 @@ from ..core.base import Base
 if TYPE_CHECKING:
     from .address import Address
     from .dependency import DependencyLoad
-    from .economic import EconomicInfo
+    from .economic import EconomicInfo, HouseholdMember
     from .intake import CaseHandling
     from .lookup import BankName, MaritalStatusType, RequesterRelationType, TypeMoneyCategory
     from .mso_send import SendData
@@ -132,6 +132,11 @@ class Applicant(Base):
     economic_infos: Mapped[list["EconomicInfo"]] = relationship(
         back_populates="applicant",
         cascade="all, delete-orphan",
+    )
+    household_members: Mapped[list["HouseholdMember"]] = relationship(
+        back_populates="applicant",
+        cascade="all, delete-orphan",
+        order_by="HouseholdMember.seq",
     )
     dependency_loads: Mapped[list["DependencyLoad"]] = relationship(
         back_populates="applicant",
