@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 PhysicalCondition = Literal["normal", "disabled", "chronic_illness"]
 
@@ -81,6 +81,18 @@ class HouseholdMemberCreate(HouseholdMemberBase):
 class HouseholdMemberRead(HouseholdMemberBase):
     id: int
     applicant_id: int
+    prefix: Any = Field(default=None, exclude=True)
+    relation_type: Any = Field(default=None, exclude=True)
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    @property
+    def prefix_name(self) -> str | None:
+        return self.prefix.name if self.prefix else None
+
+    @computed_field
+    @property
+    def relation_to_applicant_name(self) -> str | None:
+        return self.relation_type.name if self.relation_type else None
