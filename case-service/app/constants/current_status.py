@@ -22,3 +22,21 @@ CURRENT_STATUS_MSO_FORWARDED: Final[int] = 11
 
 # ข้อความสถานะสาธารณะสำหรับอีเมล "เบิกจ่ายสำเร็จ" (id 10 และ ช่วยเหลือแล้ว+037)
 PUBLIC_STATUS_PAYMENT_SUCCESS: Final[str] = "เบิกจ่ายสำเร็จ"
+
+# คำขอยังดำเนินการ — เข้าพอร์ทัลได้ แต่ยื่นใหม่ไม่ได้
+ACTIVE_CASE_STATUS_IDS: Final[frozenset[int]] = frozenset({
+    CURRENT_STATUS_PENDING_INTAKE,
+    CURRENT_STATUS_RECEIVED,
+    CURRENT_STATUS_WITHDRAWING_APPROVED,
+    CURRENT_STATUS_EDIT_REQUESTED,
+})
+
+# สถานะสิ้นสุด — รอ cooldown 30 วันปฏิทินจากวันส่งคำขอ
+COOLDOWN_STATUS_IDS: Final[frozenset[int]] = frozenset({
+    CURRENT_STATUS_AID_COMPLETED,
+    CURRENT_STATUS_INELIGIBLE,
+    CURRENT_STATUS_WITHDRAWING,
+    CURRENT_STATUS_MSO_FORWARDED,
+})
+
+COOLDOWN_DAYS: Final[int] = 30

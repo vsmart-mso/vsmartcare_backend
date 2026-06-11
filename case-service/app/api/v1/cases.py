@@ -38,6 +38,7 @@ from ...models.welfare import (
 from ...schemas.address import AddressRead
 from ...schemas.applicant import ApplicantRead
 from ...schemas.case_display import CaseDisplayRead
+from ...schemas.submission_eligibility import SubmissionEligibilityRead
 from ...schemas.case_welfare import (
     WelfareCaseCreate,
     WelfareCaseRead,
@@ -47,6 +48,10 @@ from ...schemas.case_welfare import (
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
+from ...services.submission_eligibility import (
+    conflict_detail_for_reason,
+    resolve_submission_eligibility,
+)
 from ...services.process_sla import process_sla_fields_dict
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
@@ -271,12 +276,31 @@ async def _ensure_type_money_category_exists(
         )
 
 
+@router.get("/submission-eligibility", response_model=SubmissionEligibilityRead)
+async def get_submission_eligibility(
+    persons_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> SubmissionEligibilityRead:
+    await _ensure_person_exists(session, persons_id)
+    result = await resolve_submission_eligibility(session, persons_id=persons_id)
+    return result.to_read()
+
+
 @router.post("", response_model=WelfareCaseRead, status_code=status.HTTP_201_CREATED)
 async def create_welfare_case(
     body: WelfareCaseCreate,
     session: AsyncSession = Depends(get_session),
 ) -> WelfareCaseRead:
     await _ensure_person_exists(session, body.applicant.persons_id)
+    eligibility = await resolve_submission_eligibility(
+        session,
+        persons_id=body.applicant.persons_id,
+    )
+    if not eligibility.can_submit:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=conflict_detail_for_reason(eligibility.reason),
+        )
     await _ensure_current_status_exists(session, body.initial_current_status_id)
     if body.applicant.bank_name_id is not None:
         await _ensure_bank_name_exists(session, body.applicant.bank_name_id)
