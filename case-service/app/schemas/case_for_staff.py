@@ -12,7 +12,7 @@ from .process_sla import ProcessSlaFields
 from .address import AddressRead
 from .applicant import ApplicantRead
 from .dependency import DependencyLoadRead
-from .economic import EconomicInfoRead
+from .economic import EconomicInfoRead, HouseholdMemberRead
 from .person import PersonRead
 from .status_log import WelfareRequestStatusRead
 from .welfare import (
@@ -367,6 +367,10 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
     economic_infos: list[PorKor1EconomicItem] = Field(
         default_factory=list,
         description="ข้อมูลทางเศรษฐกิจและรายได้",
+    )
+    household_members: list[HouseholdMemberRead] = Field(
+        default_factory=list,
+        description="รายละเอียดสมาชิกในครัวเรือน",
     )
     welfare_request_types: list[PorKor1WelfareRequestTypeItem] = Field(
         default_factory=list,
