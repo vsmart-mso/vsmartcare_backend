@@ -32,6 +32,7 @@ from .services.staff_digest_dispatch import (
     dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
+from .submission_eligibility_schema import SubmissionEligibilityRead
 from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
 
@@ -639,6 +640,23 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
     base = settings.case_service_url.rstrip("/")
     data = await _get(f"{base}/v1/cases/display?persons_id={persons_id}")
     return [CaseDisplayRead.model_validate(item) for item in data]
+
+
+@router.get(
+    "/v1/cases/submission-eligibility",
+    tags=["cases"],
+    summary="ตรวจสอบสิทธิ์ยื่นคำขอและเข้าพอร์ทัลประชาชน",
+    description=(
+        "ส่งต่อ `GET …/v1/cases/submission-eligibility?persons_id=…` — "
+        "คืน can_submit, can_access_portal, reason และวันที่ยื่นได้ครั้งถัดไป"
+    ),
+    response_model=SubmissionEligibilityRead,
+    dependencies=_v1_api_key,
+)
+async def get_submission_eligibility(persons_id: int) -> SubmissionEligibilityRead:
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/cases/submission-eligibility?persons_id={persons_id}")
+    return SubmissionEligibilityRead.model_validate(data)
 
 
 @router.get(
