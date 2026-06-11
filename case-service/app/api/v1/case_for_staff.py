@@ -124,7 +124,7 @@ from ...constants.type_send import TYPE_SEND_ID_TO_CHANNEL
 from ...services.mso_forward import fetch_mso_forward_status, record_mso_forward
 from ...schemas.case_welfare import WelfareCaseRead
 from ...schemas.dependency import DependencyLoadRead
-from ...schemas.economic import EconomicInfoRead
+from ...schemas.economic import EconomicInfoRead, HouseholdMemberRead
 from ...schemas.lookup import AttachmentTypeRead, CurrentStatusRead, TypeMoneyCategoryRead
 from ...schemas.person import PersonRead
 from ...models.review import ReviewField, WelfareReviewComment
@@ -305,6 +305,11 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         for e in sorted(orm.economic_infos, key=lambda x: x.id)
     ]
 
+    household_members = [
+        HouseholdMemberRead.model_validate(m)
+        for m in sorted(orm.household_members, key=lambda x: x.seq)
+    ]
+
     reg_money = None
     if orm.case_handling is not None and orm.case_handling.regulation_choice is not None:
         reg_money = orm.case_handling.regulation_choice.money_amount
@@ -395,6 +400,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         addresses=addresses,
         dependency_loads=dependency_loads,
         economic_infos=economic_infos,
+        household_members=household_members,
         welfare_request_types=welfare_request_types,
         welfare_history=welfare_history_section,
         welfare_request_status=welfare_request_status,
