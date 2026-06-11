@@ -45,3 +45,4 @@ env/
 
 docker-compose-beta.yml
 docker-compose-prod.yml
+docker-compose.dev.yml

@@ -95,7 +95,11 @@ class WelfareRequestType(Base):
 
     request_other_text: Mapped[str | None] = mapped_column(
         String(500),
-        comment="ระบุรายละเอียดเพิ่มเติมเมื่อเลือก 'ช่วยเหลือเรื่องอื่นๆ'",
+        comment="ระบุรายละเอียดเพิ่มเติมเมื่อเลือก 'ช่วยเหลือเรื่องอื่นๆ' (request_type_id=3)",
+    )
+    request_in_kind_text: Mapped[str | None] = mapped_column(
+        String(500),
+        comment="ระบุรายละเอียดเมื่อเลือก 'ช่วยเหลือเป็นสิ่งของ' (request_type_id=2)",
     )
 
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_request_types")

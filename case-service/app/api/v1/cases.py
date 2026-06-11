@@ -21,7 +21,7 @@ from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
-from ...models.economic import EconomicIncomeSource, EconomicInfo
+from ...models.economic import EconomicIncomeSource, EconomicInfo, HouseholdMember
 from ...models.intake import CaseHandling
 from ...models.lookup import BankAccountType, BankName, CurrentStatus, TypeMoneyCategory
 from ...models.person import Person
@@ -44,6 +44,7 @@ from ...schemas.case_welfare import (
     WelfareCaseUpdate,
     WelfareEvidenceUploadRead,
 )
+from ...schemas.economic import HouseholdMemberRead
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
@@ -102,6 +103,7 @@ def _applicant_load_options():  # noqa: ANN001
         .selectinload(SubDistrictPostcode.postcode),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.income_sources),
         selectinload(Applicant.economic_infos).selectinload(EconomicInfo.housing_type),
+        selectinload(Applicant.household_members),
         selectinload(Applicant.dependency_loads),
         selectinload(Applicant.case_handling).selectinload(CaseHandling.regulation_choice),
         selectinload(Applicant.welfare_request_types),
@@ -212,6 +214,9 @@ async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> We
         ],
         economic_infos=[
             EconomicInfoRead.model_validate(e) for e in sorted(applicant.economic_infos, key=lambda x: x.id)
+        ],
+        household_members=[
+            HouseholdMemberRead.model_validate(m) for m in sorted(applicant.household_members, key=lambda x: x.seq)
         ],
         welfare_request_types=[
             WelfareRequestTypeRead.model_validate(w) for w in applicant.welfare_request_types
@@ -362,6 +367,7 @@ async def create_welfare_case(
             )
         )
 
+    hm_count = len(body.household_members)
     for eco in body.economic_infos:
         econ = EconomicInfo(
             applicant_id=aid,
@@ -369,7 +375,7 @@ async def create_welfare_case(
             housing_types_rent=eco.housing_types_rent,
             occupation=eco.occupation,
             monthly_income=eco.monthly_income,
-            household_members=eco.household_members,
+            household_members=hm_count,  # always override with actual list length
             family_occupation=eco.family_occupation,
         )
         session.add(econ)
@@ -383,13 +389,32 @@ async def create_welfare_case(
                 )
             )
 
-    _OTHER_TYPE_IDS = {1, 3}
+    for hm in body.household_members:
+        session.add(
+            HouseholdMember(
+                applicant_id=aid,
+                seq=hm.seq,
+                national_id=hm.national_id,
+                prefix_id=hm.prefix_id,
+                prefix_other=hm.prefix_other,
+                first_name=hm.first_name,
+                last_name=hm.last_name,
+                date_of_birth=hm.date_of_birth,
+                relation_to_applicant_id=hm.relation_to_applicant_id,
+                occupation=hm.occupation,
+                monthly_income=hm.monthly_income,
+                physical_condition=hm.physical_condition,
+                self_care=hm.self_care,
+            )
+        )
+
     for rt in req_ids:
         session.add(
             WelfareRequestType(
                 applicant_id=aid,
                 request_type_id=rt,
-                request_other_text=body.request_other_text if rt in _OTHER_TYPE_IDS else None,
+                request_other_text=body.request_other_text if rt == 3 else None,
+                request_in_kind_text=body.request_in_kind_text if rt == 2 else None,
             )
         )
 
@@ -538,6 +563,7 @@ async def update_welfare_case(
             ))
 
     # ── Replace economic_infos ───────────────────────────────────────────────────
+    hm_count_for_update = len(body.household_members) if body.household_members is not None else None
     if body.economic_infos is not None:
         # bulk DELETE ไม่ trigger ORM cascade ต้องลบ EconomicIncomeSource ก่อน
         eco_id_subq = select(EconomicInfo.id).where(EconomicInfo.applicant_id == applicant_id)
@@ -551,7 +577,7 @@ async def update_welfare_case(
                 housing_types_rent=eco.housing_types_rent,
                 occupation=eco.occupation,
                 monthly_income=eco.monthly_income,
-                household_members=eco.household_members,
+                household_members=hm_count_for_update if hm_count_for_update is not None else eco.household_members,
                 family_occupation=eco.family_occupation,
             )
             session.add(econ)
@@ -563,15 +589,43 @@ async def update_welfare_case(
                     other_details=src.other_details,
                 ))
 
+    # ── Replace household_members ────────────────────────────────────────────────
+    if body.household_members is not None:
+        await session.execute(delete(HouseholdMember).where(HouseholdMember.applicant_id == applicant_id))
+        for hm in body.household_members:
+            session.add(HouseholdMember(
+                applicant_id=applicant_id,
+                seq=hm.seq,
+                national_id=hm.national_id,
+                prefix_id=hm.prefix_id,
+                prefix_other=hm.prefix_other,
+                first_name=hm.first_name,
+                last_name=hm.last_name,
+                date_of_birth=hm.date_of_birth,
+                relation_to_applicant_id=hm.relation_to_applicant_id,
+                occupation=hm.occupation,
+                monthly_income=hm.monthly_income,
+                physical_condition=hm.physical_condition,
+                self_care=hm.self_care,
+            ))
+        # sync count into economic_infos when economic_infos was not replaced this request
+        if body.economic_infos is None:
+            from sqlalchemy import update as sa_update
+            await session.execute(
+                sa_update(EconomicInfo)
+                .where(EconomicInfo.applicant_id == applicant_id)
+                .values(household_members=len(body.household_members))
+            )
+
     # ── Replace request_type_ids ─────────────────────────────────────────────────
-    _OTHER_TYPE_IDS = {1, 3}
     if body.request_type_ids is not None:
         await session.execute(delete(WelfareRequestType).where(WelfareRequestType.applicant_id == applicant_id))
         for rt in _dedupe_preserve_order(body.request_type_ids):
             session.add(WelfareRequestType(
                 applicant_id=applicant_id,
                 request_type_id=rt,
-                request_other_text=body.request_other_text if rt in _OTHER_TYPE_IDS else None,
+                request_other_text=body.request_other_text if rt == 3 else None,
+                request_in_kind_text=body.request_in_kind_text if rt == 2 else None,
             ))
 
     # ── Replace welfare_history (1:1 — upsert by applicant_id) ──────────────────

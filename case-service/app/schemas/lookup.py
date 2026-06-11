@@ -124,6 +124,14 @@ class TypeMoneyRead(_LookupRead):
     pass
 
 
+class HouseholdMemberRelationTypeCreate(_LookupBase):
+    pass
+
+
+class HouseholdMemberRelationTypeRead(_LookupRead):
+    pass
+
+
 class BankAccountTypeRead(BaseModel):
     id: int
     name: str

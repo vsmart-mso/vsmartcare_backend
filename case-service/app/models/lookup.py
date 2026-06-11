@@ -149,6 +149,12 @@ class TypeMoneyCategory(Base):
     )
 
 
+class HouseholdMemberRelationType(LookupMixin, Base):
+    """ความสัมพันธ์กับผู้ประสบปัญหา — บิดา/มารดา, บุตร, คู่สมรส ฯลฯ"""
+
+    __tablename__ = "household_member_relation_types"
+
+
 class CurrentStatus(Base):
     """สถานะคำร้องปัจจุบัน — ข้อความแยก public/staff + สีและลำดับ dropdown/filter"""
 

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from .address import AddressRead
 from .applicant import ApplicantRead
 from .dependency import DependencyLoadRead
-from .economic import EconomicInfoRead
+from .economic import EconomicInfoRead, HouseholdMemberRead, PhysicalCondition
 from .status_log import WelfareRequestStatusRead
 from .welfare import (
     WelfareEvidenceRead,
@@ -66,6 +66,21 @@ class EconomicIncomeSourceInCase(BaseModel):
     other_details: str | None = Field(None, max_length=500)
 
 
+class HouseholdMemberInCase(BaseModel):
+    seq: int = Field(..., ge=1)
+    national_id: str | None = Field(None, max_length=13)
+    prefix_id: int | None = None
+    prefix_other: str | None = Field(None, max_length=50)
+    first_name: str = Field(..., max_length=255)
+    last_name: str = Field(..., max_length=255)
+    date_of_birth: date | None = None
+    relation_to_applicant_id: int | None = None
+    occupation: str | None = Field(None, max_length=255)
+    monthly_income: Decimal | None = None
+    physical_condition: PhysicalCondition = "normal"
+    self_care: bool = True
+
+
 class EconomicInfoInCase(BaseModel):
     housing_types_id: int | None = None
     housing_types_rent: Decimal | None = None
@@ -93,6 +108,10 @@ class WelfareCaseCreate(BaseModel):
     addresses: list[AddressInCase] = Field(default_factory=list)
     dependency_loads: list[DependencyLoadInCase] = Field(default_factory=list)
     economic_infos: list[EconomicInfoInCase] = Field(default_factory=list)
+    household_members: list[HouseholdMemberInCase] = Field(
+        default_factory=list,
+        description="รายละเอียดสมาชิกในครัวเรือน (ปสค.๒) — household_members count คำนวณ auto จาก len()",
+    )
     request_type_ids: Annotated[
         list[int],
         Field(
@@ -104,6 +123,11 @@ class WelfareCaseCreate(BaseModel):
         None,
         max_length=500,
         description="ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)",
+    )
+    request_in_kind_text: str | None = Field(
+        None,
+        max_length=500,
+        description="ระบุรายละเอียดเมื่อเลือก request_type_id=2 (ช่วยเหลือเป็นสิ่งของ)",
     )
     welfare_history: WelfareHistoryInCase | None = None
     initial_current_status_id: int = Field(
@@ -139,11 +163,17 @@ class WelfareCaseUpdate(BaseModel):
     addresses: list[AddressInCase] | None = None
     dependency_loads: list[DependencyLoadInCase] | None = None
     economic_infos: list[EconomicInfoInCase] | None = None
+    household_members: list[HouseholdMemberInCase] | None = None
     request_type_ids: list[int] | None = None
     request_other_text: str | None = Field(
         None,
         max_length=500,
         description="ระบุรายละเอียดเมื่อเลือก request_type_id=3 (ช่วยเหลือเรื่องอื่นๆ)",
+    )
+    request_in_kind_text: str | None = Field(
+        None,
+        max_length=500,
+        description="ระบุรายละเอียดเมื่อเลือก request_type_id=2 (ช่วยเหลือเป็นสิ่งของ)",
     )
     welfare_history: WelfareHistoryInCase | None = None
 
@@ -155,6 +185,7 @@ class WelfareCaseRead(BaseModel):
     addresses: list[AddressRead]
     dependency_loads: list[DependencyLoadRead]
     economic_infos: list[EconomicInfoRead]
+    household_members: list[HouseholdMemberRead] = Field(default_factory=list)
     welfare_request_types: list[WelfareRequestTypeRead]
     welfare_history: WelfareHistoryRead | None
     welfare_evidences: list[WelfareEvidenceRead]

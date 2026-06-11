@@ -46,6 +46,7 @@ class WelfareRequestTypeBase(BaseModel):
     applicant_id: int
     request_type_id: int
     request_other_text: str | None = Field(None, max_length=500)
+    request_in_kind_text: str | None = Field(None, max_length=500)
 
 
 class WelfareRequestTypeCreate(WelfareRequestTypeBase):
