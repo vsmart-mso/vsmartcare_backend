@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..constants.current_status import (
     ACTIVE_CASE_STATUS_IDS,
-    COOLDOWN_DAYS,
     COOLDOWN_STATUS_IDS,
 )
 from ..models.applicant import Applicant
 from ..schemas.submission_eligibility import SubmissionEligibilityRead
+from ..settings import settings
 from .citizen_status_email_policy import fetch_latest_status_id
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
@@ -56,8 +56,8 @@ def _to_bangkok(dt: datetime) -> datetime:
 
 
 def compute_eligible_at(submitted_at: datetime) -> datetime:
-    """วันที่ยื่นคำขอครั้งถัดไปได้ — นับ 30 วันปฏิทินจากวันส่งสำเร็จ."""
-    return _to_bangkok(submitted_at) + timedelta(days=COOLDOWN_DAYS)
+    """วันที่ยื่นคำขอครั้งถัดไปได้ — นับ COOLDOWN_DAYS วันปฏิทินจากวันส่งสำเร็จ."""
+    return _to_bangkok(submitted_at) + timedelta(days=settings.cooldown_days)
 
 
 def compute_days_remaining(eligible_at: datetime, now: datetime) -> int:

@@ -86,6 +86,9 @@ class Settings(BaseSettings):
         validation_alias="STATUS_EMAIL_TIMEOUT_SECONDS",
     )
 
+    #: จำกัดยื่นคำขอซ้ำ — วันปฏิทินหลังส่งสำเร็จ (0 = ยื่นได้ทันที, ใช้ทดสอบ)
+    cooldown_days: int = Field(default=30, ge=0, validation_alias="COOLDOWN_DAYS")
+
 
 settings = Settings()
 
