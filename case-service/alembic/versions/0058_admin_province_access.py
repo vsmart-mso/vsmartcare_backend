@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0058_admin_province_access"
-down_revision: str | Sequence[str] | None = "0057_review_field_ktb_fix_id"
+down_revision: str | Sequence[str] | None = "0058_approve_case_reject_resolved_at"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
