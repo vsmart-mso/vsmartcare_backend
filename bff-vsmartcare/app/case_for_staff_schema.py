@@ -65,11 +65,11 @@ class CaseForStaffRead(ProcessSlaFields):
     is_return_edit_resubmitted: bool = Field(False)
     is_pmj_rejected: bool = Field(
         False,
-        description="true เมื่อ approve_case ล่าสุดของ applicant เป็น approve_status=false",
+        description="true เมื่อ applicant มี active PMJ reject (approve_status=false และ reject_resolved_at ยังว่าง)",
     )
     pmj_reject_reason: str | None = Field(
         None,
-        description="เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก approve_case ล่าสุด",
+        description="เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก active PMJ reject",
     )
     prior_self_submit_case_numbers: list[str] = Field(
         default_factory=list,

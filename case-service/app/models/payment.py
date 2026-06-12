@@ -38,6 +38,7 @@ class ApproveCase(Base):
     esignature: Mapped[str | None] = mapped_column(Text)
     user_sdshv: Mapped[str | None] = mapped_column(String(255))
     reject_reason: Mapped[str | None] = mapped_column(Text)
+    reject_resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="approve_cases")
     article: Mapped["Article | None"] = relationship(back_populates="approve_cases")

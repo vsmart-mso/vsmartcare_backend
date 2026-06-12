@@ -16,6 +16,7 @@ from ...services.esignature_storage import load_esignature_base64 as _load_esign
 from ...services.article_approval import (
     get_article_by_applicant_id,
     record_approve_case_with_status,
+    resolve_active_pmj_rejects_for_applicant,
     resolve_article_id_for_applicant,
     upsert_article,
 )
@@ -574,10 +575,9 @@ async def list_cases_for_staff(
         .subquery()
     )
 
-    latest_approve_case_sq = (
+    active_pmj_reject_sq = (
         select(
             ApproveCase.applicant_id.label("applicant_id"),
-            ApproveCase.approve_status.label("latest_approve_status"),
             ApproveCase.reject_reason.label("pmj_reject_reason"),
             func.row_number()
             .over(
@@ -585,6 +585,11 @@ async def list_cases_for_staff(
                 order_by=ApproveCase.id.desc(),
             )
             .label("rn"),
+        )
+        .where(
+            ApproveCase.approve_status.is_(False),
+            ApproveCase.reject_reason.is_not(None),
+            ApproveCase.reject_resolved_at.is_(None),
         )
         .subquery()
     )
@@ -647,10 +652,10 @@ async def list_cases_for_staff(
             is_approved.label("is_approved"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
             case(
-                (latest_approve_case_sq.c.latest_approve_status.is_(False), True),
+                (active_pmj_reject_sq.c.applicant_id.is_not(None), True),
                 else_=False,
             ).label("is_pmj_rejected"),
-            latest_approve_case_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
+            active_pmj_reject_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -683,10 +688,10 @@ async def list_cases_for_staff(
             ),
         )
         .outerjoin(
-            latest_approve_case_sq,
+            active_pmj_reject_sq,
             and_(
-                latest_approve_case_sq.c.applicant_id == Applicant.id,
-                latest_approve_case_sq.c.rn == 1,
+                active_pmj_reject_sq.c.applicant_id == Applicant.id,
+                active_pmj_reject_sq.c.rn == 1,
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
@@ -1540,6 +1545,12 @@ async def create_welfare_request_status_for_staff(
     )
     session.add(log)
     await session.flush()
+
+    if body.current_status_id == CURRENT_STATUS_WITHDRAWING_APPROVED:
+        await resolve_active_pmj_rejects_for_applicant(
+            session,
+            applicant_id=body.applicant_id,
+        )
 
     maybe_freeze_process_sla_for_status(applicant, body.current_status_id)
 
