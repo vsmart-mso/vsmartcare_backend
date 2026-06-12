@@ -38,5 +38,3 @@ COOLDOWN_STATUS_IDS: Final[frozenset[int]] = frozenset({
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_MSO_FORWARDED,
 })
-
-COOLDOWN_DAYS: Final[int] = 30

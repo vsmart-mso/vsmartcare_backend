@@ -71,6 +71,19 @@ class CaseForStaffRead(ProcessSlaFields):
         None,
         description="เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก approve_case ล่าสุด",
     )
+    prior_self_submit_case_numbers: list[str] = Field(
+        default_factory=list,
+        description="หมายเลขคำร้อง self-submit อื่นในปีงบเดียวกัน — เฉพาะแถวล่าสุดของบุคคลนั้น",
+    )
+    self_submit_fiscal_year_count: int = Field(
+        0,
+        ge=0,
+        description="จำนวนคำร้อง self-submit ของบุคคลเดียวกันในปีงบเดียวกัน — ≥2 เมื่อยื่นซ้ำ (ทุกแถวในกลุ่ม)",
+    )
+    self_submit_fiscal_year_case_numbers: list[str] = Field(
+        default_factory=list,
+        description="หมายเลขคำร้อง self-submit ทั้งหมดในปีงบเดียวกัน — ทุกแถวในกลุ่มได้รายการเดียวกัน เรียง created_at ASC",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):

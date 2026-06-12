@@ -56,6 +56,7 @@ from ...services.payment_round_metrics import (
 )
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
+from ...services.self_submit_fiscal_siblings import load_fiscal_year_self_submit_enrichment
 from ...services.citizen_status_email_policy import (
     CitizenStatusEmailTrigger,
     fetch_latest_status_id,
@@ -181,6 +182,11 @@ def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
     birth_date = data.pop("birth_date", None)
     if birth_date is not None:
         data["person_age"] = _person_age_from_birth_date(birth_date)  # type: ignore[arg-type]
+    data.pop("persons_id", None)
+    data.pop("requester_relation_id", None)
+    data.setdefault("prior_self_submit_case_numbers", [])
+    data.setdefault("self_submit_fiscal_year_count", 0)
+    data.setdefault("self_submit_fiscal_year_case_numbers", [])
     _enrich_row_process_sla(data)
     current = data.get("current_status_id")
     previous = data.get("previous_status_id")
@@ -622,6 +628,8 @@ async def list_cases_for_staff(
             Person.cid.label("cid"),
             Person.birth_date.label("birth_date"),
             Applicant.created_at.label("datetime_create"),
+            Applicant.persons_id.label("persons_id"),
+            Applicant.requester_relation_id.label("requester_relation_id"),
             Applicant.is_emergency.label("is_emergency"),
             Applicant.is_existing_case.label("is_existing_case"),
             Applicant.process_started_at.label("process_started_at"),
@@ -730,6 +738,21 @@ async def list_cases_for_staff(
     applicant_ids = [row["applicant_id"] for row in rows]
     payments_by_applicant = await load_payments_by_applicant_ids(session, applicant_ids)
     enriched_rows = _merge_payment_metrics_into_rows(rows, payments_by_applicant)
+    fiscal_enrichment = await load_fiscal_year_self_submit_enrichment(session, enriched_rows)
+    for row in enriched_rows:
+        applicant_id = row["applicant_id"]
+        row["prior_self_submit_case_numbers"] = fiscal_enrichment.prior_case_numbers.get(
+            applicant_id,
+            [],
+        )
+        row["self_submit_fiscal_year_count"] = fiscal_enrichment.fiscal_year_count.get(
+            applicant_id,
+            0,
+        )
+        row["self_submit_fiscal_year_case_numbers"] = fiscal_enrichment.fiscal_year_case_numbers.get(
+            applicant_id,
+            [],
+        )
     return CaseForStaffListResponse(
         province_id=province.id,
         province_name=province.name,
