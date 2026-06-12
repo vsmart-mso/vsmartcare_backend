@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     #: จำกัดยื่นคำขอซ้ำ — วันปฏิทินหลังส่งสำเร็จ (0 = ยื่นได้ทันที, ใช้ทดสอบ)
     cooldown_days: int = Field(default=30, ge=0, validation_alias="COOLDOWN_DAYS")
 
+    #: --- Admin (TASK-v-care-12062026-01) — เปิด/ปิดบริการรายจังหวัด ---
+    #: secret สำหรับเซ็น admin JWT (HS256) — ต้องตั้งใน production, แยกจาก THAID_JWT_SECRET
+    admin_jwt_secret: str = Field(default="", validation_alias="ADMIN_JWT_SECRET")
+    #: อายุ admin token (นาที) — default 8 ชั่วโมง
+    admin_jwt_expire_minutes: int = Field(
+        default=480, ge=1, validation_alias="ADMIN_JWT_EXPIRE_MINUTES"
+    )
+
 
 settings = Settings()
 

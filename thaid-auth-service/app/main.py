@@ -16,7 +16,11 @@ from sqlalchemy import text
 from . import ThaID
 from . import db
 from .db import configure_database, shutdown_database
-from .person_persist import _normalize_cid, persist_new_person_if_absent
+from .person_persist import (
+    _normalize_cid,
+    get_province_access_status,
+    persist_new_person_if_absent,
+)
 from .settings import cors_origin_list, settings
 
 logger = logging.getLogger(__name__)
@@ -310,8 +314,20 @@ def _store_login_completion(state: str, payload: CallbackResponse) -> None:
     }
 
 
+def _store_login_error(state: str, error_code: str) -> None:
+    """เก็บผล login ที่ล้มเหลว (เช่น จังหวัดปิด) ให้ฝั่ง poll (QR) อ่านได้ครั้งเดียว."""
+    _login_completions[state] = {
+        "stored_at": datetime.utcnow(),
+        "error": error_code,
+    }
+
+
 class LoginStatusResponse(BaseModel):
-    status: Literal["pending", "complete", "gone"]
+    status: Literal["pending", "complete", "gone", "error"]
+    error: Optional[str] = Field(
+        default=None,
+        description='รหัส error เมื่อ status="error" เช่น "province_not_enabled"',
+    )
     access_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: Optional[int] = None
@@ -328,6 +344,9 @@ def login_status(state: str):
     _purge_stale_completions()
     done = _login_completions.pop(state, None)
     if done:
+        # จังหวัดถูกปิด (TASK-v-care-12062026-01) — แจ้ง error กลับ ไม่มี token
+        if done.get("error"):
+            return LoginStatusResponse(status="error", error=str(done["error"]))
         return LoginStatusResponse(
             status="complete",
             access_token=str(done["access_token"]),
@@ -346,6 +365,58 @@ async def _persist_person_safe(profile: Dict[str, str]) -> None:
         await persist_new_person_if_absent(profile)
     except Exception:  # noqa: BLE001
         logger.exception("person_persist_failed_after_login")
+
+
+class ProvinceNotEnabledError(Exception):
+    """จังหวัดของผู้ใช้ยังไม่เปิดให้บริการ (TASK-v-care-12062026-01)."""
+
+    def __init__(self, province: str) -> None:
+        self.province = province
+        super().__init__(province)
+
+
+async def _check_province_access_or_raise(profile: Dict[str, str]) -> None:
+    """ตรวจสิทธิ์จังหวัดจากที่อยู่ ThaiD — ปิด → raise ProvinceNotEnabledError.
+
+    address ว่าง / parse จังหวัดไม่ได้ (เช่น mock) → ผ่าน (ไม่ block dev).
+    """
+    parts = ThaID.parse_thai_address_geo(profile.get("address") or "")
+    province = (parts.get("province") or "").strip()
+    if not province:
+        return
+    if not await get_province_access_status(province):
+        logger.info("province_access_denied: province=%r", province)
+        raise ProvinceNotEnabledError(province)
+
+
+_THAID_PROVINCE_BLOCKED_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>ยังไม่เปิดให้บริการ</title>
+</head>
+<body style="font-family:system-ui,sans-serif;padding:2rem;max-width:28rem;margin:auto;background:#f8fafc;color:#0f172a;line-height:1.6;">
+  <p style="font-size:1.125rem;font-weight:600;">ยังไม่เปิดให้บริการในพื้นที่ของท่าน</p>
+  <p>ขออภัยในความไม่สะดวก ขณะนี้ระบบ พม. CARE ยังไม่เปิดให้บริการบันทึกข้อมูลสำหรับจังหวัดของท่าน</p>
+</body>
+</html>"""
+
+
+def _respond_province_blocked(state_rec: Dict[str, Any]) -> Union[RedirectResponse, HTMLResponse]:
+    """ตอบกลับเมื่อจังหวัดปิด: 302 ไป frontend พร้อม error param หรือ HTML แจ้งถ้าไม่มี redirect."""
+    target = (state_rec.get("post_login_redirect") or settings.thaid_post_login_redirect or "").strip()
+    if not target:
+        return HTMLResponse(content=_THAID_PROVINCE_BLOCKED_HTML, media_type="text/html; charset=utf-8")
+    from urllib.parse import urlparse, urlunparse
+
+    parts = urlparse(target)
+    sep = "&" if parts.query else "?"
+    new_query = f"{parts.query}{sep}error=province_not_enabled" if parts.query else "error=province_not_enabled"
+    loc = urlunparse(
+        (parts.scheme, parts.netloc, parts.path, parts.params, new_query, parts.fragment)
+    )
+    return RedirectResponse(url=loc, status_code=302)
 
 
 def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse:
@@ -436,6 +507,13 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     # ถ้าใช้ mock oidc จะสร้าง access token และ store session
     if _use_mock_oidc():
         mock_profile = _mock_user_profile()
+        # ตรวจสิทธิ์จังหวัด (mock address มักว่าง → ผ่าน) — TASK-v-care-12062026-01
+        try:
+            await _check_province_access_or_raise(mock_profile)
+        except ProvinceNotEnabledError:
+            _store_login_error(state, "province_not_enabled")
+            _consume_state(state)
+            return _respond_province_blocked(state_rec)
         payload = _issue_access_and_store_session(mock_profile)
         await _persist_person_safe(mock_profile)
         _store_login_completion(state, payload)
@@ -474,6 +552,15 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
+
+    # ตรวจสิทธิ์จังหวัด (TASK-v-care-12062026-01) — ปิด → ไม่ออก token, แจ้ง error กลับ
+    try:
+        await _check_province_access_or_raise(profile)
+    except ProvinceNotEnabledError:
+        _store_login_error(state, "province_not_enabled")
+        _consume_state(state)
+        return _respond_province_blocked(state_rec)
+
     await _persist_person_safe(profile)
     # สร้าง access token และ store session
     payload = _issue_access_and_store_session(profile)
