@@ -78,7 +78,7 @@ class CaseForStaffRead(ProcessSlaFields):
     )
     is_return_edit_resubmitted: bool = Field(
         False,
-        description="true เมื่อ current_status_id=1 และ previous_status_id=8 (ประชาชนแก้กลับมาหลังถูกตีกลับ)",
+        description="true เมื่อเคสเคยถูกส่งกลับเป็น status 8 และเคยมี status 1 หลังจากนั้น",
     )
     is_pmj_rejected: bool = Field(
         False,

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from uuid import UUID
 
@@ -189,6 +189,11 @@ def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
     data.setdefault("self_submit_fiscal_year_count", 0)
     data.setdefault("self_submit_fiscal_year_case_numbers", [])
     _enrich_row_process_sla(data)
+    has_return_edit_resubmitted = data.pop("has_return_edit_resubmitted", None)
+    if has_return_edit_resubmitted is not None:
+        data["is_return_edit_resubmitted"] = bool(has_return_edit_resubmitted)
+        return
+
     current = data.get("current_status_id")
     previous = data.get("previous_status_id")
     data["is_return_edit_resubmitted"] = (
@@ -575,6 +580,30 @@ async def list_cases_for_staff(
         .subquery()
     )
 
+    return_edit_status = aliased(WelfareRequestStatus)
+    return_edit_resubmit_status = aliased(WelfareRequestStatus)
+    return_edit_resubmitted_sq = (
+        select(return_edit_status.applicant_id.label("applicant_id"))
+        .select_from(return_edit_status)
+        .join(
+            return_edit_resubmit_status,
+            and_(
+                return_edit_resubmit_status.applicant_id == return_edit_status.applicant_id,
+                return_edit_resubmit_status.current_status_id == CURRENT_STATUS_PENDING_INTAKE,
+                or_(
+                    return_edit_resubmit_status.updated_at > return_edit_status.updated_at,
+                    and_(
+                        return_edit_resubmit_status.updated_at == return_edit_status.updated_at,
+                        return_edit_resubmit_status.id > return_edit_status.id,
+                    ),
+                ),
+            ),
+        )
+        .where(return_edit_status.current_status_id == CURRENT_STATUS_EDIT_REQUESTED)
+        .group_by(return_edit_status.applicant_id)
+        .subquery()
+    )
+
     active_pmj_reject_sq = (
         select(
             ApproveCase.applicant_id.label("applicant_id"),
@@ -652,6 +681,10 @@ async def list_cases_for_staff(
             is_approved.label("is_approved"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
             case(
+                (return_edit_resubmitted_sq.c.applicant_id.is_not(None), True),
+                else_=False,
+            ).label("has_return_edit_resubmitted"),
+            case(
                 (active_pmj_reject_sq.c.applicant_id.is_not(None), True),
                 else_=False,
             ).label("is_pmj_rejected"),
@@ -686,6 +719,10 @@ async def list_cases_for_staff(
                 prev_status_sq.c.applicant_id == Applicant.id,
                 prev_status_sq.c.rn == 2,
             ),
+        )
+        .outerjoin(
+            return_edit_resubmitted_sq,
+            return_edit_resubmitted_sq.c.applicant_id == Applicant.id,
         )
         .outerjoin(
             active_pmj_reject_sq,
