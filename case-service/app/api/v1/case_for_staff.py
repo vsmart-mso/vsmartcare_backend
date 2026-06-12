@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from ...services.esignature_storage import load_esignature_base64 as _load_esign
 from ...services.article_approval import (
     get_article_by_applicant_id,
     record_approve_case_with_status,
+    resolve_active_pmj_rejects_for_applicant,
     resolve_article_id_for_applicant,
     upsert_article,
 )
@@ -188,6 +189,11 @@ def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
     data.setdefault("self_submit_fiscal_year_count", 0)
     data.setdefault("self_submit_fiscal_year_case_numbers", [])
     _enrich_row_process_sla(data)
+    has_return_edit_resubmitted = data.pop("has_return_edit_resubmitted", None)
+    if has_return_edit_resubmitted is not None:
+        data["is_return_edit_resubmitted"] = bool(has_return_edit_resubmitted)
+        return
+
     current = data.get("current_status_id")
     previous = data.get("previous_status_id")
     data["is_return_edit_resubmitted"] = (
@@ -574,10 +580,33 @@ async def list_cases_for_staff(
         .subquery()
     )
 
-    latest_approve_case_sq = (
+    return_edit_status = aliased(WelfareRequestStatus)
+    return_edit_resubmit_status = aliased(WelfareRequestStatus)
+    return_edit_resubmitted_sq = (
+        select(return_edit_status.applicant_id.label("applicant_id"))
+        .select_from(return_edit_status)
+        .join(
+            return_edit_resubmit_status,
+            and_(
+                return_edit_resubmit_status.applicant_id == return_edit_status.applicant_id,
+                return_edit_resubmit_status.current_status_id == CURRENT_STATUS_PENDING_INTAKE,
+                or_(
+                    return_edit_resubmit_status.updated_at > return_edit_status.updated_at,
+                    and_(
+                        return_edit_resubmit_status.updated_at == return_edit_status.updated_at,
+                        return_edit_resubmit_status.id > return_edit_status.id,
+                    ),
+                ),
+            ),
+        )
+        .where(return_edit_status.current_status_id == CURRENT_STATUS_EDIT_REQUESTED)
+        .group_by(return_edit_status.applicant_id)
+        .subquery()
+    )
+
+    active_pmj_reject_sq = (
         select(
             ApproveCase.applicant_id.label("applicant_id"),
-            ApproveCase.approve_status.label("latest_approve_status"),
             ApproveCase.reject_reason.label("pmj_reject_reason"),
             func.row_number()
             .over(
@@ -585,6 +614,11 @@ async def list_cases_for_staff(
                 order_by=ApproveCase.id.desc(),
             )
             .label("rn"),
+        )
+        .where(
+            ApproveCase.approve_status.is_(False),
+            ApproveCase.reject_reason.is_not(None),
+            ApproveCase.reject_resolved_at.is_(None),
         )
         .subquery()
     )
@@ -647,10 +681,14 @@ async def list_cases_for_staff(
             is_approved.label("is_approved"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
             case(
-                (latest_approve_case_sq.c.latest_approve_status.is_(False), True),
+                (return_edit_resubmitted_sq.c.applicant_id.is_not(None), True),
+                else_=False,
+            ).label("has_return_edit_resubmitted"),
+            case(
+                (active_pmj_reject_sq.c.applicant_id.is_not(None), True),
                 else_=False,
             ).label("is_pmj_rejected"),
-            latest_approve_case_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
+            active_pmj_reject_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -683,10 +721,14 @@ async def list_cases_for_staff(
             ),
         )
         .outerjoin(
-            latest_approve_case_sq,
+            return_edit_resubmitted_sq,
+            return_edit_resubmitted_sq.c.applicant_id == Applicant.id,
+        )
+        .outerjoin(
+            active_pmj_reject_sq,
             and_(
-                latest_approve_case_sq.c.applicant_id == Applicant.id,
-                latest_approve_case_sq.c.rn == 1,
+                active_pmj_reject_sq.c.applicant_id == Applicant.id,
+                active_pmj_reject_sq.c.rn == 1,
             ),
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
@@ -1540,6 +1582,12 @@ async def create_welfare_request_status_for_staff(
     )
     session.add(log)
     await session.flush()
+
+    if body.current_status_id == CURRENT_STATUS_WITHDRAWING_APPROVED:
+        await resolve_active_pmj_rejects_for_applicant(
+            session,
+            applicant_id=body.applicant_id,
+        )
 
     maybe_freeze_process_sla_for_status(applicant, body.current_status_id)
 

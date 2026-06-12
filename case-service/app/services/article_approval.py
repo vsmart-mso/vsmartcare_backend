@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.article import Article
 from ..models.lookup import CurrentStatus
 from ..models.payment import ApproveCase
 from ..models.status_log import WelfareRequestStatus
+from ..constants.current_status import CURRENT_STATUS_WITHDRAWING_APPROVED
 from .esignature_storage import save_esignature_base64
 
 _ARTICLE_CONTENT_FIELDS = (
@@ -87,7 +88,7 @@ async def record_approve_case_with_status(
         await session.flush()
         return row, None, None
 
-    new_status_id = 3
+    new_status_id = CURRENT_STATUS_WITHDRAWING_APPROVED
     current_status = await session.scalar(
         select(CurrentStatus).where(CurrentStatus.id == new_status_id)
     )
@@ -105,6 +106,25 @@ async def record_approve_case_with_status(
     session.add(status_log)
     await session.flush()
     return row, status_log, current_status
+
+
+async def resolve_active_pmj_rejects_for_applicant(
+    session: AsyncSession,
+    *,
+    applicant_id: int,
+) -> int:
+    """ปิด PMJ reject ที่ยัง active เมื่อ นสค. ส่งเคสกลับให้ พมจ. พิจารณาอีกครั้ง."""
+    result = await session.execute(
+        update(ApproveCase)
+        .where(
+            ApproveCase.applicant_id == applicant_id,
+            ApproveCase.approve_status.is_(False),
+            ApproveCase.reject_reason.is_not(None),
+            ApproveCase.reject_resolved_at.is_(None),
+        )
+        .values(reject_resolved_at=datetime.now())
+    )
+    return result.rowcount or 0
 
 
 async def resolve_article_id_for_applicant(
