@@ -37,6 +37,8 @@ services:
       - STATUS_EMAIL_ENABLED=true
       - STATUS_EMAIL_TIMEOUT_SECONDS=5
       - COOLDOWN_DAYS=30
+      - ADMIN_JWT_SECRET=your-long-random-secret-at-least-32-chars
+      - ADMIN_JWT_EXPIRE_MINUTES=480
     ports:
       - "8001:8000"
     depends_on:
