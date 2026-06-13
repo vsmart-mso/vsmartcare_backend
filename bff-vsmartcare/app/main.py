@@ -20,6 +20,8 @@ from .case_for_staff_schema import (
     ArticleCreateBody,
     ArticleUpdateBody,
     CaseForStaffApplicantStaffFieldsRead,
+    StaffCaseSectionsUpdateBody,
+    StaffDataEditLogBody,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
     CaseForStaffListResponse,
@@ -1112,6 +1114,46 @@ async def update_case_for_staff_applicant_staff_fields(
         json=payload,
     )
     return CaseForStaffApplicantStaffFieldsRead.model_validate(data)
+
+
+@router.patch(
+    "/v1/case_for_staff/case-sections",
+    tags=["case_for_staff"],
+    summary="นักสังคมฯ แก้ไขส่วนที่ 2–4 ปสค.1",
+    description=(
+        "ส่งต่อ `PATCH …/v1/case_for_staff/case-sections?applicant_id=…` — "
+        "อัปเดต addresses / economic / dependency / household / welfare_history / problem / request_types; "
+        "คืน por-kor-1-detail"
+    ),
+    dependencies=_v1_api_key,
+)
+async def update_case_for_staff_case_sections(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: StaffCaseSectionsUpdateBody = ...,
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True)
+    return await _patch(
+        f"{base}/v1/case_for_staff/case-sections?applicant_id={applicant_id}",
+        json=payload,
+    )
+
+
+@router.post(
+    "/v1/case_for_staff/data-edit-log",
+    tags=["case_for_staff"],
+    summary="บันทึก timeline การแก้ไขข้อมูล (case_data_edit_logs)",
+    description=(
+        "ส่งต่อ `POST …/v1/case_for_staff/data-edit-log` — "
+        "ใช้เมื่อแก้ไขผลการเยี่ยมบ้านหรือกรณีอื่นที่ไม่ผ่าน PATCH /case-sections"
+    ),
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_case_for_staff_data_edit_log(body: StaffDataEditLogBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(f"{base}/v1/case_for_staff/data-edit-log", json=payload)
 
 
 @router.post(

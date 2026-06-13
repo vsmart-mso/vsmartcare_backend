@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .person import Person
     from .satisfaction import SatisfactionSurvey
     from .status_log import WelfareRequestStatus
+    from .case_data_edit_log import CaseDataEditLog
     from .welfare import (
         WelfareEvidence,
         WelfareHistory,
@@ -159,6 +160,11 @@ class Applicant(Base):
         back_populates="applicant",
         cascade="all, delete-orphan",
         order_by="WelfareRequestStatus.updated_at.desc()",
+    )
+    data_edit_logs: Mapped[list["CaseDataEditLog"]] = relationship(
+        back_populates="applicant",
+        cascade="all, delete-orphan",
+        order_by="CaseDataEditLog.created_at.desc()",
     )
     article: Mapped["Article | None"] = relationship(
         back_populates="applicant",

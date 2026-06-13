@@ -3,8 +3,8 @@
 - admin_users: บัญชี admin (สมัครผ่าน CLI เท่านั้น — ไม่มี UI signup), password เป็น bcrypt hash
 - province_access_config: 1 จังหวัด 1 แถว, is_enabled default false (default deny — ทยอยเปิด)
 
-Revision ID: 0058_admin_province_access
-Revises: 0057_review_field_ktb_fix_id
+Revision ID: 0059_admin_province_access
+Revises: 0058_approve_case_reject_resolved_at
 Create Date: 2026-06-12
 """
 
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0058_admin_province_access"
+revision: str = "0059_admin_province_access"
 down_revision: str | Sequence[str] | None = "0058_approve_case_reject_resolved_at"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

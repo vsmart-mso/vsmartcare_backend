@@ -9,6 +9,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from .welfare_case_schema import (
+    AddressInCase,
+    DependencyLoadInCase,
+    EconomicInfoInCase,
+    HouseholdMemberInCase,
+    WelfareHistoryInCase,
+)
+
 ProcessTrafficColor = Literal["green", "yellow", "orange", "red"]
 
 
@@ -154,6 +162,31 @@ class CaseForStaffFinanceListResponse(BaseModel):
     total_applicants: int = Field(..., ge=0)
     filtered_applicants: int = Field(..., ge=0)
     items: list[CaseForStaffFinanceRead] = Field(default_factory=list)
+
+
+class StaffCaseSectionsUpdateBody(BaseModel):
+    """Mirror case-service StaffCaseSectionsUpdate — นักสังคมฯ แก้ส่วนที่ 2–4."""
+
+    addresses: list[AddressInCase] | None = None
+    dependency_loads: list[DependencyLoadInCase] | None = None
+    economic_infos: list[EconomicInfoInCase] | None = None
+    household_members: list[HouseholdMemberInCase] | None = None
+    welfare_history: WelfareHistoryInCase | None = None
+    problem_details: str | None = None
+    request_type_ids: list[int] | None = None
+    request_other_text: str | None = Field(None, max_length=500)
+    request_in_kind_text: str | None = Field(None, max_length=500)
+    update_by_sdshv: str | None = Field(None, max_length=255)
+
+
+class StaffDataEditLogBody(BaseModel):
+    """Mirror case-service StaffDataEditLogCreate — timeline แก้ไขข้อมูล."""
+
+    applicant_id: int = Field(..., ge=1)
+    event_type: str = Field("survey_edit", max_length=32)
+    sections: list[int] | None = None
+    remarks: str | None = Field(None, max_length=2000)
+    update_by_sdshv: str | None = Field(None, max_length=255)
 
 
 class CaseForStaffApplicantStaffFieldsRead(ProcessSlaFields):
