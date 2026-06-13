@@ -29,6 +29,7 @@ from ...models.status_log import WelfareRequestStatus
 from ...models.review import WelfareReviewComment
 from ...models.payment import WelfarePayment
 from ...services.payment_round_metrics import applicant_payment_metrics
+from ...services.province_access import is_province_enabled_by_person_id
 from ...models.welfare import (
     WelfareEvidence,
     WelfareHistory,
@@ -297,6 +298,15 @@ async def create_welfare_case(
     session: AsyncSession = Depends(get_session),
 ) -> WelfareCaseRead:
     await _ensure_person_exists(session, body.applicant.persons_id)
+
+    # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้า admin ปิดจังหวัดของผู้ใช้ระหว่างกรอกฟอร์ม
+    # จังหวะบันทึกสุดท้ายต้องบล็อก → FE จับ 403 แล้วเตะออกจากระบบ
+    if not await is_province_enabled_by_person_id(session, body.applicant.persons_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="province_not_enabled",
+        )
+
     eligibility = await resolve_submission_eligibility(
         session,
         persons_id=body.applicant.persons_id,
@@ -520,6 +530,14 @@ async def update_welfare_case(
     )
     if applicant_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+
+    # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้าจังหวัดถูกปิด ห้ามแก้ไข/บันทึกซ้ำ
+    # (สอดคล้องกับ gate ตอน create — ไม่ให้มีการเขียนข้อมูลลงจังหวัดที่ปิดอยู่)
+    if not await is_province_enabled_by_person_id(session, applicant_row.persons_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="province_not_enabled",
+        )
 
     # ── อัปเดต applicant fields (เฉพาะที่ส่งมา) ────────────────────────────────
     if body.applicant is not None:

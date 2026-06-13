@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .api.check_case import router as check_case_router
+from .api.v1.admin import router as admin_router
 from .api.v1.applicant import router as applicant_router
 from .api.v1.person import router as person_router
 from .api.v1.case_for_staff import router as case_for_staff_router
@@ -26,6 +27,7 @@ app.include_router(eligibility_router)
 app.include_router(cases_router)
 app.include_router(intake_router)
 app.include_router(satisfaction_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

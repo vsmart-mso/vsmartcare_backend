@@ -1,6 +1,7 @@
 """Re-export ทุก ORM model เพื่อให้ Alembic autogenerate มองเห็น metadata ครบ."""
 
 from .address import Address
+from .admin import AdminUser, ProvinceAccessConfig
 from .applicant import Applicant
 from .article import Article
 from .dependency import DependencyLoad
@@ -51,6 +52,7 @@ from .welfare import (
 __all__ = [
     "Address",
     "AddressType",
+    "AdminUser",
     "AnnouncementRegulation",
     "Applicant",
     "Article",
@@ -79,6 +81,7 @@ __all__ = [
     "Postcode",
     "PrefixType",
     "Province",
+    "ProvinceAccessConfig",
     "ApproveCase",
     "FilePayment",
     "ReceivedWelfareType",

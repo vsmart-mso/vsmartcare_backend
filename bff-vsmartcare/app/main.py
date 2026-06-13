@@ -70,6 +70,7 @@ _TAGS = [
     {"name": "auth", "description": "Login ThaiD"},
     {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
     {"name": "satisfaction", "description": "ผลประเมินความพึงพอใจของผู้ยื่นคำขอ"},
+    {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -180,12 +181,18 @@ def _json_safe_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(payload, default=_default))
 
 
-async def _post(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+async def _post(
+    url: str,
+    json: Dict[str, Any],
+    *,
+    timeout: float = 30.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, json=_json_safe_payload(json))
+        r = await client.post(url, json=_json_safe_payload(json), headers=headers)
         if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
 
 
@@ -248,10 +255,16 @@ async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Di
         return r.json()
 
 
-async def _put(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+async def _put(
+    url: str,
+    json: Dict[str, Any],
+    *,
+    timeout: float = 30.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """ยิง HTTP PUT JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.put(url, json=_json_safe_payload(json))
+        r = await client.put(url, json=_json_safe_payload(json), headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -2367,6 +2380,94 @@ async def create_satisfaction_survey(body: SatisfactionSurveyCreateBody) -> Any:
 async def list_satisfaction_surveys(applicant_id: int = Query(..., ge=1)) -> Any:
     base = settings.case_service_url.rstrip("/")
     return await _get(f"{base}/v1/satisfaction?applicant_id={applicant_id}")
+
+
+# ---------------------------------------------------------------------------
+# Admin (TASK-v-care-12062026-01) — เปิด/ปิดบริการรายจังหวัด
+# ส่งต่อ case-service; admin JWT (Authorization) ถูก forward ไปให้ case-service ตรวจ
+# ---------------------------------------------------------------------------
+
+
+class AdminLoginProxyBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=255)
+
+
+class AdminProvinceAccessUpdateBody(BaseModel):
+    is_enabled: bool
+
+
+def _forward_auth_headers(authorization: Optional[str]) -> Dict[str, str]:
+    """สร้าง header forward admin JWT ไป case-service (ว่าง = ไม่ส่ง — case-service จะตอบ 401)."""
+    return {"Authorization": authorization} if authorization else {}
+
+
+@router.post(
+    "/v1/admin/auth/login",
+    tags=["admin"],
+    summary="Admin login → JWT",
+    description="ส่งต่อ `POST …/v1/admin/auth/login` ใน case-service — คืน admin access_token",
+    dependencies=_v1_api_key,
+)
+async def admin_login(body: AdminLoginProxyBody) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/admin/auth/login", json=body.model_dump())
+
+
+@router.get(
+    "/v1/admin/provinces",
+    tags=["admin"],
+    summary="รายการจังหวัด + สถานะเปิด/ปิด",
+    description="ส่งต่อ `GET …/v1/admin/provinces` ใน case-service (ต้องส่ง admin JWT ใน Authorization)",
+    dependencies=_v1_api_key,
+)
+async def admin_list_provinces(
+    authorization: Optional[str] = Header(default=None),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(
+        f"{base}/v1/admin/provinces",
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.put(
+    "/v1/admin/provinces/bulk",
+    tags=["admin"],
+    summary="เปิด/ปิดทุกจังหวัดพร้อมกัน",
+    description="ส่งต่อ `PUT …/v1/admin/provinces/bulk` ใน case-service (ต้องส่ง admin JWT)",
+    dependencies=_v1_api_key,
+)
+async def admin_update_all_provinces(
+    body: AdminProvinceAccessUpdateBody,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    return await _put(
+        f"{base}/v1/admin/provinces/bulk",
+        json=body.model_dump(),
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.put(
+    "/v1/admin/provinces/{province_id}",
+    tags=["admin"],
+    summary="เปิด/ปิดการบันทึกข้อมูลของจังหวัด",
+    description="ส่งต่อ `PUT …/v1/admin/provinces/{province_id}` ใน case-service (ต้องส่ง admin JWT)",
+    dependencies=_v1_api_key,
+)
+async def admin_update_province(
+    province_id: int,
+    body: AdminProvinceAccessUpdateBody,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    return await _put(
+        f"{base}/v1/admin/provinces/{province_id}",
+        json=body.model_dump(),
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 app.include_router(router, prefix=_api_prefix)

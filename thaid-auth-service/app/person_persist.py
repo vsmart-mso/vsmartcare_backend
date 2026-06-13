@@ -36,6 +36,39 @@ def _normalize_cid(pid: str) -> Optional[str]:
     return None
 
 
+async def get_province_access_status(province_name: str) -> bool:
+    """True = จังหวัดเปิดรับบันทึกข้อมูล (TASK-v-care-12062026-01).
+
+    อ่าน `province_access_config` (ตารางเดียวกับ case-service DB).
+    - ไม่มี config / is_enabled=false → ปิด (default deny)
+    - ไม่มี DB (`SessionLocal is None`) → True (backward compat — dev ที่ไม่ตั้ง DATABASE_URL)
+    """
+    if db.SessionLocal is None:
+        return True
+    name = (province_name or "").strip()
+    if not name:
+        return True  # parse ไม่ได้จังหวัด (เช่น mock/address ว่าง) → ไม่ block
+    try:
+        async with db.SessionLocal() as session:
+            r = await session.execute(
+                text(
+                    """
+                    SELECT pac.is_enabled
+                    FROM province_access_config pac
+                    INNER JOIN province p ON p.id = pac.province_id
+                    WHERE TRIM(p.name) = :name
+                    LIMIT 1
+                    """
+                ),
+                {"name": name},
+            )
+            row = r.first()
+            return bool(row[0]) if row else False
+    except Exception:  # noqa: BLE001 — เช่น ตารางยังไม่ถูก migrate → fail open ไม่บล็อกการ login
+        logger.exception("province_access_check_failed (fail open): province=%s", name)
+        return True
+
+
 async def _resolve_sub_district_postcode_id(
     session: AsyncSession,
     formatted_address: str,
