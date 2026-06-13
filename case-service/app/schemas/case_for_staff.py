@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .case_data_edit_log import CaseDataEditLogRead
 from .process_sla import ProcessSlaFields
 from .address import AddressRead
 from .applicant import ApplicantRead
@@ -22,6 +23,13 @@ from .welfare import (
     WelfareRequestTypeRead,
 )
 from .review import ReviewFieldRead
+from .case_welfare import (
+    AddressInCase,
+    DependencyLoadInCase,
+    EconomicInfoInCase,
+    HouseholdMemberInCase,
+    WelfareHistoryInCase,
+)
 
 
 class CaseForStaffRead(ProcessSlaFields):
@@ -191,6 +199,21 @@ class CaseForStaffWelfareRequestStatusCreate(BaseModel):
     update_by_sdshv: str | None = Field(None, max_length=255)
 
 
+class StaffCaseSectionsUpdate(BaseModel):
+    """นักสังคมฯ แก้ได้เฉพาะส่วนที่ 2–4 ปสค.1."""
+
+    addresses: list[AddressInCase] | None = None
+    dependency_loads: list[DependencyLoadInCase] | None = None
+    economic_infos: list[EconomicInfoInCase] | None = None
+    household_members: list[HouseholdMemberInCase] | None = None
+    welfare_history: WelfareHistoryInCase | None = None
+    problem_details: str | None = None
+    request_type_ids: list[int] | None = None
+    request_other_text: str | None = Field(None, max_length=500)
+    request_in_kind_text: str | None = Field(None, max_length=500)
+    update_by_sdshv: str | None = Field(None, max_length=255)
+
+
 class CaseForStaffApplicantStaffFieldsUpdate(BaseModel):
     """อัปเดตฟิลด์ฝั่งเจ้าหน้าที่บนตาราง applicants — ส่งเฉพาะฟิลด์ที่ต้องการเปลี่ยน."""
 
@@ -244,6 +267,38 @@ class PorKor1Summary(ProcessSlaFields):
     sw_explorer_sdshv: str | None = Field(None, max_length=255)
     applicant_created_at: datetime
     applicant_updated_at: datetime
+    can_edit_case_sections: bool = Field(
+        False,
+        description=(
+            "true เมื่อ current_status_id ∈ {1, 2, 3, 8} — "
+            "อนุญาตให้นักสังคมฯ แก้ไขส่วนที่ 2–4 และผลการเยี่ยมบ้าน"
+        ),
+    )
+
+
+class StaffDataEditLogCreate(BaseModel):
+    """บันทึก timeline การแก้ไขข้อมูล — ไม่เปลี่ยนสถานะคำร้อง."""
+
+    applicant_id: int = Field(..., ge=1)
+    event_type: str = Field(
+        "survey_edit",
+        max_length=32,
+        description="section_edit | survey_edit",
+    )
+    sections: list[int] | None = Field(
+        None,
+        description="section ปสค.1 ที่แก้ — ใช้กับ event_type=section_edit",
+    )
+    remarks: str | None = Field(
+        None,
+        max_length=2000,
+        description="หมายเหตุ — default ใช้ข้อความมาตรฐานเมื่อว่าง",
+    )
+    update_by_sdshv: str | None = Field(
+        None,
+        max_length=255,
+        description="PK Data_sdhsv ของผู้แก้ไข",
+    )
 
 
 class PorKor1PersonSection(BaseModel):
@@ -406,6 +461,10 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
         description=(
             "ข้อมูลการส่งกลับแก้ไขล่าสุด (status 8) — null เมื่อไม่เคยถูกตีกลับหรือ review_comments ว่าง"
         ),
+    )
+    data_edit_logs: list[CaseDataEditLogRead] = Field(
+        default_factory=list,
+        description="timeline การแก้ไขข้อมูลโดยนักสังคมฯ (ใหม่สุดก่อน)",
     )
 
 

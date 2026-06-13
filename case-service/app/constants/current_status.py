@@ -31,6 +31,9 @@ ACTIVE_CASE_STATUS_IDS: Final[frozenset[int]] = frozenset({
     CURRENT_STATUS_EDIT_REQUESTED,
 })
 
+# นักสังคมฯ แก้ไขส่วนที่ 2–4 ปสค.1 โดยตรงได้ (default = active cases)
+STAFF_CASE_SECTION_EDIT_STATUS_IDS: Final[frozenset[int]] = ACTIVE_CASE_STATUS_IDS
+
 # สถานะสิ้นสุด — รอ cooldown 30 วันปฏิทินจากวันส่งคำขอ
 COOLDOWN_STATUS_IDS: Final[frozenset[int]] = frozenset({
     CURRENT_STATUS_AID_COMPLETED,

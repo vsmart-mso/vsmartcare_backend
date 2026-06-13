@@ -43,7 +43,18 @@ from ...constants.current_status import (
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
     CURRENT_STATUS_MSO_FORWARDED,
+    STAFF_CASE_SECTION_EDIT_STATUS_IDS,
 )
+from ...services.case_update import apply_case_update
+from ...services.staff_edit_audit import (
+    EVENT_TYPE_SECTION_EDIT,
+    EVENT_TYPE_SURVEY_EDIT,
+    build_staff_section_edit_remarks,
+    build_staff_section_edit_sections,
+    build_staff_survey_edit_remarks,
+    record_staff_data_edit_audit,
+)
+from ...schemas.case_welfare import WelfareApplicantUpdate, WelfareCaseUpdate
 from ...models.review import WelfareReviewComment
 from ...services.file_payment_upload import (
     ATTACHMENT_PDF_037_ID,
@@ -92,6 +103,8 @@ from ...schemas.payment import (
 from ...schemas.case_for_staff import (
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffApplicantStaffFieldsUpdate,
+    StaffCaseSectionsUpdate,
+    StaffDataEditLogCreate,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead,
     CaseForStaffListResponse,
@@ -136,6 +149,7 @@ from ...schemas.review import (
     WelfareEditRequestRead,
     WelfareReviewCommentRead,
 )
+from ...schemas.case_data_edit_log import CaseDataEditLogRead
 from ...schemas.status_log import WelfareRequestStatusRead
 from ...schemas.welfare import (
     WelfareEvidenceRead,
@@ -258,6 +272,11 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
             color=tmc.color if tmc else None,
         )
 
+    latest_status_id = (
+        case.latest_welfare_request_status.current_status_id
+        if case.latest_welfare_request_status is not None
+        else None
+    )
     summary = PorKor1Summary(
         applicant_id=orm.id,
         case_number=orm.case_number,
@@ -267,6 +286,11 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         sw_explorer_sdshv=orm.sw_explorer_sdshv,
         applicant_created_at=orm.created_at,
         applicant_updated_at=orm.updated_at,
+        can_edit_case_sections=(
+            latest_status_id in STAFF_CASE_SECTION_EDIT_STATUS_IDS
+            if latest_status_id is not None
+            else False
+        ),
         **_process_sla_fields_from_applicant(orm),
     )
 
@@ -405,6 +429,11 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         for ev in sorted(orm.welfare_evidences, key=lambda x: x.id)
     ]
 
+    data_edit_logs = [
+        CaseDataEditLogRead.model_validate(log)
+        for log in sorted(orm.data_edit_logs, key=lambda x: (x.created_at, x.id), reverse=True)
+    ]
+
     return CaseForStaffPorKor1DetailResponse(
         summary=summary,
         person=person_section,
@@ -418,6 +447,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         welfare_request_status=welfare_request_status,
         evidences=evidences,
         return_edit=return_edit,
+        data_edit_logs=data_edit_logs,
     )
 
 
@@ -1625,6 +1655,136 @@ async def create_welfare_request_status_for_staff(
     )
     row = result.scalar_one()
     return WelfareRequestStatusRead.model_validate(row)
+
+
+def _staff_sections_to_welfare_update(body: StaffCaseSectionsUpdate) -> WelfareCaseUpdate:
+    applicant = None
+    if body.problem_details is not None:
+        applicant = WelfareApplicantUpdate(problem_details=body.problem_details)
+    return WelfareCaseUpdate(
+        applicant=applicant,
+        addresses=body.addresses,
+        dependency_loads=body.dependency_loads,
+        economic_infos=body.economic_infos,
+        household_members=body.household_members,
+        welfare_history=body.welfare_history,
+        request_type_ids=body.request_type_ids,
+        request_other_text=body.request_other_text,
+        request_in_kind_text=body.request_in_kind_text,
+    )
+
+
+@router.patch(
+    "/case-sections",
+    response_model=CaseForStaffPorKor1DetailResponse,
+    summary="นักสังคมฯ แก้ไขส่วนที่ 2–4 ปสค.1",
+    description=(
+        "อัปเดตเฉพาะ addresses, economic, dependency, household_members, "
+        "welfare_history, problem_details, request_types — คืน por-kor-1-detail หลังบันทึก"
+    ),
+)
+async def update_case_sections_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: StaffCaseSectionsUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffPorKor1DetailResponse:
+    payload = body.model_dump(exclude_unset=True)
+    if not {k for k in payload if k != "update_by_sdshv"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="at_least_one_field_required",
+        )
+
+    row = await session.get(Applicant, applicant_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    current_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
+    if current_status_id not in STAFF_CASE_SECTION_EDIT_STATUS_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="case_status_not_editable",
+        )
+
+    welfare_update = _staff_sections_to_welfare_update(body)
+    await apply_case_update(session, applicant_id, welfare_update)
+    await record_staff_data_edit_audit(
+        session,
+        applicant_id=applicant_id,
+        current_status_id=current_status_id,
+        edit_by_sdshv=body.update_by_sdshv,
+        remarks=build_staff_section_edit_remarks(payload),
+        event_type=EVENT_TYPE_SECTION_EDIT,
+        sections=build_staff_section_edit_sections(payload),
+    )
+    await session.commit()
+
+    reloaded = await _load_full_applicant(session, applicant_id)
+    if reloaded is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="reload_failed")
+
+    if reloaded.type_money_category_id is not None and reloaded.type_money_category is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="type_money_category_not_found_for_applicant",
+        )
+
+    case_read = await applicant_to_case_read(reloaded)
+    return _build_por_kor_1_detail(case_read, reloaded)
+
+
+@router.post(
+    "/data-edit-log",
+    response_model=CaseDataEditLogRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึก timeline การแก้ไขข้อมูล",
+    description=(
+        "เพิ่มแถวใน case_data_edit_logs — "
+        "ใช้เมื่อแก้ไขผลการเยี่ยมบ้านหรือกรณีอื่นที่ไม่ผ่าน PATCH /case-sections"
+    ),
+)
+async def create_staff_data_edit_log(
+    body: StaffDataEditLogCreate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseDataEditLogRead:
+    applicant = await session.get(Applicant, body.applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    current_status_id = await fetch_latest_status_id(session, applicant_id=body.applicant_id)
+    if current_status_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+    if current_status_id not in STAFF_CASE_SECTION_EDIT_STATUS_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="case_status_not_editable",
+        )
+
+    event_type = (body.event_type or EVENT_TYPE_SURVEY_EDIT).strip()
+    if event_type not in {EVENT_TYPE_SECTION_EDIT, EVENT_TYPE_SURVEY_EDIT}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid_event_type",
+        )
+
+    if event_type == EVENT_TYPE_SURVEY_EDIT:
+        remarks = (body.remarks or "").strip() or build_staff_survey_edit_remarks()
+        sections = None
+    else:
+        remarks = (body.remarks or "").strip() or build_staff_section_edit_remarks({})
+        sections = body.sections
+
+    log = await record_staff_data_edit_audit(
+        session,
+        applicant_id=body.applicant_id,
+        current_status_id=current_status_id,
+        edit_by_sdshv=body.update_by_sdshv,
+        remarks=remarks,
+        event_type=event_type,
+        sections=sections,
+    )
+    await session.commit()
+    return CaseDataEditLogRead.model_validate(log)
 
 
 @router.get(

@@ -50,6 +50,7 @@ from ...schemas.economic import HouseholdMemberRead
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
 from ...services.case_number import allocate_case_number
+from ...services.case_update import apply_case_update, dedupe_preserve_order
 from ...services.submission_eligibility import (
     conflict_detail_for_reason,
     resolve_submission_eligibility,
@@ -79,16 +80,6 @@ ALLOWED_IMAGE_TYPES: dict[str, str] = {
 }
 
 router = APIRouter(prefix="/v1/cases", tags=["cases"])
-
-
-def _dedupe_preserve_order(ids: list[int]) -> list[int]:
-    seen: set[int] = set()
-    out: list[int] = []
-    for i in ids:
-        if i not in seen:
-            seen.add(i)
-            out.append(i)
-    return out
 
 
 def _applicant_load_options():  # noqa: ANN001
@@ -121,6 +112,7 @@ def _applicant_load_options():  # noqa: ANN001
         selectinload(Applicant.status_logs)
         .selectinload(WelfareRequestStatus.review_comments)
         .selectinload(WelfareReviewComment.review_field),
+        selectinload(Applicant.data_edit_logs),
     ]
 
 
@@ -325,7 +317,7 @@ async def create_welfare_case(
         await _ensure_type_money_category_exists(session, body.applicant.type_money_category_id)
 
 
-    req_ids = _dedupe_preserve_order(body.request_type_ids)
+    req_ids = dedupe_preserve_order(body.request_type_ids)
 
     person_cid = await session.scalar(
         select(Person.cid).where(Person.id == body.applicant.persons_id)
@@ -519,189 +511,18 @@ async def update_welfare_case(
     - field = None → ไม่แตะ section นั้น
     - field = list ใหม่ → ลบของเดิมทั้งหมดแล้ว insert ใหม่ (replace)
     """
-    # ตรวจว่า case มีอยู่จริง
-    applicant_row = await session.get(
-        Applicant,
-        applicant_id,
-        options=[
-            selectinload(Applicant.type_money_category),
-            selectinload(Applicant.bank_name),
-        ],
-    )
+    applicant_row = await session.get(Applicant, applicant_id)
     if applicant_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
 
     # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้าจังหวัดถูกปิด ห้ามแก้ไข/บันทึกซ้ำ
-    # (สอดคล้องกับ gate ตอน create — ไม่ให้มีการเขียนข้อมูลลงจังหวัดที่ปิดอยู่)
     if not await is_province_enabled_by_person_id(session, applicant_row.persons_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="province_not_enabled",
         )
 
-    # ── อัปเดต applicant fields (เฉพาะที่ส่งมา) ────────────────────────────────
-    if body.applicant is not None:
-        a = body.applicant
-        if a.requester_relation_id is not None:
-            applicant_row.requester_relation_id = a.requester_relation_id
-        if a.marital_status_id is not None:
-            applicant_row.marital_status_id = a.marital_status_id
-        if a.mobile_phone is not None:
-            applicant_row.mobile_phone = a.mobile_phone
-        if a.home_phone is not None:
-            applicant_row.home_phone = a.home_phone
-        if a.fax_number is not None:
-            applicant_row.fax_number = a.fax_number
-        if a.email_address is not None:
-            applicant_row.email_address = str(a.email_address)
-        if a.problem_details is not None:
-            applicant_row.problem_details = a.problem_details
-        if a.bank_name_id is not None:
-            await _ensure_bank_name_exists(session, a.bank_name_id)
-            applicant_row.bank_name_id = a.bank_name_id
-        if a.bank_account_no is not None:
-            applicant_row.bank_account_no = a.bank_account_no
-        if a.bank_account_type_id is not None:
-            await _ensure_bank_account_type_exists(session, a.bank_account_type_id)
-            applicant_row.bank_account_type_id = a.bank_account_type_id
-        if a.bank_branch_name is not None:
-            applicant_row.bank_branch_name = a.bank_branch_name
-        if a.age is not None:
-            applicant_row.age = a.age
-        if a.reset_processing_state:
-            applicant_row.process_started_at     = None
-            applicant_row.process_sla_days       = None
-            applicant_row.process_completed_at   = None
-            applicant_row.time_count_process     = None
-            applicant_row.type_money_category_id = None
-
-    # ── Replace addresses ────────────────────────────────────────────────────────
-    if body.addresses is not None:
-        await session.execute(delete(Address).where(Address.applicant_id == applicant_id))
-        for addr in body.addresses:
-            session.add(Address(
-                applicant_id=applicant_id,
-                sub_district_postcode_id=addr.sub_district_postcode_id,
-                address_type_id=addr.address_type_id,
-                alley=addr.alley,
-                sub_lane=addr.sub_lane,
-                house_name=addr.house_name,
-                road=addr.road,
-                house_moo=addr.house_moo,
-                house_number=addr.house_number,
-                mobile_phone=addr.mobile_phone,
-                latitude=addr.latitude,
-                longitude=addr.longitude,
-            ))
-
-    # ── Replace dependency_loads ─────────────────────────────────────────────────
-    if body.dependency_loads is not None:
-        await session.execute(delete(DependencyLoad).where(DependencyLoad.applicant_id == applicant_id))
-        for dl in body.dependency_loads:
-            session.add(DependencyLoad(
-                applicant_id=applicant_id,
-                dependency_type_id=dl.dependency_type_id,
-                dependency_other_text=dl.dependency_other_text,
-            ))
-
-    # ── Replace economic_infos ───────────────────────────────────────────────────
-    hm_count_for_update = len(body.household_members) if body.household_members is not None else None
-    if body.economic_infos is not None:
-        # bulk DELETE ไม่ trigger ORM cascade ต้องลบ EconomicIncomeSource ก่อน
-        eco_id_subq = select(EconomicInfo.id).where(EconomicInfo.applicant_id == applicant_id)
-        await session.execute(delete(EconomicIncomeSource).where(EconomicIncomeSource.economic_id.in_(eco_id_subq)))
-        await session.execute(delete(EconomicInfo).where(EconomicInfo.applicant_id == applicant_id))
-        await session.flush()
-        for eco in body.economic_infos:
-            econ = EconomicInfo(
-                applicant_id=applicant_id,
-                housing_types_id=eco.housing_types_id,
-                housing_types_rent=eco.housing_types_rent,
-                occupation=eco.occupation,
-                monthly_income=eco.monthly_income,
-                household_members=hm_count_for_update if hm_count_for_update is not None else eco.household_members,
-                family_occupation=eco.family_occupation,
-            )
-            session.add(econ)
-            await session.flush()
-            for src in eco.income_sources:
-                session.add(EconomicIncomeSource(
-                    economic_id=econ.id,
-                    income_source_type_id=src.income_source_type_id,
-                    other_details=src.other_details,
-                ))
-
-    # ── Replace household_members ────────────────────────────────────────────────
-    if body.household_members is not None:
-        await session.execute(delete(HouseholdMember).where(HouseholdMember.applicant_id == applicant_id))
-        for hm in body.household_members:
-            session.add(HouseholdMember(
-                applicant_id=applicant_id,
-                seq=hm.seq,
-                national_id=hm.national_id,
-                prefix_id=hm.prefix_id,
-                prefix_other=hm.prefix_other,
-                first_name=hm.first_name,
-                last_name=hm.last_name,
-                date_of_birth=hm.date_of_birth,
-                relation_to_applicant_id=hm.relation_to_applicant_id,
-                occupation=hm.occupation,
-                monthly_income=hm.monthly_income,
-                physical_condition=hm.physical_condition,
-                self_care=hm.self_care,
-            ))
-        # sync count into economic_infos when economic_infos was not replaced this request
-        if body.economic_infos is None:
-            from sqlalchemy import update as sa_update
-            await session.execute(
-                sa_update(EconomicInfo)
-                .where(EconomicInfo.applicant_id == applicant_id)
-                .values(household_members=len(body.household_members))
-            )
-
-    # ── Replace request_type_ids ─────────────────────────────────────────────────
-    if body.request_type_ids is not None:
-        await session.execute(delete(WelfareRequestType).where(WelfareRequestType.applicant_id == applicant_id))
-        for rt in _dedupe_preserve_order(body.request_type_ids):
-            session.add(WelfareRequestType(
-                applicant_id=applicant_id,
-                request_type_id=rt,
-                request_other_text=body.request_other_text if rt == 3 else None,
-                request_in_kind_text=body.request_in_kind_text if rt == 2 else None,
-            ))
-
-    # ── Replace welfare_history (1:1 — upsert by applicant_id) ──────────────────
-    if body.welfare_history is not None:
-        existing_wh = await session.get(WelfareHistory, applicant_id)
-        wh = body.welfare_history
-        if existing_wh is not None:
-            existing_wh.received_count = wh.received_count
-            existing_wh.has_received_welfare = wh.has_received_welfare
-            existing_wh.total_received_amount = wh.total_received_amount
-            await session.flush()
-            await session.execute(
-                delete(WelfareHistoryDetail).where(WelfareHistoryDetail.welfare_history_id == applicant_id)
-            )
-        else:
-            new_wh = WelfareHistory(
-                applicant_id=applicant_id,
-                received_count=wh.received_count,
-                has_received_welfare=wh.has_received_welfare,
-                total_received_amount=wh.total_received_amount,
-            )
-            session.add(new_wh)
-            await session.flush()
-        for det in wh.history_details:
-            session.add(WelfareHistoryDetail(
-                welfare_history_id=applicant_id,
-                received_welfare_type_id=det.received_welfare_type_id,
-                received_other=det.received_other,
-            ))
-
-    try:
-        await session.flush()
-    except IntegrityError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    await apply_case_update(session, applicant_id, body)
 
     reloaded = await _load_full_applicant(session, applicant_id)
     if reloaded is None:

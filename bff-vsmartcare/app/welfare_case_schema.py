@@ -70,6 +70,7 @@ class HouseholdMemberInCase(BaseModel):
 
 class EconomicInfoInCase(BaseModel):
     housing_types_id: int | None = None
+    housing_types_rent: Decimal | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     household_members: int | None = Field(None, ge=0)

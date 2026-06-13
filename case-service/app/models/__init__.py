@@ -41,6 +41,7 @@ from .person import Person
 from .screening import ScreeningLog, WelfareRequestConsent
 from .review import ReviewField, WelfareReviewComment
 from .satisfaction import SatisfactionSurvey
+from .case_data_edit_log import CaseDataEditLog
 from .status_log import WelfareRequestStatus
 from .welfare import (
     WelfareEvidence,
@@ -59,6 +60,7 @@ __all__ = [
     "AttachmentType",
     "BankAccountType",
     "BankName",
+    "CaseDataEditLog",
     "CaseHandling",
     "CaseKtbCorporate",
     "CasePayment",
