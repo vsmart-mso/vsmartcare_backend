@@ -199,7 +199,17 @@ class PaymentUploadHistoryRound(BaseModel):
     welfare_payment_id: int = Field(
         ...,
         ge=1,
-        description="แถว welfare_payment ของรอบนี้ (037 หรือ 038 แยกกัน)",
+        description="แถว anchor ของรอบ (038 ก่อน หรือแถวเดียว) — ใช้ welfare_payment_id_037/_038 เมื่อแก้ไข",
+    )
+    welfare_payment_id_037: int | None = Field(
+        None,
+        ge=1,
+        description="แถว welfare_payment ของ 037 ในรอบนี้ (ถ้ามี)",
+    )
+    welfare_payment_id_038: int | None = Field(
+        None,
+        ge=1,
+        description="แถว welfare_payment ของ 038 ในรอบนี้ (ถ้ามี)",
     )
     payment_id_cft037: str | None = Field(
         None,

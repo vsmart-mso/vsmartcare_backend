@@ -252,6 +252,8 @@ def _round_from_group(
     return PaymentUploadHistoryRound(
         round_no=round_no,
         welfare_payment_id=anchor.id,
+        welfare_payment_id_037=row_037.id if row_037 is not None else None,
+        welfare_payment_id_038=row_038.id if row_038 is not None else None,
         payment_id_cft037=payment_id_cft037,
         payment_id_cft038=payment_id_cft038,
         files=labels,

@@ -14,6 +14,7 @@ from ..models.lookup import AttachmentType
 from ..models.payment import FilePayment, WelfareDdaRef, WelfarePayment
 from ..services.welfare_payment_flow import (
     file_payment_owned_by_applicant,
+    resolve_payment_row_for_attachment,
     resolve_welfare_payment_for_upload,
 )
 from ..settings import resolved_upload_root, settings
@@ -92,20 +93,39 @@ async def _find_file_payment_for_welfare_row(
     welfare_payment_id: int,
     attachment_type_id: int,
 ) -> FilePayment | None:
+    payment = await session.get(WelfarePayment, welfare_payment_id)
+    if payment is None or payment.applicant_id != applicant_id:
+        return None
+
+    resolved = await resolve_payment_row_for_attachment(session, payment, attachment_type_id)
+
     row = await session.scalar(
         select(FilePayment)
         .where(
-            FilePayment.welfare_payment_id == welfare_payment_id,
+            FilePayment.welfare_payment_id == resolved.id,
             FilePayment.attachment_type_id == attachment_type_id,
         )
         .order_by(FilePayment.id.desc())
         .limit(1),
     )
-    if row is None:
-        return None
-    if not await file_payment_owned_by_applicant(session, applicant_id, row):
-        return None
-    return row
+    if row is not None and await file_payment_owned_by_applicant(session, applicant_id, row):
+        return row
+
+    batch_id = resolved.upload_batch_id or payment.upload_batch_id
+    if batch_id is not None:
+        row = await session.scalar(
+            select(FilePayment)
+            .where(
+                FilePayment.upload_batch_id == batch_id,
+                FilePayment.attachment_type_id == attachment_type_id,
+            )
+            .order_by(FilePayment.id.desc())
+            .limit(1),
+        )
+        if row is not None and await file_payment_owned_by_applicant(session, applicant_id, row):
+            return row
+
+    return None
 
 
 async def replace_file_payment_pdf(
