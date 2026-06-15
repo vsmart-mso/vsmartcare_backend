@@ -21,7 +21,7 @@ _ARTICLE_CONTENT_FIELDS = (
     "at",
     "date_at",
     "title",
-    "refer_vsmart_id",
+    "director_vsmart_id",
     "original_story",
     "fact_story",
     "laws",
