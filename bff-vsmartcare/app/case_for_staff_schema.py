@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from .welfare_case_schema import (
     AddressInCase,
@@ -212,7 +212,11 @@ class ArticleCreateBody(BaseModel):
     at: Optional[str] = Field(None, max_length=255)
     date_at: Optional[date] = None
     title: Optional[str] = Field(None, max_length=255)
-    refer_vsmart_id: Optional[str] = Field(None, max_length=255)
+    director_vsmart_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        validation_alias=AliasChoices("director_vsmart_id", "refer_vsmart_id"),
+    )
     original_story: Optional[str] = None
     fact_story: Optional[str] = None
     laws: Optional[str] = None
@@ -228,7 +232,11 @@ class ArticleUpdateBody(BaseModel):
     at: Optional[str] = Field(None, max_length=255)
     date_at: Optional[date] = None
     title: Optional[str] = Field(None, max_length=255)
-    refer_vsmart_id: Optional[str] = Field(None, max_length=255)
+    director_vsmart_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        validation_alias=AliasChoices("director_vsmart_id", "refer_vsmart_id"),
+    )
     original_story: Optional[str] = None
     fact_story: Optional[str] = None
     laws: Optional[str] = None

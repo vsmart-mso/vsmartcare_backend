@@ -41,3 +41,10 @@ COOLDOWN_STATUS_IDS: Final[frozenset[int]] = frozenset({
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_MSO_FORWARDED,
 })
+
+# ไม่เปลี่ยนสถานะเมื่อบันทึก/แก้ไขผลจ่าย 037 — คำร้องเดินหน้าถึงขั้นช่วยเหลือแล้วหรือส่งกระทรวงแล้ว
+PAYMENT_EDIT_PRESERVE_STATUS_IDS: Final[frozenset[int]] = frozenset({
+    CURRENT_STATUS_AID_COMPLETED,
+    CURRENT_STATUS_WITHDRAWING,
+    CURRENT_STATUS_MSO_FORWARDED,
+})
