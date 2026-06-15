@@ -7,7 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.payment import FilePayment, WelfarePayment
-from .payment_round_metrics import is_dda_closed_for_038
+from .payment_round_metrics import (
+    _find_round,
+    group_payment_rounds,
+    is_dda_closed_for_038,
+    load_payments_for_dda,
+    payment_rows_for_rounds,
+    rows_in_round,
+)
 
 PAYMENT_CYCLE_CLOSED = "payment_cycle_closed"
 ATTACHMENT_PDF_037_ID = 9
@@ -239,6 +246,103 @@ async def apply_037_update(
     return payment
 
 
+async def _sibling_payment_in_batch(
+    session: AsyncSession,
+    payment: WelfarePayment,
+    type_flag: bool,
+) -> WelfarePayment | None:
+    if payment.upload_batch_id is None:
+        return None
+    return await session.scalar(
+        select(WelfarePayment)
+        .where(
+            WelfarePayment.applicant_id == payment.applicant_id,
+            WelfarePayment.dda_ref_id == payment.dda_ref_id,
+            WelfarePayment.upload_batch_id == payment.upload_batch_id,
+            WelfarePayment.is_037_or_038.is_(type_flag),
+        )
+        .limit(1),
+    )
+
+
+async def _sibling_payment_in_round(
+    session: AsyncSession,
+    payment: WelfarePayment,
+    type_flag: bool,
+) -> WelfarePayment | None:
+    rows = await load_payments_for_dda(session, payment.applicant_id, payment.dda_ref_id)
+    rounds = group_payment_rounds(payment_rows_for_rounds(rows))
+    matched = _find_round(rounds, payment_id=payment.id)
+    if matched is None:
+        return None
+    for row in rows_in_round(matched):
+        if row.is_037_or_038 is type_flag:
+            return row
+    return None
+
+
+async def _resolve_payment_row_for_edit(
+    session: AsyncSession,
+    payment: WelfarePayment,
+    type_flag: bool | None,
+) -> WelfarePayment:
+    """เมื่อ PATCH ด้วย id ของอีกประเภทในรอบเดียวกัน (037+038) ให้ชี้ไปแถวที่ถูกต้อง."""
+    if type_flag is None or payment.is_037_or_038 is None or payment.is_037_or_038 == type_flag:
+        return payment
+
+    sibling = await _sibling_payment_in_batch(session, payment, type_flag)
+    if sibling is None:
+        sibling = await _sibling_payment_in_round(session, payment, type_flag)
+    if sibling is not None:
+        return sibling
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail="welfare_payment_type_change_not_allowed",
+    )
+
+
+def _payment_matches_attachment(payment: WelfarePayment, attachment_type_id: int) -> bool:
+    if attachment_type_id == ATTACHMENT_PDF_037_ID:
+        return payment.is_037_or_038 is False
+    if attachment_type_id == ATTACHMENT_PDF_038_ID:
+        return payment.is_037_or_038 is not False
+    return True
+
+
+def _type_flag_for_attachment(attachment_type_id: int) -> bool | None:
+    if attachment_type_id == ATTACHMENT_PDF_037_ID:
+        return False
+    if attachment_type_id == ATTACHMENT_PDF_038_ID:
+        return True
+    return None
+
+
+async def resolve_payment_row_for_attachment(
+    session: AsyncSession,
+    payment: WelfarePayment,
+    attachment_type_id: int,
+) -> WelfarePayment:
+    """เมื่ออัปโหลดไฟล์ด้วย welfare_payment_id ของอีกประเภทในรอบเดียวกัน ให้ชี้ไปแถวที่ถูกต้อง."""
+    if _payment_matches_attachment(payment, attachment_type_id):
+        return payment
+
+    type_flag = _type_flag_for_attachment(attachment_type_id)
+    if type_flag is None:
+        return payment
+
+    sibling = await _sibling_payment_in_batch(session, payment, type_flag)
+    if sibling is None:
+        sibling = await _sibling_payment_in_round(session, payment, type_flag)
+    if sibling is not None:
+        return sibling
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail="welfare_payment_attachment_type_mismatch",
+    )
+
+
 async def apply_payment_update_by_id(
     session: AsyncSession,
     applicant_id: int,
@@ -251,15 +355,7 @@ async def apply_payment_update_by_id(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
 
     type_flag = updates.get("is_037_or_038")
-    if (
-        type_flag is not None
-        and payment.is_037_or_038 is not None
-        and type_flag != payment.is_037_or_038
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="welfare_payment_type_change_not_allowed",
-        )
+    payment = await _resolve_payment_row_for_edit(session, payment, type_flag)
 
     _apply_fields(payment, updates)
     if type_flag is not None:
@@ -309,21 +405,8 @@ async def validate_welfare_payment_for_upload(
     if payment is None or payment.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
 
-    if attachment_type_id == ATTACHMENT_PDF_037_ID:
-        if payment.is_037_or_038 is False:
-            return payment
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="welfare_payment_attachment_type_mismatch",
-        )
-
-    if attachment_type_id == ATTACHMENT_PDF_038_ID:
-        if payment.is_037_or_038 is not False:
-            return payment
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="welfare_payment_attachment_type_mismatch",
-        )
+    if attachment_type_id in (ATTACHMENT_PDF_037_ID, ATTACHMENT_PDF_038_ID):
+        return await resolve_payment_row_for_attachment(session, payment, attachment_type_id)
 
     if payment.dda_ref_id != active_dda_ref_id:
         raise HTTPException(
