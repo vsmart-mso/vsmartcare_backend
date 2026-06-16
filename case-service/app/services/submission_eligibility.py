@@ -49,6 +49,20 @@ class SubmissionEligibilityResult:
         )
 
 
+def force_submission_allowed(result: SubmissionEligibilityResult) -> SubmissionEligibilityResult:
+    """Override ผล eligibility สำหรับ local/load test โดยคง metadata เดิมไว้."""
+    return SubmissionEligibilityResult(
+        can_submit=True,
+        can_access_portal=result.can_access_portal,
+        reason="eligible" if result.last_applicant_id is not None else "none",
+        last_applicant_id=result.last_applicant_id,
+        last_submitted_at=result.last_submitted_at,
+        eligible_at=result.eligible_at,
+        days_remaining=None,
+        current_status_id=result.current_status_id,
+    )
+
+
 def _to_bangkok(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=_BANGKOK)

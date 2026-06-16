@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     #: จำกัดยื่นคำขอซ้ำ — วันปฏิทินหลังส่งสำเร็จ (0 = ยื่นได้ทันที, ใช้ทดสอบ)
     cooldown_days: int = Field(default=30, ge=0, validation_alias="COOLDOWN_DAYS")
 
+    #: ข้าม business rule การตรวจ eligibility ตอน POST /v1/cases
+    #: ใช้เฉพาะ local/load test เพื่อไม่ให้ persons_id เดิมติด active_case/cooldown
+    bypass_submission_eligibility: bool = Field(
+        default=False,
+        validation_alias="BYPASS_SUBMISSION_ELIGIBILITY",
+    )
+
     #: --- Admin (TASK-v-care-12062026-01) — เปิด/ปิดบริการรายจังหวัด ---
     #: secret สำหรับเซ็น admin JWT (HS256) — ต้องตั้งใน production, แยกจาก THAID_JWT_SECRET
     admin_jwt_secret: str = Field(default="", validation_alias="ADMIN_JWT_SECRET")

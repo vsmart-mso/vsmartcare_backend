@@ -53,6 +53,7 @@ from ...services.case_number import allocate_case_number
 from ...services.case_update import apply_case_update, dedupe_preserve_order
 from ...services.submission_eligibility import (
     conflict_detail_for_reason,
+    force_submission_allowed,
     resolve_submission_eligibility,
 )
 from ...services.process_sla import process_sla_fields_dict
@@ -281,6 +282,8 @@ async def get_submission_eligibility(
 ) -> SubmissionEligibilityRead:
     await _ensure_person_exists(session, persons_id)
     result = await resolve_submission_eligibility(session, persons_id=persons_id)
+    if settings.bypass_submission_eligibility:
+        result = force_submission_allowed(result)
     return result.to_read()
 
 
@@ -299,15 +302,16 @@ async def create_welfare_case(
             detail="province_not_enabled",
         )
 
-    eligibility = await resolve_submission_eligibility(
-        session,
-        persons_id=body.applicant.persons_id,
-    )
-    if not eligibility.can_submit:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=conflict_detail_for_reason(eligibility.reason),
+    if not settings.bypass_submission_eligibility:
+        eligibility = await resolve_submission_eligibility(
+            session,
+            persons_id=body.applicant.persons_id,
         )
+        if not eligibility.can_submit:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=conflict_detail_for_reason(eligibility.reason),
+            )
     await _ensure_current_status_exists(session, body.initial_current_status_id)
     if body.applicant.bank_name_id is not None:
         await _ensure_bank_name_exists(session, body.applicant.bank_name_id)

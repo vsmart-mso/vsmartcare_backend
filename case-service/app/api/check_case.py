@@ -436,8 +436,7 @@ async def check_existing_case_by_cid(
 
     # AsyncSession ไม่รองรับการใช้พร้อมกันใน gather — แยก query DB ออกจาก HTTP ภายนอก
     self_result = await _check_self_database(session, normalized)
-    mso_result, vsmart_result = await asyncio.gather(
-        _check_mso_logbook(normalized, timeout),
+    (vsmart_result,) = await asyncio.gather(
         _check_external_source(
             source="vsmart_main",
             base_url=settings.vsmart_main_base_url,
@@ -449,7 +448,7 @@ async def check_existing_case_by_cid(
             timeout=timeout,
         ),
     )
-    sources = [self_result, mso_result, vsmart_result]
+    sources = [self_result, vsmart_result]
     is_existing = any(s.found for s in sources if s.available)
   
     return ExistingCaseCheckResult(

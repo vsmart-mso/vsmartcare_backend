@@ -36,45 +36,45 @@ services:
         "alembic upgrade head && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
       ]
 
-  # notification-service:
-  #   # ไม่โหลด notification-service/.env (มักตั้ง Gmail) — ใช้ Mailpit ใน dev เท่านั้น
-  #   env_file: []
-  #   depends_on:
-  #     - mailpit
-  #   environment:
-  #     - PYTHONPATH=/app
-  #     # Dev + Mailpit: ส่ง SMTP ไป mailpit (ดู UI ที่ http://localhost:8025)
-  #     - EMAIL_MODE=smtp
-  #     - EMAIL_AUTO_SEND=true
-  #     - SMTP_HOST=mailpit
-  #     - SMTP_PORT=1025
-  #     - SMTP_USER=
-  #     - SMTP_PASSWORD=
-  #     - SMTP_USE_TLS=false
-  #     - SMTP_USE_SSL=false
-  #     - FRONTEND_URL=http://localhost:5173/
-  #     - SMTP_FROM=dev-noreply@selfservice.local
-  #   volumes:
-  #     - ./notification-service/app:/app/app
-  #   command:
-  #     [
-  #       "python",
-  #       "-m",
-  #       "uvicorn",
-  #       "app.main:app",
-  #       "--host",
-  #       "0.0.0.0",
-  #       "--port",
-  #       "8000",
-  #       "--reload",
-  #     ]
+  notification-service:
+    # ไม่โหลด notification-service/.env (มักตั้ง Gmail) — ใช้ Mailpit ใน dev เท่านั้น
+    env_file: []
+    depends_on:
+      - mailpit
+    environment:
+      - PYTHONPATH=/app
+      # Dev + Mailpit: ส่ง SMTP ไป mailpit (ดู UI ที่ http://localhost:8025)
+      - EMAIL_MODE=smtp
+      - EMAIL_AUTO_SEND=true
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=nattapon20004@gmail.com
+      - SMTP_PASSWORD=cntb_btem_pioq_hoqd
+      - SMTP_USE_TLS=true
+      - SMTP_USE_SSL=false
+      - FRONTEND_URL=http://localhost:5173/
+      - SMTP_FROM=
+    volumes:
+      - ./notification-service/app:/app/app
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
 
   # # Inbox จำลองสำหรับ dev — Web UI http://localhost:8025 , SMTP mailpit:1025
-  # mailpit:
-  #   image: axllent/mailpit:latest
-  #   ports:
-  #     - "8025:8025"
-  #     - "1025:1025"
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
 
   thaid-auth-service:
     environment:
