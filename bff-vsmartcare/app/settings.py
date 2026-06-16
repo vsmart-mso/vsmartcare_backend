@@ -50,6 +50,10 @@ class Settings(BaseSettings):
         default="http://localhost:8004",
         validation_alias=AliasChoices("OCR_SERVICE_URL"),
     )
+    dashboard_service_url: str = Field(
+        default="http://localhost:8005",
+        validation_alias=AliasChoices("DASHBOARD_SERVICE_URL"),
+    )
     # URL ของ frontend app — ใช้ redirect กลับเมื่อ ThaiD callback ล้มเหลว
     # Production: https://example.com | Dev: http://localhost:5173
     frontend_url: str = Field(
@@ -79,6 +83,7 @@ class Settings(BaseSettings):
         "notification_service_url",
         "thaid_auth_service_url",
         "ocr_service_url",
+        "dashboard_service_url",
         mode="after",
     )
     @classmethod

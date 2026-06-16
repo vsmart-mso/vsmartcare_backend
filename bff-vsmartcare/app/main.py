@@ -34,6 +34,7 @@ from .services.staff_digest_dispatch import (
     dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
+from .dashboard_schema import DashboardDistrictsRead, DashboardOverviewRead
 from .submission_eligibility_schema import SubmissionEligibilityRead
 from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
@@ -73,6 +74,7 @@ _TAGS = [
     {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
     {"name": "satisfaction", "description": "ผลประเมินความพึงพอใจของผู้ยื่นคำขอ"},
     {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด"},
+    {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -2509,6 +2511,103 @@ async def admin_update_province(
         f"{base}/v1/admin/provinces/{province_id}",
         json=body.model_dump(),
         headers=_forward_auth_headers(authorization),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard — ส่งต่อ dashboard-service; รับ province_id/current_status_id/type_money_id
+# ตรงจาก query param เหมือน /v1/case_for_staff (ไม่มี permission/scope check ที่ BFF ตอนนี้)
+# ---------------------------------------------------------------------------
+
+
+def _multi_query_pairs(base: list[tuple[str, Any]], key: str, values: Optional[list[int]]) -> list[tuple[str, Any]]:
+    pairs = list(base)
+    if values:
+        for v in values:
+            pairs.append((key, v))
+    return pairs
+
+
+@router.get(
+    "/v1/dashboard/overview",
+    tags=["dashboard"],
+    summary="สรุปจำนวนคำร้องตามสถานะของจังหวัด (สำหรับ donut chart)",
+    description="ส่งต่อ `GET …/v1/dashboard/overview?province_id=…` ใน dashboard-service",
+    response_model=DashboardOverviewRead,
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_overview(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการดู"),
+    type_money_id: Optional[list[int]] = Query(
+        None, description="กรองตาม type_money_category.id ได้หลายค่า"
+    ),
+) -> DashboardOverviewRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs = _multi_query_pairs([("province_id", province_id)], "type_money_id", type_money_id)
+    data = await _get(f"{base}/v1/dashboard/overview?{urlencode(pairs)}")
+    return DashboardOverviewRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/districts",
+    tags=["dashboard"],
+    summary="ตารางสรุปรายอำเภอ แยกตามสถานะ (มี pagination)",
+    description=(
+        "ส่งต่อ `GET …/v1/dashboard/districts` ใน dashboard-service — "
+        "คืนทุกอำเภอในจังหวัด (แม้ count=0) พร้อม status_counts ต่อ current_status_id"
+    ),
+    response_model=DashboardDistrictsRead,
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_districts(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการดู"),
+    current_status_id: Optional[list[int]] = Query(
+        None, description="กรองตาม current_status_id ได้หลายค่า"
+    ),
+    type_money_id: Optional[list[int]] = Query(
+        None, description="กรองตาม type_money_category.id ได้หลายค่า"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> DashboardDistrictsRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("province_id", province_id),
+        ("page", page),
+        ("page_size", page_size),
+    ]
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    data = await _get(f"{base}/v1/dashboard/districts?{urlencode(pairs)}")
+    return DashboardDistrictsRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/districts/export",
+    tags=["dashboard"],
+    summary="ดาวน์โหลด Excel ตารางสรุปรายอำเภอ",
+    description="ส่งต่อ `GET …/v1/dashboard/districts/export` ใน dashboard-service — filter เดียวกับ /districts แต่ไม่มี pagination",
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_districts_export(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการดู"),
+    current_status_id: Optional[list[int]] = Query(None, description="กรองตาม current_status_id ได้หลายค่า"),
+    type_money_id: Optional[list[int]] = Query(None, description="กรองตาม type_money_category.id ได้หลายค่า"),
+) -> Response:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs = _multi_query_pairs([("province_id", province_id)], "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    r = await _get_raw(f"{base}/v1/dashboard/districts/export?{urlencode(pairs)}", timeout=60.0)
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        media_type=r.headers.get(
+            "content-type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        headers=out_headers,
     )
 
 
