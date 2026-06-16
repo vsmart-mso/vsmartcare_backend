@@ -32,7 +32,10 @@ class Article(Base):
     at: Mapped[str | None] = mapped_column(String(255))
     date_at: Mapped[date | None] = mapped_column(Date)
     title: Mapped[str | None] = mapped_column(String(255))
-    refer_vsmart_id: Mapped[str | None] = mapped_column(String(255))
+    director_vsmart_id: Mapped[str | None] = mapped_column(
+        "refer_vsmart_id",
+        String(255),
+    )
     original_story: Mapped[str | None] = mapped_column(Text)
     fact_story: Mapped[str | None] = mapped_column(Text)
     laws: Mapped[str | None] = mapped_column(Text)

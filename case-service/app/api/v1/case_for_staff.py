@@ -43,6 +43,7 @@ from ...constants.current_status import (
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
     CURRENT_STATUS_MSO_FORWARDED,
+    PAYMENT_EDIT_PRESERVE_STATUS_IDS,
     STAFF_CASE_SECTION_EDIT_STATUS_IDS,
 )
 from ...services.case_update import apply_case_update
@@ -518,6 +519,10 @@ async def _apply_037_status_if_needed(
 ) -> tuple[WelfareRequestStatus | None, CurrentStatus | None]:
     """ตั้งสถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมี 038 ในรอบเดียวกัน."""
     if payment.is_037_or_038 is not False:
+        return None, None
+
+    latest_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
+    if latest_status_id in PAYMENT_EDIT_PRESERVE_STATUS_IDS:
         return None, None
 
     batch_id = updates.get("upload_batch_id")
@@ -1219,7 +1224,7 @@ async def update_welfare_payment_by_id_for_staff(
     body: WelfarePaymentUpdate = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> WelfarePaymentRead:
-    """PATCH แถวที่ระบุโดยตรง — ใช้แก้ประวัติ payment-upload-history ไม่สร้างแถว 038 ใหม่."""
+    """PATCH แถวที่ระบุโดยตรง — ใช้แก้ประวัติ payment-upload-history ไม่สร้างแถว 038 ใหม่ ไม่เปลี่ยนสถานะคำร้อง."""
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
@@ -1231,27 +1236,7 @@ async def update_welfare_payment_by_id_for_staff(
         updates,
     )
 
-    status_log: WelfareRequestStatus | None = None
-    status_row: CurrentStatus | None = None
-    if _welfare_payment_update_indicates_037(updates):
-        status_log, status_row = await _apply_037_status_if_needed(
-            session,
-            applicant_id,
-            payment,
-            updates,
-        )
-
     await session.commit()
-    if status_log is not None and status_log.current_status_id == CURRENT_STATUS_WITHDRAWING:
-        await enqueue_status_email(
-            session,
-            applicant_id=applicant_id,
-            status_log_id=status_log.id,
-            current_status_id=status_log.current_status_id,
-            current_status_color=status_row.color if status_row else None,
-            remarks=status_log.remarks,
-            trigger=CitizenStatusEmailTrigger.PAYMENT_037_RECORDED,
-        )
     await session.refresh(payment)
     return WelfarePaymentRead.model_validate(payment)
 
