@@ -36,6 +36,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+load_tests/results/
 
 # virtualenvs
 .venv/

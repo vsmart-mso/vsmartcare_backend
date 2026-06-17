@@ -352,6 +352,64 @@ $env:LOCUST_ENABLE_OCR_LINK="true"
 locust -f .\load_tests\locustfile.py --headless -u 5 -r 1 -t 2m
 ```
 
+## Export Results To CSV
+
+Locust รองรับการเขียนผลลัพธ์ออกเป็น CSV โดยตรง
+
+ตัวอย่างพื้นฐาน:
+
+```powershell
+locust -f .\load_tests\locustfile.py --headless -u 20 -r 2 -t 5m --csv .\load_tests\results\submit_request_run
+```
+
+คำสั่งนี้จะสร้างไฟล์ประมาณนี้:
+
+- `load_tests/results/submit_request_run_stats.csv`
+- `load_tests/results/submit_request_run_stats_history.csv`
+- `load_tests/results/submit_request_run_failures.csv`
+- `load_tests/results/submit_request_run_exceptions.csv`
+
+ความหมายของไฟล์:
+
+- `*_stats.csv`
+  สรุปผลรวมราย endpoint ตอนจบรอบ
+- `*_stats_history.csv`
+  time series ระหว่างรัน เหมาะกับเอาไป plot graph ต่อ
+- `*_failures.csv`
+  รายการ failure ที่ Locust จับได้
+- `*_exceptions.csv`
+  exception ฝั่ง Locust/python ถ้ามี
+
+## Export CSV With Helper Script
+
+มีสคริปต์ [run_locust_csv.ps1](/D:/pm_care_backend/vsmartcare_backend/load_tests/run_locust_csv.ps1) ให้แล้ว
+
+ตัวอย่าง:
+
+```powershell
+.\load_tests\run_locust_csv.ps1 -Users 50 -SpawnRate 5 -RunTime 2m
+```
+
+สคริปต์จะ:
+
+- สร้างโฟลเดอร์ `load_tests/results` ถ้ายังไม่มี
+- ตั้งชื่อไฟล์ด้วย timestamp อัตโนมัติ
+- รัน Locust แบบ `--headless`
+- เขียนผล CSV ออกมาเป็นชุด
+
+ตัวอย่างไฟล์ที่ได้:
+
+- `load_tests/results/submit_request_20260617_153000_stats.csv`
+- `load_tests/results/submit_request_20260617_153000_stats_history.csv`
+- `load_tests/results/submit_request_20260617_153000_failures.csv`
+- `load_tests/results/submit_request_20260617_153000_exceptions.csv`
+
+ถ้าต้องการเปลี่ยน prefix:
+
+```powershell
+.\load_tests\run_locust_csv.ps1 -Users 200 -SpawnRate 20 -RunTime 2m -Prefix cases_capacity_u200
+```
+
 ## Metrics To Watch
 
 ดูทั้งฝั่ง Locust และ Monitoring
