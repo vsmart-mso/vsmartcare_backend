@@ -221,6 +221,170 @@ async def fetch_provinces_status_breakdown(
     return [dict(r) for r in rows]
 
 
+_DISTRICT_FILTERED_APPLICANTS_CTE = """
+district_filtered AS (
+    SELECT
+        ap.id AS applicant_id,
+        ap.type_money_category_id,
+        sd.id AS sub_district_id,
+        sd.name AS sub_district_name,
+        ls.current_status_id AS current_status_id
+    FROM applicants ap
+    JOIN persons p ON p.id = ap.persons_id
+    LEFT JOIN LATERAL (
+        SELECT a.sub_district_postcode_id
+        FROM address a
+        WHERE a.applicant_id = ap.id
+        ORDER BY a.id ASC
+        LIMIT 1
+    ) pa ON TRUE
+    JOIN sub_districts_postcode sdp
+        ON sdp.id = COALESCE(pa.sub_district_postcode_id, p.sub_district_postcode_id)
+    JOIN sub_districts sd ON sd.id = sdp.sub_district_id
+    JOIN districts d ON d.id = sd.district_id
+    LEFT JOIN LATERAL (
+        SELECT wrs.current_status_id
+        FROM welfare_request_status wrs
+        WHERE wrs.applicant_id = ap.id
+        ORDER BY wrs.updated_at DESC, wrs.id DESC
+        LIMIT 1
+    ) ls ON TRUE
+    WHERE d.id = :district_id
+      AND d.province_id = :province_id
+      AND (
+          CAST(:type_money_ids AS int[]) IS NULL
+          OR ap.type_money_category_id = ANY(CAST(:type_money_ids AS int[]))
+      )
+)
+"""
+
+
+async def fetch_district(
+    session: AsyncSession, district_id: int, province_id: int
+) -> dict | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT d.id AS district_id, d.name AS district_name,
+                       p.id AS province_id, p.name AS province_name
+                FROM districts d
+                JOIN province p ON p.id = d.province_id
+                WHERE d.id = :district_id AND d.province_id = :province_id
+                """
+            ),
+            {"district_id": district_id, "province_id": province_id},
+        )
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+async def fetch_sub_districts_total_count(
+    session: AsyncSession, *, district_id: int
+) -> int:
+    return (
+        await session.scalar(
+            text("SELECT COUNT(*) FROM sub_districts WHERE district_id = :district_id"),
+            {"district_id": district_id},
+        )
+        or 0
+    )
+
+
+async def fetch_sub_districts_page(
+    session: AsyncSession,
+    *,
+    district_id: int,
+    province_id: int,
+    current_status_ids: list[int] | None,
+    type_money_ids: list[int] | None,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    sql = text(
+        f"""
+        WITH {_DISTRICT_FILTERED_APPLICANTS_CTE}
+        SELECT
+            sd.id AS sub_district_id,
+            sd.name AS sub_district_name,
+            COUNT(df.applicant_id) FILTER (
+                WHERE cs.filter_activate = true
+                  AND (
+                      CAST(:current_status_ids AS int[]) IS NULL
+                      OR df.current_status_id = ANY(CAST(:current_status_ids AS int[]))
+                  )
+            ) AS total
+        FROM sub_districts sd
+        LEFT JOIN district_filtered df ON df.sub_district_id = sd.id
+        LEFT JOIN current_status cs ON cs.id = df.current_status_id
+        WHERE sd.district_id = :district_id
+        GROUP BY sd.id, sd.name
+        ORDER BY sd.id
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    rows = (
+        await session.execute(
+            sql,
+            {
+                "district_id": district_id,
+                "province_id": province_id,
+                "type_money_ids": type_money_ids,
+                "current_status_ids": current_status_ids,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def fetch_sub_districts_status_breakdown(
+    session: AsyncSession,
+    *,
+    district_id: int,
+    province_id: int,
+    sub_district_ids: list[int],
+    current_status_ids: list[int] | None,
+    type_money_ids: list[int] | None,
+) -> list[dict]:
+    if not sub_district_ids:
+        return []
+    sql = text(
+        f"""
+        WITH {_DISTRICT_FILTERED_APPLICANTS_CTE}
+        SELECT
+            sd.id AS sub_district_id,
+            cs.id AS current_status_id,
+            COUNT(df.applicant_id) AS count
+        FROM sub_districts sd
+        CROSS JOIN current_status cs
+        LEFT JOIN district_filtered df
+            ON df.sub_district_id = sd.id AND df.current_status_id = cs.id
+        WHERE sd.id = ANY(CAST(:sub_district_ids AS int[]))
+          AND cs.filter_activate = true
+          AND (
+              CAST(:current_status_ids AS int[]) IS NULL
+              OR cs.id = ANY(CAST(:current_status_ids AS int[]))
+          )
+        GROUP BY sd.id, cs.id
+        """
+    )
+    rows = (
+        await session.execute(
+            sql,
+            {
+                "district_id": district_id,
+                "province_id": province_id,
+                "type_money_ids": type_money_ids,
+                "sub_district_ids": sub_district_ids,
+                "current_status_ids": current_status_ids,
+            },
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def fetch_province(session: AsyncSession, province_id: int) -> dict | None:
     row = (
         await session.execute(

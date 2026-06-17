@@ -39,6 +39,7 @@ from .dashboard_schema import (
     DashboardNationalOverviewRead,
     DashboardOverviewRead,
     DashboardProvincesRead,
+    DashboardSubDistrictsRead,
 )
 from .submission_eligibility_schema import SubmissionEligibilityRead
 from .settings import cors_origin_list, settings
@@ -2675,6 +2676,35 @@ async def get_dashboard_districts_export(
         ),
         headers=out_headers,
     )
+
+
+@router.get(
+    "/v1/dashboard/sub-districts",
+    tags=["dashboard"],
+    summary="ตารางสรุปรายตำบล แยกตามสถานะ (มี pagination)",
+    description="ส่งต่อ `GET …/v1/dashboard/sub-districts` ใน dashboard-service — คืนทุกตำบลในอำเภอพร้อม status_counts",
+    response_model=DashboardSubDistrictsRead,
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_sub_districts(
+    district_id: int = Query(..., description="รหัสอำเภอที่ต้องการดู"),
+    province_id: int = Query(..., description="รหัสจังหวัด (ตรวจสอบว่าอำเภออยู่ในจังหวัดนี้)"),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> DashboardSubDistrictsRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("district_id", district_id),
+        ("province_id", province_id),
+        ("page", page),
+        ("page_size", page_size),
+    ]
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    data = await _get(f"{base}/v1/dashboard/sub-districts?{urlencode(pairs)}")
+    return DashboardSubDistrictsRead.model_validate(data)
 
 
 app.include_router(router, prefix=_api_prefix)

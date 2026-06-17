@@ -59,3 +59,22 @@ class DashboardProvincesRead(BaseModel):
     total_items: int
     total_pages: int
     items: list[DashboardProvinceRow]
+
+
+class DashboardSubDistrictRow(BaseModel):
+    sub_district_id: int
+    sub_district_name: str
+    status_counts: dict[str, int]
+    total: int = Field(..., ge=0)
+
+
+class DashboardSubDistrictsRead(BaseModel):
+    district_id: int
+    district_name: str
+    province_id: int
+    province_name: str
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+    items: list[DashboardSubDistrictRow]

@@ -23,10 +23,13 @@ from ...schemas import (
     DashboardProvinceRow,
     DashboardProvincesRead,
     DashboardStatusCount,
+    DashboardSubDistrictRow,
+    DashboardSubDistrictsRead,
 )
 from ...settings import settings
 from ...queries import (
     fetch_active_current_statuses,
+    fetch_district,
     fetch_districts_page,
     fetch_districts_status_breakdown,
     fetch_districts_total_count,
@@ -38,6 +41,9 @@ from ...queries import (
     fetch_provinces_page,
     fetch_provinces_status_breakdown,
     fetch_provinces_total_count,
+    fetch_sub_districts_page,
+    fetch_sub_districts_status_breakdown,
+    fetch_sub_districts_total_count,
 )
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
@@ -316,6 +322,76 @@ async def get_districts(
         type_money_id=type_money_id,
         page=page,
         page_size=resolved_page_size,
+    )
+
+
+@router.get("/sub-districts", response_model=DashboardSubDistrictsRead)
+async def get_sub_districts(
+    district_id: int = Query(..., description="รหัสอำเภอที่ต้องการดู"),
+    province_id: int = Query(..., description="รหัสจังหวัด (ตรวจสอบว่าอำเภออยู่ในจังหวัดนี้)"),
+    current_status_id: list[int] | None = Query(None),
+    type_money_id: list[int] | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> DashboardSubDistrictsRead:
+    """ตารางรายตำบล แยกตาม status — คืนทุกตำบลในอำเภอ (แม้ count=0) พร้อม status_counts."""
+    district = await fetch_district(session, district_id=district_id, province_id=province_id)
+    if district is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="district_not_found")
+
+    resolved_page_size = min(page_size or settings.default_page_size, settings.max_page_size)
+    current_status_ids = _clean_ids(current_status_id)
+    type_money_ids = _clean_ids(type_money_id)
+
+    total_items = await fetch_sub_districts_total_count(session, district_id=district_id)
+    total_pages = max(1, (total_items + resolved_page_size - 1) // resolved_page_size) if total_items else 1
+
+    sub_district_rows = await fetch_sub_districts_page(
+        session,
+        district_id=district_id,
+        province_id=province_id,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+        limit=resolved_page_size,
+        offset=(page - 1) * resolved_page_size,
+    )
+    sub_district_ids = [r["sub_district_id"] for r in sub_district_rows]
+
+    breakdown_rows = await fetch_sub_districts_status_breakdown(
+        session,
+        district_id=district_id,
+        province_id=province_id,
+        sub_district_ids=sub_district_ids,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+    )
+    status_counts_by_sub_district: dict[int, dict[str, int]] = {}
+    for row in breakdown_rows:
+        status_counts_by_sub_district.setdefault(row["sub_district_id"], {})[
+            str(row["current_status_id"])
+        ] = row["count"]
+
+    items = [
+        DashboardSubDistrictRow(
+            sub_district_id=row["sub_district_id"],
+            sub_district_name=row["sub_district_name"],
+            status_counts=status_counts_by_sub_district.get(row["sub_district_id"], {}),
+            total=row["total"],
+        )
+        for row in sub_district_rows
+    ]
+
+    return DashboardSubDistrictsRead(
+        district_id=district["district_id"],
+        district_name=district["district_name"],
+        province_id=district["province_id"],
+        province_name=district["province_name"],
+        page=page,
+        page_size=resolved_page_size,
+        total_items=total_items,
+        total_pages=total_pages,
+        items=items,
     )
 
 
