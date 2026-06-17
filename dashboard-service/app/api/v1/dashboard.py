@@ -18,7 +18,10 @@ from ...core.database import get_session
 from ...schemas import (
     DashboardDistrictRow,
     DashboardDistrictsRead,
+    DashboardNationalOverviewRead,
     DashboardOverviewRead,
+    DashboardProvinceRow,
+    DashboardProvincesRead,
     DashboardStatusCount,
 )
 from ...settings import settings
@@ -27,9 +30,14 @@ from ...queries import (
     fetch_districts_page,
     fetch_districts_status_breakdown,
     fetch_districts_total_count,
+    fetch_national_status_counts,
+    fetch_national_total,
     fetch_overview_status_counts,
     fetch_overview_total,
     fetch_province,
+    fetch_provinces_page,
+    fetch_provinces_status_breakdown,
+    fetch_provinces_total_count,
 )
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
@@ -45,6 +53,147 @@ async def _require_province(session: AsyncSession, province_id: int) -> dict:
     if province is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
     return province
+
+
+@router.get("/national/overview", response_model=DashboardNationalOverviewRead)
+async def get_national_overview(
+    type_money_id: list[int] | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> DashboardNationalOverviewRead:
+    """สรุปทั้งประเทศ แยกตาม status — ใช้ทำ donut chart ระดับประเทศ."""
+    type_money_ids = _clean_ids(type_money_id)
+    total = await fetch_national_total(session, type_money_ids=type_money_ids)
+    status_rows = await fetch_national_status_counts(session, type_money_ids=type_money_ids)
+    statuses = [
+        DashboardStatusCount(
+            current_status_id=row["current_status_id"],
+            label=row["label"],
+            color=row["color"],
+            count=row["count"],
+            percent=round((row["count"] / total * 100), 1) if total else 0.0,
+        )
+        for row in status_rows
+    ]
+    return DashboardNationalOverviewRead(
+        total=total,
+        updated_at=datetime.now(timezone.utc),
+        statuses=statuses,
+    )
+
+
+async def _build_provinces_response(
+    session: AsyncSession,
+    *,
+    current_status_id: list[int] | None,
+    type_money_id: list[int] | None,
+    page: int,
+    page_size: int,
+    _prefetched_total: int | None = None,
+) -> DashboardProvincesRead:
+    current_status_ids = _clean_ids(current_status_id)
+    type_money_ids = _clean_ids(type_money_id)
+
+    total_items = _prefetched_total if _prefetched_total is not None else await fetch_provinces_total_count(session)
+    total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
+
+    province_rows = await fetch_provinces_page(
+        session,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+    )
+    province_ids = [r["province_id"] for r in province_rows]
+
+    breakdown_rows = await fetch_provinces_status_breakdown(
+        session,
+        province_ids=province_ids,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+    )
+    status_counts_by_province: dict[int, dict[str, int]] = {}
+    for row in breakdown_rows:
+        status_counts_by_province.setdefault(row["province_id"], {})[
+            str(row["current_status_id"])
+        ] = row["count"]
+
+    items = [
+        DashboardProvinceRow(
+            province_id=row["province_id"],
+            province_name=row["province_name"],
+            status_counts=status_counts_by_province.get(row["province_id"], {}),
+            total=row["total"],
+        )
+        for row in province_rows
+    ]
+    return DashboardProvincesRead(
+        page=page,
+        page_size=page_size,
+        total_items=total_items,
+        total_pages=total_pages,
+        items=items,
+    )
+
+
+@router.get("/provinces", response_model=DashboardProvincesRead)
+async def get_provinces(
+    current_status_id: list[int] | None = Query(None),
+    type_money_id: list[int] | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> DashboardProvincesRead:
+    """ตารางรายจังหวัดทั้งประเทศ แยกตาม status — มี pagination."""
+    resolved = min(page_size or settings.default_page_size, settings.max_page_size)
+    return await _build_provinces_response(
+        session,
+        current_status_id=current_status_id,
+        type_money_id=type_money_id,
+        page=page,
+        page_size=resolved,
+    )
+
+
+@router.get("/provinces/export")
+async def export_provinces(
+    current_status_id: list[int] | None = Query(None),
+    type_money_id: list[int] | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Excel รายจังหวัดทั้งประเทศ — ไม่มี pagination."""
+    from openpyxl import Workbook
+    from urllib.parse import quote
+
+    total = await fetch_provinces_total_count(session)
+    data = await _build_provinces_response(
+        session,
+        current_status_id=current_status_id,
+        type_money_id=type_money_id,
+        page=1,
+        page_size=max(total, 1),
+        _prefetched_total=total,
+    )
+    status_labels = await fetch_active_current_statuses(session)
+    status_ids = [r["id"] for r in status_labels]
+    status_headers = [r["label"] for r in status_labels]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "provinces"
+    ws.append(["ลำดับ", "จังหวัด", *status_headers, "รวม"])
+    for idx, row in enumerate(data.items, start=1):
+        ws.append([idx, row.province_name, *[row.status_counts.get(str(s), 0) for s in status_ids], row.total])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    safe = "dashboard-national-provinces.xlsx"
+    utf8 = quote("dashboard-ทั้งประเทศ-รายจังหวัด.xlsx")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe}"; filename*=UTF-8\'\'{utf8}'},
+    )
 
 
 @router.get("/overview", response_model=DashboardOverviewRead)
@@ -93,12 +242,13 @@ async def _build_districts_response(
     type_money_id: list[int] | None,
     page: int,
     page_size: int,
+    _prefetched_total: int | None = None,
 ) -> DashboardDistrictsRead:
     province = await _require_province(session, province_id)
     current_status_ids = _clean_ids(current_status_id)
     type_money_ids = _clean_ids(type_money_id)
 
-    total_items = await fetch_districts_total_count(session, province_id=province_id)
+    total_items = _prefetched_total if _prefetched_total is not None else await fetch_districts_total_count(session, province_id=province_id)
     total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
 
     district_rows = await fetch_districts_page(
@@ -187,6 +337,7 @@ async def export_districts(
         type_money_id=type_money_id,
         page=1,
         page_size=max(total_districts, 1),
+        _prefetched_total=total_districts,
     )
 
     status_labels = await fetch_active_current_statuses(session)

@@ -34,7 +34,12 @@ from .services.staff_digest_dispatch import (
     dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
-from .dashboard_schema import DashboardDistrictsRead, DashboardOverviewRead
+from .dashboard_schema import (
+    DashboardDistrictsRead,
+    DashboardNationalOverviewRead,
+    DashboardOverviewRead,
+    DashboardProvincesRead,
+)
 from .submission_eligibility_schema import SubmissionEligibilityRead
 from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
@@ -2526,6 +2531,67 @@ def _multi_query_pairs(base: list[tuple[str, Any]], key: str, values: Optional[l
         for v in values:
             pairs.append((key, v))
     return pairs
+
+
+@router.get(
+    "/v1/dashboard/national/overview",
+    tags=["dashboard"],
+    summary="สรุปจำนวนคำร้องทั้งประเทศ แยกตามสถานะ (donut chart ระดับประเทศ)",
+    response_model=DashboardNationalOverviewRead,
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_national_overview(
+    type_money_id: Optional[list[int]] = Query(None),
+) -> DashboardNationalOverviewRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs = _multi_query_pairs([], "type_money_id", type_money_id)
+    data = await _get(f"{base}/v1/dashboard/national/overview?{urlencode(pairs)}")
+    return DashboardNationalOverviewRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/provinces",
+    tags=["dashboard"],
+    summary="ตารางสรุปรายจังหวัดทั้งประเทศ แยกตามสถานะ (มี pagination)",
+    response_model=DashboardProvincesRead,
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_provinces(
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> DashboardProvincesRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("page", page), ("page_size", page_size)]
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    data = await _get(f"{base}/v1/dashboard/provinces?{urlencode(pairs)}")
+    return DashboardProvincesRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/provinces/export",
+    tags=["dashboard"],
+    summary="ดาวน์โหลด Excel ตารางสรุปรายจังหวัดทั้งประเทศ",
+    dependencies=_v1_api_key,
+)
+async def get_dashboard_provinces_export(
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+) -> Response:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs = _multi_query_pairs([], "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    r = await _get_raw(f"{base}/v1/dashboard/provinces/export?{urlencode(pairs)}", timeout=60.0)
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        headers=out_headers,
+    )
 
 
 @router.get(

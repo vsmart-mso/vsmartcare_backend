@@ -61,6 +61,166 @@ filtered_applicants AS (
 """
 
 
+# CTE ระดับประเทศ: เหมือน _FILTERED_APPLICANTS_CTE แต่ไม่กรองจังหวัด + เพิ่ม province_id ใน SELECT
+_NATIONAL_FILTERED_APPLICANTS_CTE = """
+national_filtered AS (
+    SELECT
+        ap.id AS applicant_id,
+        ap.type_money_category_id,
+        d.province_id AS province_id,
+        ls.current_status_id AS current_status_id
+    FROM applicants ap
+    JOIN persons p ON p.id = ap.persons_id
+    LEFT JOIN LATERAL (
+        SELECT a.sub_district_postcode_id
+        FROM address a
+        WHERE a.applicant_id = ap.id
+        ORDER BY a.id ASC
+        LIMIT 1
+    ) pa ON TRUE
+    JOIN sub_districts_postcode sdp
+        ON sdp.id = COALESCE(pa.sub_district_postcode_id, p.sub_district_postcode_id)
+    JOIN sub_districts sd ON sd.id = sdp.sub_district_id
+    JOIN districts d ON d.id = sd.district_id
+    LEFT JOIN LATERAL (
+        SELECT wrs.current_status_id
+        FROM welfare_request_status wrs
+        WHERE wrs.applicant_id = ap.id
+        ORDER BY wrs.updated_at DESC, wrs.id DESC
+        LIMIT 1
+    ) ls ON TRUE
+    WHERE (
+        CAST(:type_money_ids AS int[]) IS NULL
+        OR ap.type_money_category_id = ANY(CAST(:type_money_ids AS int[]))
+    )
+)
+"""
+
+
+async def fetch_national_total(
+    session: AsyncSession,
+    *,
+    type_money_ids: list[int] | None,
+) -> int:
+    sql = text(
+        f"WITH {_NATIONAL_FILTERED_APPLICANTS_CTE} SELECT COUNT(*) FROM national_filtered"
+    )
+    return await session.scalar(sql, {"type_money_ids": type_money_ids}) or 0
+
+
+async def fetch_national_status_counts(
+    session: AsyncSession,
+    *,
+    type_money_ids: list[int] | None,
+) -> list[dict]:
+    sql = text(
+        f"""
+        WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}
+        SELECT
+            cs.id AS current_status_id,
+            cs.description_staff AS label,
+            cs.color AS color,
+            COUNT(fa.applicant_id) AS count
+        FROM current_status cs
+        LEFT JOIN national_filtered fa ON fa.current_status_id = cs.id
+        WHERE cs.filter_activate = true
+        GROUP BY cs.id, cs.description_staff, cs.color, cs.filter_order
+        ORDER BY cs.filter_order
+        """
+    )
+    rows = (await session.execute(sql, {"type_money_ids": type_money_ids})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def fetch_provinces_total_count(session: AsyncSession) -> int:
+    return await session.scalar(text("SELECT COUNT(*) FROM province")) or 0
+
+
+async def fetch_provinces_page(
+    session: AsyncSession,
+    *,
+    current_status_ids: list[int] | None,
+    type_money_ids: list[int] | None,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    sql = text(
+        f"""
+        WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}
+        SELECT
+            prov.id AS province_id,
+            prov.name AS province_name,
+            COUNT(fa.applicant_id) FILTER (
+                WHERE cs.filter_activate = true
+                  AND (
+                      CAST(:current_status_ids AS int[]) IS NULL
+                      OR fa.current_status_id = ANY(CAST(:current_status_ids AS int[]))
+                  )
+            ) AS total
+        FROM province prov
+        LEFT JOIN national_filtered fa ON fa.province_id = prov.id
+        LEFT JOIN current_status cs ON cs.id = fa.current_status_id
+        GROUP BY prov.id, prov.name
+        ORDER BY prov.id
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    rows = (
+        await session.execute(
+            sql,
+            {
+                "type_money_ids": type_money_ids,
+                "current_status_ids": current_status_ids,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def fetch_provinces_status_breakdown(
+    session: AsyncSession,
+    *,
+    province_ids: list[int],
+    current_status_ids: list[int] | None,
+    type_money_ids: list[int] | None,
+) -> list[dict]:
+    if not province_ids:
+        return []
+    sql = text(
+        f"""
+        WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}
+        SELECT
+            prov.id AS province_id,
+            cs.id AS current_status_id,
+            COUNT(fa.applicant_id) AS count
+        FROM province prov
+        CROSS JOIN current_status cs
+        LEFT JOIN national_filtered fa
+            ON fa.province_id = prov.id AND fa.current_status_id = cs.id
+        WHERE prov.id = ANY(CAST(:province_ids AS int[]))
+          AND cs.filter_activate = true
+          AND (
+              CAST(:current_status_ids AS int[]) IS NULL
+              OR cs.id = ANY(CAST(:current_status_ids AS int[]))
+          )
+        GROUP BY prov.id, cs.id
+        """
+    )
+    rows = (
+        await session.execute(
+            sql,
+            {
+                "type_money_ids": type_money_ids,
+                "province_ids": province_ids,
+                "current_status_ids": current_status_ids,
+            },
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def fetch_province(session: AsyncSession, province_id: int) -> dict | None:
     row = (
         await session.execute(
@@ -163,13 +323,15 @@ async def fetch_districts_page(
             d.id AS district_id,
             d.name AS district_name,
             COUNT(fa.applicant_id) FILTER (
-                WHERE (
-                    CAST(:current_status_ids AS int[]) IS NULL
-                    OR fa.current_status_id = ANY(CAST(:current_status_ids AS int[]))
-                )
+                WHERE cs.filter_activate = true
+                  AND (
+                      CAST(:current_status_ids AS int[]) IS NULL
+                      OR fa.current_status_id = ANY(CAST(:current_status_ids AS int[]))
+                  )
             ) AS total
         FROM districts d
         LEFT JOIN filtered_applicants fa ON fa.district_id = d.id
+        LEFT JOIN current_status cs ON cs.id = fa.current_status_id
         WHERE d.province_id = :province_id
         GROUP BY d.id, d.name
         ORDER BY d.id

@@ -42,3 +42,24 @@ class DashboardDistrictsRead(BaseModel):
     total_items: int = Field(..., description="จำนวนอำเภอทั้งหมดในจังหวัด (ไม่ใช่จำนวนคำร้อง)")
     total_pages: int
     items: list[DashboardDistrictRow]
+
+
+class DashboardNationalOverviewRead(BaseModel):
+    total: int = Field(..., ge=0)
+    updated_at: datetime
+    statuses: list[DashboardStatusCount]
+
+
+class DashboardProvinceRow(BaseModel):
+    province_id: int
+    province_name: str
+    status_counts: dict[str, int]
+    total: int = Field(..., ge=0)
+
+
+class DashboardProvincesRead(BaseModel):
+    page: int
+    page_size: int
+    total_items: int = Field(..., description="จำนวนจังหวัดทั้งหมด (ไม่ใช่จำนวนคำร้อง)")
+    total_pages: int
+    items: list[DashboardProvinceRow]
