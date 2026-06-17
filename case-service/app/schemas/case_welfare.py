@@ -10,7 +10,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+from ..constants.lookup_other import OTHER_TYPE_ID
 
 from .address import AddressRead
 from .applicant import ApplicantRead
@@ -60,10 +62,28 @@ class DependencyLoadInCase(BaseModel):
     dependency_type_id: int
     dependency_other_text: str | None = Field(None, max_length=500)
 
+    @model_validator(mode="after")
+    def scope_dependency_other_text(self) -> "DependencyLoadInCase":
+        if self.dependency_type_id != OTHER_TYPE_ID:
+            self.dependency_other_text = None
+        elif self.dependency_other_text is not None:
+            stripped = self.dependency_other_text.strip()
+            self.dependency_other_text = stripped or None
+        return self
+
 
 class EconomicIncomeSourceInCase(BaseModel):
     income_source_type_id: int
     other_details: str | None = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def scope_other_details(self) -> "EconomicIncomeSourceInCase":
+        if self.income_source_type_id != OTHER_TYPE_ID:
+            self.other_details = None
+        elif self.other_details is not None:
+            stripped = self.other_details.strip()
+            self.other_details = stripped or None
+        return self
 
 
 class HouseholdMemberInCase(BaseModel):
