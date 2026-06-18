@@ -38,6 +38,7 @@ $env:GRAFANA_ADMIN_PASSWORD="change-me"
 - Prometheus scrape `cadvisor:8080`
 - Prometheus scrape `postgres-exporter:9187`
 - Prometheus scrape `/metrics` จาก `bff-vsmartcare` และ `case-service`
+- Prometheus scrape `blackbox-exporter:9115` สำหรับ synthetic probe ของเส้น `vsmart`
 - Grafana datasource ถูก provision ให้ชี้ไป Prometheus อัตโนมัติ
 - Grafana dashboard ถูก provision อัตโนมัติจาก `monitoring/grafana/dashboards`
 
@@ -57,6 +58,28 @@ Grafana จะมี dashboard ชื่อ `VSmartCare Monitoring Overview` ใ
 - submit-request flow latency p95
 - submit-request flow error rate
 - submit-request flow status code breakdown
+- VSMART probe up/down
+- VSMART probe latency
+- VSMART HTTP status code
+
+## Monitor VSMART Endpoint
+
+แก้ target ที่ไฟล์ `monitoring/prometheus/vsmart-targets.yml`
+
+ตัวอย่าง:
+
+```yaml
+- labels:
+    group: vsmart
+  targets:
+    - http://host.docker.internal:8090/api/v1/people/check-cid?cid=1103701234561
+```
+
+หมายเหตุ:
+
+- ถ้า VSMART รันบนเครื่อง host เดียวกับ Docker ให้ใช้ `host.docker.internal` แทน `localhost`
+- เลือก URL ที่สะท้อน availability จริงของ VSMART เช่น health endpoint หรือเส้น check-cid ที่ระบบใช้งานจริง
+- หลังแก้ target แล้ว reload Prometheus หรือ restart monitoring stack
 
 ## Application Metrics Added
 

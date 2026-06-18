@@ -430,6 +430,63 @@ locust -f .\load_tests\locustfile.py --headless -u 20 -r 2 -t 5m --csv .\load_te
 - PostgreSQL connections / transactions / row changes / cache hit ratio
 - API request rate
 - API latency p95 ของ `bff` และ `case-service`
+- external dependency metrics ของ `case-service` เช่น `vsmart_main` และ `mso_logbook`
+
+## Detect External Dependency Failures
+
+ถ้า `case-service` เรียก API ภายนอก เช่น `vsmart_main` หรือ `mso_logbook` ระหว่าง flow แล้ว downstream ช้าหรือเสีย
+ตอนนี้สามารถดูจาก Prometheus metrics ได้โดยตรง
+
+metrics ที่เพิ่มไว้:
+
+- `external_dependency_requests_total`
+- `external_dependency_request_duration_seconds`
+- `external_dependency_requests_in_progress`
+
+label สำคัญ:
+
+- `dependency`
+  เช่น `vsmart_main`, `mso_logbook`
+- `method`
+  เช่น `GET`, `POST`
+- `result`
+  เช่น `success`, `timeout`, `request_error`, `http_500`
+
+ตัวอย่าง query ที่ใช้ดู:
+
+```promql
+sum by (dependency, result) (
+  rate(external_dependency_requests_total[5m])
+)
+```
+
+ดู latency ของ downstream:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (dependency, method, le) (
+    rate(external_dependency_request_duration_seconds_bucket[5m])
+  )
+)
+```
+
+ดู request ที่กำลังค้างอยู่:
+
+```promql
+sum by (dependency) (
+  external_dependency_requests_in_progress
+)
+```
+
+หลักการอ่าน:
+
+- ถ้า `POST /v1/cases` ช้า แต่ `external_dependency_*` ต่ำหรือไม่มี error
+  แนวโน้มคือคอขวดอยู่ใน service/DB ของเราเอง
+- ถ้า `vsmart_main timeout` หรือ `request_error` พุ่งพร้อมกับ `POST /v1/cases` ช้า
+  แนวโน้มคือ downstream ภายนอกเป็นสาเหตุร่วม
+- ถ้า latency ของ `external_dependency_request_duration_seconds` สูงก่อน API เราพัง
+  downstream น่าจะเริ่มเสื่อมก่อน service เรา
 
 ## How To Read Grafana Panels
 

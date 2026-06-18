@@ -1,0 +1,7 @@
+- labels:
+    group: vsmart
+  targets:
+    # Replace with the real VSMART health/check endpoint you want to monitor.
+    # If VSMART runs on the Windows host, Docker containers usually need host.docker.internal
+    # instead of localhost.
+    - http://host.docker.internal:8090/api/v1/people/check-cid?cid=1103701234561

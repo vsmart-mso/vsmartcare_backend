@@ -9,12 +9,14 @@ services:
       - --web.enable-lifecycle
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/vsmart-targets.yml:/etc/prometheus/vsmart-targets.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
     depends_on:
       - cadvisor
       - postgres-exporter
+      - blackbox-exporter
       - bff-vsmartcare
       - case-service
       - notification-service
@@ -68,6 +70,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: vsmartcare-blackbox-exporter
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    volumes:
+      - ./monitoring/blackbox/config.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "9115:9115"
 
 volumes:
   prometheus_data:

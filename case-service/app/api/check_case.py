@@ -76,6 +76,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from prometheus_client import Counter, Gauge, Histogram
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,6 +90,23 @@ from ..settings import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/check-case", tags=["check_case"])
+
+_EXTERNAL_REQUESTS_TOTAL = Counter(
+    "external_dependency_requests_total",
+    "Total outbound dependency requests from case-service",
+    ["dependency", "method", "result"],
+)
+_EXTERNAL_REQUEST_LATENCY = Histogram(
+    "external_dependency_request_duration_seconds",
+    "Outbound dependency request duration from case-service in seconds",
+    ["dependency", "method"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+_EXTERNAL_IN_FLIGHT = Gauge(
+    "external_dependency_requests_in_progress",
+    "Outbound dependency requests currently in progress",
+    ["dependency"],
+)
 
 _BOOL_KEYS = (
     "exists",
@@ -239,11 +257,20 @@ async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
     }
     payload = {field: cid}
 
+    dependency = "mso_logbook"
+    method = "POST"
+    _EXTERNAL_IN_FLIGHT.labels(dependency=dependency).inc()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, headers=headers, json=payload)
+        with _EXTERNAL_REQUEST_LATENCY.labels(dependency=dependency, method=method).time():
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, headers=headers, json=payload)
     except httpx.TimeoutException:
         logger.warning("check_case mso_logbook timeout cid=%s", cid)
+        _EXTERNAL_REQUESTS_TOTAL.labels(
+            dependency=dependency,
+            method=method,
+            result="timeout",
+        ).inc()
         return SourceCheckResult(
             source="mso_logbook",
             found=False,
@@ -252,6 +279,11 @@ async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
         )
     except httpx.RequestError as exc:
         logger.warning("check_case mso_logbook request_error cid=%s: %s", cid, exc)
+        _EXTERNAL_REQUESTS_TOTAL.labels(
+            dependency=dependency,
+            method=method,
+            result="request_error",
+        ).inc()
         return SourceCheckResult(
             source="mso_logbook",
             found=False,
@@ -259,11 +291,23 @@ async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
             message="request_error",
             detail=_request_error_detail(url, exc),
         )
+    finally:
+        _EXTERNAL_IN_FLIGHT.labels(dependency=dependency).dec()
 
     try:
         body: Any = response.json()
     except ValueError:
         body = None
+
+    if response.status_code >= 400:
+        result = f"http_{response.status_code}"
+    else:
+        result = "success"
+    _EXTERNAL_REQUESTS_TOTAL.labels(
+        dependency=dependency,
+        method=method,
+        result=result,
+    ).inc()
 
     found, available, message = _interpret_mso_logbook_response(response.status_code, body)
     if not available and message == "unrecognized_response":
@@ -335,11 +379,20 @@ async def _check_external_source(
     )
     headers = _auth_headers(api_key, api_key_header)
 
+    dependency = source
+    method = "GET"
+    _EXTERNAL_IN_FLIGHT.labels(dependency=dependency).inc()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers)
+        with _EXTERNAL_REQUEST_LATENCY.labels(dependency=dependency, method=method).time():
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(url, headers=headers)
     except httpx.TimeoutException:
         logger.warning("check_case %s timeout cid=%s", source, cid)
+        _EXTERNAL_REQUESTS_TOTAL.labels(
+            dependency=dependency,
+            method=method,
+            result="timeout",
+        ).inc()
         return SourceCheckResult(
             source=source,
             found=False,
@@ -348,6 +401,11 @@ async def _check_external_source(
         )
     except httpx.RequestError as exc:
         logger.warning("check_case %s request_error cid=%s: %s", source, cid, exc)
+        _EXTERNAL_REQUESTS_TOTAL.labels(
+            dependency=dependency,
+            method=method,
+            result="request_error",
+        ).inc()
         return SourceCheckResult(
             source=source,
             found=False,
@@ -355,6 +413,18 @@ async def _check_external_source(
             message="request_error",
             detail=_request_error_detail(url, exc),
         )
+    finally:
+        _EXTERNAL_IN_FLIGHT.labels(dependency=dependency).dec()
+
+    if response.status_code >= 400:
+        result = f"http_{response.status_code}"
+    else:
+        result = "success"
+    _EXTERNAL_REQUESTS_TOTAL.labels(
+        dependency=dependency,
+        method=method,
+        result=result,
+    ).inc()
 
     if response.status_code == status.HTTP_401_UNAUTHORIZED:
         return SourceCheckResult(
