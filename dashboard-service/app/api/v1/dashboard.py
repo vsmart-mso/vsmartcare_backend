@@ -283,6 +283,7 @@ async def _build_districts_response(
     items = [
         DashboardDistrictRow(
             district_id=row["district_id"],
+            district_code=row.get("district_code"),
             district_name=row["district_name"],
             status_counts=status_counts_by_district.get(row["district_id"], {}),
             total=row["total"],
@@ -375,6 +376,7 @@ async def get_sub_districts(
     items = [
         DashboardSubDistrictRow(
             sub_district_id=row["sub_district_id"],
+            sub_district_code=row.get("sub_district_code"),
             sub_district_name=row["sub_district_name"],
             status_counts=status_counts_by_sub_district.get(row["sub_district_id"], {}),
             total=row["total"],

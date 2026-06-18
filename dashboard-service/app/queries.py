@@ -306,6 +306,7 @@ async def fetch_sub_districts_page(
         WITH {_DISTRICT_FILTERED_APPLICANTS_CTE}
         SELECT
             sd.id AS sub_district_id,
+            sd.code AS sub_district_code,
             sd.name AS sub_district_name,
             COUNT(df.applicant_id) FILTER (
                 WHERE cs.filter_activate = true
@@ -318,7 +319,7 @@ async def fetch_sub_districts_page(
         LEFT JOIN district_filtered df ON df.sub_district_id = sd.id
         LEFT JOIN current_status cs ON cs.id = df.current_status_id
         WHERE sd.district_id = :district_id
-        GROUP BY sd.id, sd.name
+        GROUP BY sd.id, sd.code, sd.name
         ORDER BY sd.id
         LIMIT :limit OFFSET :offset
         """
@@ -485,6 +486,7 @@ async def fetch_districts_page(
         WITH {_FILTERED_APPLICANTS_CTE}
         SELECT
             d.id AS district_id,
+            d.code AS district_code,
             d.name AS district_name,
             COUNT(fa.applicant_id) FILTER (
                 WHERE cs.filter_activate = true
@@ -497,7 +499,7 @@ async def fetch_districts_page(
         LEFT JOIN filtered_applicants fa ON fa.district_id = d.id
         LEFT JOIN current_status cs ON cs.id = fa.current_status_id
         WHERE d.province_id = :province_id
-        GROUP BY d.id, d.name
+        GROUP BY d.id, d.code, d.name
         ORDER BY d.id
         LIMIT :limit OFFSET :offset
         """

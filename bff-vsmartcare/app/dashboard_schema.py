@@ -25,6 +25,7 @@ class DashboardOverviewRead(BaseModel):
 
 class DashboardDistrictRow(BaseModel):
     district_id: int
+    district_code: str | None = None
     district_name: str
     status_counts: dict[str, int]
     total: int = Field(..., ge=0)
@@ -63,6 +64,7 @@ class DashboardProvincesRead(BaseModel):
 
 class DashboardSubDistrictRow(BaseModel):
     sub_district_id: int
+    sub_district_code: str | None = None
     sub_district_name: str
     status_counts: dict[str, int]
     total: int = Field(..., ge=0)
