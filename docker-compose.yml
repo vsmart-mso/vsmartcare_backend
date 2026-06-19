@@ -41,6 +41,12 @@ services:
       - COOLDOWN_DAYS=30
       - ADMIN_JWT_SECRET=your-long-random-secret-at-least-32-chars
       - ADMIN_JWT_EXPIRE_MINUTES=480
+
+      - CHECK_CASE_ENABLE_VCARE_SELF=true
+      - CHECK_CASE_ENABLE_MSO_LOGBOOK=false
+      # CHECK_CASE_ENABLE_* ตั้งใน case-service/.env (อย่า hardcode ที่นี่ — จะทับ .env)
+      - VSMART_MAIN_API_KEY=1234567890
+      - EXTERNAL_CHECK_TIMEOUT_SECONDS=10
     ports:
       - "8001:8000"
     depends_on:

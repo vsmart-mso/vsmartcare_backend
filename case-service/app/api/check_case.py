@@ -3,11 +3,11 @@
 เป้าหมาย
 --------
 ตอบว่า CID นี้เป็น **รายเดิม** (`is_existing_case=true`) หรือ **รายใหม่** (`false`)
-โดยเช็ค 3 แหล่งพร้อมกัน แล้วรวมผล — ถ้าแหล่งใดแหล่งหนึ่งที่ตรวจได้พบข้อมูล ถือเป็นรายเดิม
+โดยเช็คแหล่งที่เปิดใช้งานพร้อมกัน แล้วรวมผล — ถ้าแหล่งใดแหล่งหนึ่งที่ตรวจได้พบข้อมูล ถือเป็นรายเดิม
 
 แหล่งข้อมูล
 -----------
-- ``self``       — ฐาน case-service: มี ``applicants`` ของ ``persons`` ที่ cid ตรงกัน
+- ``self``       — ฐาน VCARE (case-service): มี ``applicants`` ของ ``persons`` ที่ cid ตรงกัน
 - ``mso_logbook`` — API ภายนอก MSO logbook (ตั้ง ``MSO_LOGBOOK_*`` ใน .env)
 - ``vsmart_main``   — API ภายนอก VSmart หลัก (ตั้ง ``VSMART_MAIN_*`` ใน .env)
 
@@ -17,18 +17,6 @@
 
     GET /v1/check-case?cid=1103701234561
 
-    # ตัวอย่างคำตอบ
-    # {
-    #   "cid": "1103701234561",
-    #   "is_existing_case": true,
-    #   "sources": [
-    #     {"source": "self", "found": false, "available": true, ...},
-    #     {"source": "mso_logbook", "found": true, "available": true, ...},
-    #     {"source": "vsmart_main", "found": false, "available": false,
-    #      "message": "not_configured"}
-    #   ]
-    # }
-
 การใช้งาน (เรียกจากโค้ด)
 -------------------------
 ::
@@ -36,8 +24,6 @@
     from app.api.check_case import check_existing_case_by_cid
 
     result = await check_existing_case_by_cid(session, cid)
-    if result.is_existing_case:
-        ...  # รายเดิม
 
 ``POST /v1/cases`` เรียกฟังก์ชันนี้ก่อนบันทึก applicant แล้วตั้ง ``is_existing_case`` ให้อัตโนมัติ
 
@@ -45,26 +31,27 @@
 ---------------------------
 ::
 
+    # เปิด/ปิดแหล่งตรวจ (default true) — false = ข้ามแหล่งนั้น
+    CHECK_CASE_ENABLE_VCARE_SELF=true
+    CHECK_CASE_ENABLE_MSO_LOGBOOK=true
+
     MSO_LOGBOOK_URL=https://volunteer-smart-beta.nu.ac.th/vapi/api-convert/logbook/get-problem/
     MSO_LOGBOOK_API_KEY=your-api-key
-  # MSO_LOGBOOK_API_KEY_HEADER=Api-Key     # default
-  # MSO_LOGBOOK_BODY_FIELD=national_id     # default
-  # หรือแยก base + path แทน MSO_LOGBOOK_URL
 
     VSMART_MAIN_BASE_URL=https://vsmart.example.go.th
-    VSMART_MAIN_CHECK_PATH=/api/v1/petition-forms/check-cid
-    # หรือใส่ {cid} ใน path: /api/persons/{cid}/exists
+    VSMART_MAIN_CHECK_PATH=/api/v1/people/check-cid
     VSMART_MAIN_API_KEY=secret
 
     EXTERNAL_CHECK_TIMEOUT_SECONDS=10
 
 ถ้าไม่ตั้ง ``*_BASE_URL`` แหล่งนั้นจะ ``available=false`` (ไม่นับใน ``is_existing_case``)
+ถ้าตั้ง ``CHECK_CASE_ENABLE_*=false`` แหล่งนั้นจะ ``message=disabled``
 
 ความหมาย ``sources[]``
 -----------------------
 - ``found``     — พบข้อมูลในระบบนั้น (ใช้เมื่อ ``available=true``)
-- ``available`` — ตรวจสอบสำเร็จ; ``false`` = ยังไม่ config / timeout / error / อ่าน response ไม่ได้
-- ``message``   — สรุปสั้น ๆ เช่น ``not_found``, ``found``, ``not_configured``, ``timeout``
+- ``available`` — ตรวจสอบสำเร็จ; ``false`` = ปิด config / ไม่ได้ตั้ง URL / timeout / error
+- ``message``   — สรุปสั้น ๆ เช่น ``not_found``, ``found``, ``disabled``, ``not_configured``, ``timeout``
 """
 
 from __future__ import annotations
@@ -105,6 +92,15 @@ _LIST_KEYS = ("data", "items", "results", "records", "cases", "petitions")
 
 def _normalize_cid(cid: str) -> str:
     return validate_thai_cid(cid.strip())
+
+
+def _disabled_source_result(source: CheckCaseSource) -> SourceCheckResult:
+    return SourceCheckResult(
+        source=source,
+        found=False,
+        available=False,
+        message="disabled",
+    )
 
 
 def _json_indicates_existing(payload: Any) -> bool | None:
@@ -222,6 +218,9 @@ def _interpret_mso_logbook_response(
 
 async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
     """POST logbook get-problem — body ``{national_id: cid}``, header ``Api-Key``."""
+    if not settings.check_case_enable_mso_logbook:
+        return _disabled_source_result("mso_logbook")
+
     url = _resolve_mso_logbook_url()
     if not url:
         return SourceCheckResult(
@@ -285,6 +284,9 @@ async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
 
 
 async def _check_self_database(session: AsyncSession, cid: str) -> SourceCheckResult:
+    if not settings.check_case_enable_vcare_self:
+        return _disabled_source_result("self")
+
     person_id = await session.scalar(select(Person.id).where(Person.cid == cid))
     if person_id is None:
         return SourceCheckResult(
@@ -418,18 +420,9 @@ async def check_existing_case_by_cid(
     session: AsyncSession,
     cid: str,
 ) -> ExistingCaseCheckResult:
-    """เช็ค CID กับ self / MSO logbook / vsmart_main แบบขนาน.
+    """เช็ค CID กับแหล่งที่เปิดใช้งาน (self / MSO logbook / vsmart_main).
 
-    Args:
-        session: AsyncSession ของ case-service
-        cid: เลขบัตร 13 หลัก (ตัดช่องว่าง + ตรวจ checksum)
-
-    Returns:
-        ExistingCaseCheckResult — ``is_existing_case`` เป็น OR ของ ``found``
-        จากทุกแหล่งที่ ``available=true``
-
-    Raises:
-        ValueError: cid ไม่ใช่ตัวเลข 13 หลัก หรือ checksum ผิด
+    ``is_existing_case`` เป็น OR ของ ``found`` จากทุกแหล่งที่ ``available=true``.
     """
     normalized = _normalize_cid(cid)
     timeout = settings.external_check_timeout_seconds
@@ -451,7 +444,7 @@ async def check_existing_case_by_cid(
     )
     sources = [self_result, mso_result, vsmart_result]
     is_existing = any(s.found for s in sources if s.available)
-  
+
     return ExistingCaseCheckResult(
         cid=normalized,
         is_existing_case=is_existing,
