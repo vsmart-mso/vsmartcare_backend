@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     por_kor_1_name_acronym: str = Field(default="ปศค 1", validation_alias="POR_KOR_1_NAME_ACRONYM")
 
     # --- ตรวจรายใหม่/รายเดิม (app.api.check_case) — ว่าง URL = ข้ามแหล่งนั้น ---
+    #: เปิด/ปิดแหล่ง VCARE (self DB) และ MSO logbook — false = ข้าม (message=disabled)
+    check_case_enable_vcare_self: bool = Field(
+        default=True,
+        validation_alias="CHECK_CASE_ENABLE_VCARE_SELF",
+    )
+    check_case_enable_mso_logbook: bool = Field(
+        default=True,
+        validation_alias="CHECK_CASE_ENABLE_MSO_LOGBOOK",
+    )
     #: MSO logbook — URL เต็ม (ถ้าตั้ง จะไม่ใช้ BASE_URL + CHECK_PATH)
     mso_logbook_url: str = Field(default="", validation_alias="MSO_LOGBOOK_URL")
     mso_logbook_base_url: str = Field(default="", validation_alias="MSO_LOGBOOK_BASE_URL")
