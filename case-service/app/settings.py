@@ -106,6 +106,9 @@ class Settings(BaseSettings):
         default=480, ge=1, validation_alias="ADMIN_JWT_EXPIRE_MINUTES"
     )
 
+    #: secret สำหรับ verify citizen JWT จาก thaid-auth-service (HS256) — ต้องตรงกับ THAID_JWT_SECRET
+    thaid_jwt_secret: str = Field(default="", validation_alias="THAID_JWT_SECRET")
+
 
 settings = Settings()
 

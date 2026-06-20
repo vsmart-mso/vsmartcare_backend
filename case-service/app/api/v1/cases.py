@@ -16,6 +16,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ...core.citizen_security import (
+    CitizenClaims,
+    assert_person_owner,
+    get_owned_applicant,
+    require_citizen,
+)
 from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
@@ -232,12 +238,6 @@ async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> We
     )
 
 
-async def _ensure_person_exists(session: AsyncSession, person_id: int) -> None:
-    r = await session.execute(select(Person.id).where(Person.id == person_id))
-    if r.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
-
-
 async def _ensure_current_status_exists(session: AsyncSession, current_status_id: int) -> None:
     r = await session.execute(select(CurrentStatus.id).where(CurrentStatus.id == current_status_id))
     if r.scalar_one_or_none() is None:
@@ -278,8 +278,9 @@ async def _ensure_type_money_category_exists(
 async def get_submission_eligibility(
     persons_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> SubmissionEligibilityRead:
-    await _ensure_person_exists(session, persons_id)
+    assert_person_owner(persons_id, claims)
     result = await resolve_submission_eligibility(session, persons_id=persons_id)
     return result.to_read()
 
@@ -288,8 +289,9 @@ async def get_submission_eligibility(
 async def create_welfare_case(
     body: WelfareCaseCreate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
-    await _ensure_person_exists(session, body.applicant.persons_id)
+    assert_person_owner(body.applicant.persons_id, claims)
 
     # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้า admin ปิดจังหวัดของผู้ใช้ระหว่างกรอกฟอร์ม
     # จังหวะบันทึกสุดท้ายต้องบล็อก → FE จับ 403 แล้วเตะออกจากระบบ
@@ -495,8 +497,9 @@ async def create_welfare_case(
 async def list_welfare_cases_display(
     persons_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> list[CaseDisplayRead]:
-    await _ensure_person_exists(session, persons_id)
+    assert_person_owner(persons_id, claims)
     rows = await _load_applicants_for_display(session, persons_id)
     return [await applicant_to_display_read(row) for row in rows]
 
@@ -506,14 +509,13 @@ async def update_welfare_case(
     applicant_id: int,
     body: WelfareCaseUpdate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
     """แก้ไข case โดยส่งเฉพาะ section ที่ต้องการเปลี่ยน
     - field = None → ไม่แตะ section นั้น
     - field = list ใหม่ → ลบของเดิมทั้งหมดแล้ว insert ใหม่ (replace)
     """
-    applicant_row = await session.get(Applicant, applicant_id)
-    if applicant_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+    applicant_row = await get_owned_applicant(session, applicant_id, claims)
 
     # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้าจังหวัดถูกปิด ห้ามแก้ไข/บันทึกซ้ำ
     if not await is_province_enabled_by_person_id(session, applicant_row.persons_id):
@@ -534,7 +536,9 @@ async def update_welfare_case(
 async def get_welfare_case(
     applicant_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
+    await get_owned_applicant(session, applicant_id, claims)
     row = await _load_full_applicant(session, applicant_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
@@ -559,7 +563,9 @@ async def get_welfare_evidence_file(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> FileResponse:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -597,7 +603,9 @@ async def delete_welfare_evidence(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> None:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -623,7 +631,9 @@ async def update_welfare_evidence_name(
     evidence_id: int,
     body: dict,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> dict:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -645,10 +655,9 @@ async def upload_welfare_evidence_image(
     file_other_type_name: str | None = Form(None),
     file: UploadFile = File(..., description="ไฟล์รูป (jpeg/png/webp/gif) — ไม่ใช้ Base64"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareEvidenceUploadRead:
-    row_check = await session.execute(select(Applicant.id).where(Applicant.id == applicant_id))
-    if row_check.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+    await get_owned_applicant(session, applicant_id, claims)
 
     normalized_other_name = await validate_welfare_evidence_upload(
         session,
@@ -716,7 +725,9 @@ async def update_welfare_evidence_image(
     file_other_type_name: str | None = Form(None),
     file: UploadFile = File(..., description="ไฟล์รูปใหม่ (jpeg/png/webp/gif)"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareEvidenceUploadRead:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -775,7 +786,9 @@ async def delete_welfare_evidence_image(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> None:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")

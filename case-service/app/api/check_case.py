@@ -66,6 +66,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.citizen_security import CitizenClaims, assert_cid_owner, require_citizen
 from ..core.database import get_session
 from ..models.applicant import Applicant
 from ..models.person import Person
@@ -456,8 +457,10 @@ async def check_existing_case_by_cid(
 async def get_existing_case_check(
     cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> ExistingCaseCheckResult:
     """Endpoint ทดสอบ / เรียกก่อนยื่นคำร้อง — ดูรายละเอียดได้ที่ module docstring."""
+    assert_cid_owner(cid, claims)
     try:
         return await check_existing_case_by_cid(session, cid)
     except ValueError as exc:

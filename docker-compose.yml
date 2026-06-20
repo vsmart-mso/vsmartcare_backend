@@ -41,6 +41,7 @@ services:
       - COOLDOWN_DAYS=30
       - ADMIN_JWT_SECRET=your-long-random-secret-at-least-32-chars
       - ADMIN_JWT_EXPIRE_MINUTES=480
+      - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
 
       - CHECK_CASE_ENABLE_VCARE_SELF=true
       - CHECK_CASE_ENABLE_MSO_LOGBOOK=false
@@ -113,6 +114,7 @@ services:
     environment:
       - PORT=8000
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
     ports:
       - "8003:8000"
     depends_on:

@@ -63,6 +63,21 @@ def require_bff_api_key(x_api_key: Optional[str] = Depends(_api_key_header)) -> 
 
 _v1_api_key = [Depends(require_bff_api_key)]
 
+
+async def require_citizen_bearer(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
+) -> str:
+    """บังคับ Bearer token ของประชาชน — ใช้ forward ไป case-service (CR-01)."""
+    if not creds or creds.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="missing_bearer_token")
+    return f"Bearer {creds.credentials}"
+
+
+def _forward_auth_headers(authorization: Optional[str]) -> Dict[str, str]:
+    """สร้าง header forward JWT ไป downstream (ว่าง = ไม่ส่ง)."""
+    return {"Authorization": authorization} if authorization else {}
+
+
 _TAGS = [
     {"name": "meta", "description": "ข้อมูล service และ health checks"},
     {"name": "applicants", "description": "การจัดการข้อมูล applicant"},
@@ -212,6 +227,7 @@ async def _post_evidence_multipart(
     file: UploadFile,
     *,
     timeout: float = 120.0,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """ส่ง multipart ไป case-service สำหรับหลักฐานรูป (ไฟล์จริง ไม่ใช่ Base64)."""
     content = await file.read()
@@ -225,7 +241,7 @@ async def _post_evidence_multipart(
     ct = file.content_type or "application/octet-stream"
     async with httpx.AsyncClient(timeout=timeout) as client:
         files = {"file": (fname, content, ct)}
-        r = await client.post(url, data=data, files=files)
+        r = await client.post(url, data=data, files=files, headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -237,6 +253,7 @@ async def _put_evidence_multipart(
     file: UploadFile,
     *,
     timeout: float = 120.0,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """ส่ง multipart PUT ไป case-service สำหรับแก้ไขรูปหลักฐาน."""
     content = await file.read()
@@ -250,16 +267,22 @@ async def _put_evidence_multipart(
     ct = file.content_type or "application/octet-stream"
     async with httpx.AsyncClient(timeout=timeout) as client:
         files = {"file": (fname, content, ct)}
-        r = await client.put(url, data=data, files=files)
+        r = await client.put(url, data=data, files=files, headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
 
 
-async def _patch(url: str, json: Dict[str, Any], *, timeout: float = 30.0) -> Dict[str, Any]:
+async def _patch(
+    url: str,
+    json: Dict[str, Any],
+    *,
+    timeout: float = 30.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.patch(url, json=_json_safe_payload(json))
+        r = await client.patch(url, json=_json_safe_payload(json), headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -289,19 +312,29 @@ async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
         return r.json()
 
 
-async def _get_raw(url: str, *, timeout: float = 60.0) -> httpx.Response:
+async def _get_raw(
+    url: str,
+    *,
+    timeout: float = 60.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> httpx.Response:
     """GET แบบคืน Response ดิบ (ใช้โหลดไฟล์ไบนารี)."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.get(url)
+        r = await client.get(url, headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r
 
 
-async def _delete(url: str, *, timeout: float = 30.0) -> Any:
+async def _delete(
+    url: str,
+    *,
+    timeout: float = 30.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> Any:
     """ยิง HTTP DELETE; คืน JSON ถ้ามี body และถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.delete(url)
+        r = await client.delete(url, headers=headers)
         if r.status_code >= 400:
             detail: Any = r.text
             ct = (r.headers.get("content-type") or "").lower()
@@ -616,11 +649,19 @@ def _case_for_staff_finance_query_pairs(
     ),
     dependencies=_v1_api_key,
 )
-async def create_case(body: WelfareCaseCreate) -> Dict[str, Any]:
+async def create_case(
+    body: WelfareCaseCreate,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Dict[str, Any]:
     """รับ JSON ครบแล้วส่งต่อไปบันทึกฐานข้อมูล (ยังไม่รวมรูปหลักฐาน — ใช้ `/v1/cases/{applicant_id}/evidences`)."""
     base = settings.case_service_url.rstrip("/")
     payload = body.model_dump(mode="json")
-    return await _post(f"{base}/v1/cases", json=payload, timeout=120.0)
+    return await _post(
+        f"{base}/v1/cases",
+        json=payload,
+        timeout=120.0,
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.post(
@@ -635,6 +676,7 @@ async def upload_case_evidence(
     attachment_type_id: int = Form(...),
     file_other_type_name: Optional[str] = Form(None),
     file: UploadFile = File(...),
+    authorization: str = Depends(require_citizen_bearer),
 ) -> Dict[str, Any]:
     base = settings.case_service_url.rstrip("/")
     url = f"{base}/v1/cases/{applicant_id}/evidences"
@@ -645,6 +687,7 @@ async def upload_case_evidence(
             "file_other_type_name": file_other_type_name,
         },
         file,
+        headers=_forward_auth_headers(authorization),
     )
 
 
@@ -659,9 +702,15 @@ async def upload_case_evidence(
     response_model=list[CaseDisplayRead],
     dependencies=_v1_api_key,
 )
-async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
+async def list_cases_display(
+    persons_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> list[CaseDisplayRead]:
     base = settings.case_service_url.rstrip("/")
-    data = await _get(f"{base}/v1/cases/display?persons_id={persons_id}")
+    data = await _get(
+        f"{base}/v1/cases/display?persons_id={persons_id}",
+        headers=_forward_auth_headers(authorization),
+    )
     return [CaseDisplayRead.model_validate(item) for item in data]
 
 
@@ -676,9 +725,15 @@ async def list_cases_display(persons_id: int) -> list[CaseDisplayRead]:
     response_model=SubmissionEligibilityRead,
     dependencies=_v1_api_key,
 )
-async def get_submission_eligibility(persons_id: int) -> SubmissionEligibilityRead:
+async def get_submission_eligibility(
+    persons_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> SubmissionEligibilityRead:
     base = settings.case_service_url.rstrip("/")
-    data = await _get(f"{base}/v1/cases/submission-eligibility?persons_id={persons_id}")
+    data = await _get(
+        f"{base}/v1/cases/submission-eligibility?persons_id={persons_id}",
+        headers=_forward_auth_headers(authorization),
+    )
     return SubmissionEligibilityRead.model_validate(data)
 
 
@@ -1389,9 +1444,15 @@ async def create_mso_forward_for_staff(
     description="ส่งต่อ `GET …/v1/cases/{applicant_id}` (ตัวอ้างอิงคือ id จากตาราง applicants)",
     dependencies=_v1_api_key,
 )
-async def get_case(applicant_id: int) -> Any:
+async def get_case(
+    applicant_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
     base = settings.case_service_url.rstrip("/")
-    return await _get(f"{base}/v1/cases/{applicant_id}")
+    return await _get(
+        f"{base}/v1/cases/{applicant_id}",
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.put(
@@ -1407,6 +1468,7 @@ async def update_case_evidence(
     attachment_type_id: int = Form(...),
     file_other_type_name: Optional[str] = Form(None),
     file: UploadFile = File(...),
+    authorization: str = Depends(require_citizen_bearer),
 ) -> Dict[str, Any]:
     base = settings.case_service_url.rstrip("/")
     url = f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}"
@@ -1417,6 +1479,7 @@ async def update_case_evidence(
             "file_other_type_name": file_other_type_name,
         },
         file,
+        headers=_forward_auth_headers(authorization),
     )
 
 
@@ -1427,10 +1490,18 @@ async def update_case_evidence(
     description="ส่งต่อ `PATCH …/v1/cases/{applicant_id}` ใน case-service — ส่งเฉพาะ section ที่ต้องการแก้ไข",
     dependencies=_v1_api_key,
 )
-async def update_case(applicant_id: int, request: Request) -> Any:
+async def update_case(
+    applicant_id: int,
+    request: Request,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
     body = await request.json()
     base = settings.case_service_url.rstrip("/")
-    return await _patch(f"{base}/v1/cases/{applicant_id}", json=body)
+    return await _patch(
+        f"{base}/v1/cases/{applicant_id}",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.patch(
@@ -1440,10 +1511,19 @@ async def update_case(applicant_id: int, request: Request) -> Any:
     description="ส่งต่อ `PATCH …/v1/cases/{applicant_id}/evidences/{evidence_id}` ใน case-service — อัปเดต file_other_type_name",
     dependencies=_v1_api_key,
 )
-async def patch_case_evidence(applicant_id: int, evidence_id: int, request: Request) -> Any:
+async def patch_case_evidence(
+    applicant_id: int,
+    evidence_id: int,
+    request: Request,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
     body = await request.json()
     base = settings.case_service_url.rstrip("/")
-    return await _patch(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}", json=body)
+    return await _patch(
+        f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.delete(
@@ -1454,9 +1534,16 @@ async def patch_case_evidence(applicant_id: int, evidence_id: int, request: Requ
     dependencies=_v1_api_key,
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_case_evidence(applicant_id: int, evidence_id: int) -> Response:
+async def delete_case_evidence(
+    applicant_id: int,
+    evidence_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Response:
     base = settings.case_service_url.rstrip("/")
-    await _delete(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}")
+    await _delete(
+        f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}",
+        headers=_forward_auth_headers(authorization),
+    )
     return Response(status_code=204)
 
 
@@ -1467,9 +1554,16 @@ async def delete_case_evidence(applicant_id: int, evidence_id: int) -> Response:
     description="ส่งต่อ `GET …/v1/cases/{applicant_id}/evidences/{evidence_id}/file` ใน case-service",
     dependencies=_v1_api_key,
 )
-async def get_case_evidence_file(applicant_id: int, evidence_id: int) -> Response:
+async def get_case_evidence_file(
+    applicant_id: int,
+    evidence_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Response:
     base = settings.case_service_url.rstrip("/")
-    r = await _get_raw(f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}/file")
+    r = await _get_raw(
+        f"{base}/v1/cases/{applicant_id}/evidences/{evidence_id}/file",
+        headers=_forward_auth_headers(authorization),
+    )
     out_headers: Dict[str, str] = {}
     if cd := r.headers.get("content-disposition"):
         out_headers["content-disposition"] = cd
@@ -1494,9 +1588,14 @@ async def get_case_evidence_file(applicant_id: int, evidence_id: int) -> Respons
 )
 async def delete_applicants_by_cid(
     cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
+    authorization: str = Depends(require_citizen_bearer),
 ) -> ApplicantDeleteByCidResponse:
     base = settings.case_service_url.rstrip("/")
-    data = await _delete(f"{base}/v1/applicants/by-cid?cid={cid}", timeout=120.0)
+    data = await _delete(
+        f"{base}/v1/applicants/by-cid?cid={cid}",
+        timeout=120.0,
+        headers=_forward_auth_headers(authorization),
+    )
     return ApplicantDeleteByCidResponse.model_validate(data)
 
 
@@ -1542,10 +1641,14 @@ async def delete_all_persons() -> PersonDeleteAllResponse:
 )
 async def bff_get_latest_passed_screening_log(
     person_id: int = Query(..., description="ID ของ person"),
+    authorization: str = Depends(require_citizen_bearer),
 ) -> Optional[ScreeningLogReadResponse]:
     """ส่งต่อไปยัง case-service — คืน null ถ้ายังไม่เคยผ่านเกณฑ์."""
     base = settings.case_service_url.rstrip("/")
-    data = await _get(f"{base}/v1/screening-logs/latest-passed?person_id={person_id}")
+    data = await _get(
+        f"{base}/v1/screening-logs/latest-passed?person_id={person_id}",
+        headers=_forward_auth_headers(authorization),
+    )
     if data is None:
         return None
     return ScreeningLogReadResponse.model_validate(data)
@@ -1560,7 +1663,11 @@ async def bff_get_latest_passed_screening_log(
     status_code=status.HTTP_201_CREATED,
     dependencies=_v1_api_key,
 )
-async def bff_create_screening_log(request: Request, body: ScreeningLogCreateRequest) -> ScreeningLogReadResponse:
+async def bff_create_screening_log(
+    request: Request,
+    body: ScreeningLogCreateRequest,
+    authorization: str = Depends(require_citizen_bearer),
+) -> ScreeningLogReadResponse:
     """รับข้อมูลคัดกรองแล้วส่งต่อ POST ไป case-service พร้อม inject ip_address จาก request."""
     # ดึง IP จาก X-Forwarded-For (กรณีผ่าน reverse proxy) หรือ client.host
     forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -1572,6 +1679,7 @@ async def bff_create_screening_log(request: Request, body: ScreeningLogCreateReq
     data = await _post(
         f"{settings.case_service_url.rstrip('/')}/v1/screening-logs",
         json=payload,
+        headers=_forward_auth_headers(authorization),
     )
     return ScreeningLogReadResponse.model_validate(data)
 
@@ -1587,11 +1695,13 @@ async def bff_create_screening_log(request: Request, body: ScreeningLogCreateReq
 )
 async def bff_create_welfare_request_consent(
     body: WelfareRequestConsentCreateRequest,
+    authorization: str = Depends(require_citizen_bearer),
 ) -> WelfareRequestConsentReadResponse:
     """รับความยินยอมแล้วส่งต่อ POST ไป case-service."""
     data = await _post(
         f"{settings.case_service_url.rstrip('/')}/v1/welfare-request-consents",
         json=body.model_dump(),
+        headers=_forward_auth_headers(authorization),
     )
     return WelfareRequestConsentReadResponse.model_validate(data)
 
@@ -2415,9 +2525,16 @@ class SatisfactionSurveyCreateBody(BaseModel):
     dependencies=_v1_api_key,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_satisfaction_survey(body: SatisfactionSurveyCreateBody) -> Any:
+async def create_satisfaction_survey(
+    body: SatisfactionSurveyCreateBody,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
     base = settings.case_service_url.rstrip("/")
-    return await _post(f"{base}/v1/satisfaction", json=body.model_dump())
+    return await _post(
+        f"{base}/v1/satisfaction",
+        json=body.model_dump(),
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.get(
@@ -2427,9 +2544,15 @@ async def create_satisfaction_survey(body: SatisfactionSurveyCreateBody) -> Any:
     description="ส่งต่อ `GET …/v1/satisfaction?applicant_id=…` ใน case-service",
     dependencies=_v1_api_key,
 )
-async def list_satisfaction_surveys(applicant_id: int = Query(..., ge=1)) -> Any:
+async def list_satisfaction_surveys(
+    applicant_id: int = Query(..., ge=1),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
     base = settings.case_service_url.rstrip("/")
-    return await _get(f"{base}/v1/satisfaction?applicant_id={applicant_id}")
+    return await _get(
+        f"{base}/v1/satisfaction?applicant_id={applicant_id}",
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2445,11 +2568,6 @@ class AdminLoginProxyBody(BaseModel):
 
 class AdminProvinceAccessUpdateBody(BaseModel):
     is_enabled: bool
-
-
-def _forward_auth_headers(authorization: Optional[str]) -> Dict[str, str]:
-    """สร้าง header forward admin JWT ไป case-service (ว่าง = ไม่ส่ง — case-service จะตอบ 401)."""
-    return {"Authorization": authorization} if authorization else {}
 
 
 @router.post(

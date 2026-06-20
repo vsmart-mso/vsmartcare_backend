@@ -6,8 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.citizen_security import (
+    CitizenClaims,
+    assert_person_owner,
+    require_citizen,
+)
 from ...core.database import get_session
-from ...models.person import Person
 from ...models.screening import ScreeningLog, WelfareRequestConsent
 from ...schemas.screening import (
     ScreeningLogCreate,
@@ -19,18 +23,14 @@ from ...schemas.screening import (
 router = APIRouter(prefix="/v1", tags=["eligibility"])
 
 
-async def _ensure_person_exists(session: AsyncSession, person_id: int) -> None:
-    result = await session.execute(select(Person.id).where(Person.id == person_id))
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
-
-
 @router.get("/screening-logs/latest-passed", response_model=ScreeningLogRead | None)
 async def get_latest_passed_screening_log(
     person_id: int = Query(..., description="ID ของ person"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> ScreeningLogRead | None:
     """คืน screening log ล่าสุดที่ผ่านเกณฑ์ (screening_status=true) หรือ null ถ้าไม่มี."""
+    assert_person_owner(person_id, claims)
     stmt = (
         select(ScreeningLog)
         .where(ScreeningLog.person_id == person_id)
@@ -53,8 +53,9 @@ async def get_latest_passed_screening_log(
 async def create_screening_log(
     body: ScreeningLogCreate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> ScreeningLogRead:
-    await _ensure_person_exists(session, body.person_id)
+    assert_person_owner(body.person_id, claims)
     row = ScreeningLog(**body.model_dump())
     session.add(row)
     await session.flush()
@@ -70,8 +71,9 @@ async def create_screening_log(
 async def create_welfare_request_consent(
     body: WelfareRequestConsentCreate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareRequestConsentRead:
-    await _ensure_person_exists(session, body.person_id)
+    assert_person_owner(body.person_id, claims)
     row = WelfareRequestConsent(**body.model_dump())
     session.add(row)
     await session.flush()
