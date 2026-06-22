@@ -376,6 +376,8 @@ class ScreeningLogCreateRequest(BaseModel):
     failure_reason_code: Optional[str] = Field(None, max_length=255)
     screening_status: bool = False
     input_data_snapshot: Optional[Dict[str, Any]] = None
+    # สถานะความเดือดร้อนที่ผู้ใช้เลือก (เลือกได้หลายข้อ) — list ของ id จาก hardship_status_types
+    hardship_status_ids: Optional[list[int]] = None
     ip_address: Optional[str] = Field(None, max_length=255)
     user_agent: Optional[str] = Field(None, max_length=500)
 
@@ -389,6 +391,7 @@ class ScreeningLogReadResponse(BaseModel):
     failure_reason_code: Optional[str] = None
     screening_status: bool
     input_data_snapshot: Optional[Dict[str, Any]] = None
+    hardship_status_ids: Optional[list[int]] = None
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
 
@@ -2073,6 +2076,27 @@ async def bff_list_household_member_relation_types():
 )
 async def bff_get_household_member_relation_type(relation_type_id: int):
     return await _get(_case_lookup_url(f"v1/lookups/household-member-relation-types/{relation_type_id}"))
+
+
+@router.get(
+    "/v1/lookups/hardship-status-types",
+    tags=["lookups"],
+    summary="สถานะความเดือดร้อน (ประสบปัญหาเอง / ครอบครัวประสบปัญหา)",
+    description="ส่งต่อ `GET .../v1/lookups/hardship-status-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_hardship_status_types():
+    return await _get(_case_lookup_url("v1/lookups/hardship-status-types"))
+
+
+@router.get(
+    "/v1/lookups/hardship-status-types/{hardship_status_type_id}",
+    tags=["lookups"],
+    summary="ดึงสถานะความเดือดร้อนตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_hardship_status_type(hardship_status_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/hardship-status-types/{hardship_status_type_id}"))
 
 
 @router.get(

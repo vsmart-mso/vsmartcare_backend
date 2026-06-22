@@ -19,6 +19,7 @@ from ...models.lookup import (
     BankName,
     CurrentStatus,
     DependencyType,
+    HardshipStatusType,
     HouseholdMemberRelationType,
     HousingType,
     IncomeSourceType,
@@ -36,6 +37,7 @@ from ...schemas.lookup import (
     BankNameRead,
     CurrentStatusRead,
     DependencyTypeRead,
+    HardshipStatusTypeRead,
     HouseholdMemberRelationTypeRead,
     HousingTypeRead,
     IncomeSourceTypeRead,
@@ -350,6 +352,33 @@ async def get_household_member_relation_type(
         HouseholdMemberRelationTypeRead,
         relation_type_id,
         "household_member_relation_type_not_found",
+    )
+
+
+# --- hardship-status-types ---
+
+
+@router.get("/hardship-status-types", response_model=list[HardshipStatusTypeRead])
+async def list_hardship_status_types(
+    session: AsyncSession = Depends(get_session),
+) -> list[HardshipStatusTypeRead]:
+    return await _list_rows(session, HardshipStatusType, HardshipStatusTypeRead)
+
+
+@router.get(
+    "/hardship-status-types/{hardship_status_type_id}",
+    response_model=HardshipStatusTypeRead,
+)
+async def get_hardship_status_type(
+    hardship_status_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> HardshipStatusTypeRead:
+    return await _get_row(
+        session,
+        HardshipStatusType,
+        HardshipStatusTypeRead,
+        hardship_status_type_id,
+        "hardship_status_type_not_found",
     )
 
 
