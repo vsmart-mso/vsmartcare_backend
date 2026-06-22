@@ -1,4 +1,4 @@
- """Citizen auth: decode ThaID JWT + object-level authorization (CR-01).
+"""Citizen auth: decode ThaID JWT + object-level authorization (CR-01).
 
 ใช้ secret เดียวกับ thaid-auth-service (`THAID_JWT_SECRET`) — แยกจาก admin JWT.
 """
