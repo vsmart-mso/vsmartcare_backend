@@ -19,7 +19,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
-    from .lookup import HouseholdMemberRelationType, HousingType, IncomeSourceType, PrefixType
+    from .lookup import HouseholdMemberRelationType, HousingType, IncomeSourceType, OccupationType, PrefixType
 
 
 class EconomicInfo(Base):
@@ -44,14 +44,28 @@ class EconomicInfo(Base):
         comment="ค่าเช่าต่อเดือน (บาท) — กรอกเมื่อ housing_types เป็นบ้านเช่า",
     )
 
+    occupation_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("occupation_types.id"),
+        comment="FK → occupation_types (อาชีพผู้ยื่นคำร้อง)",
+    )
     occupation: Mapped[str | None] = mapped_column(String(255))
     monthly_income: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     household_members: Mapped[int | None] = mapped_column(
         comment="จำนวนสมาชิกในครัวเรือน",
     )
+    family_occupation_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("occupation_types.id"),
+        comment="FK → occupation_types (อาชีพหลักของครอบครัว)",
+    )
     family_occupation: Mapped[str | None] = mapped_column(String(255))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="economic_infos")
+    occupation_type: Mapped["OccupationType | None"] = relationship(
+        foreign_keys=[occupation_type_id], lazy="selectin"
+    )
+    family_occupation_type: Mapped["OccupationType | None"] = relationship(
+        foreign_keys=[family_occupation_type_id], lazy="selectin"
+    )
     housing_type: Mapped["HousingType | None"] = relationship(
         foreign_keys=[housing_types_id],
         lazy="selectin",
@@ -116,7 +130,11 @@ class HouseholdMember(Base):
         ForeignKey("household_member_relation_types.id"),
         comment="FK → household_member_relation_types",
     )
-    occupation: Mapped[str | None] = mapped_column(String(255), comment="อาชีพ")
+    occupation_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("occupation_types.id"),
+        comment="FK → occupation_types",
+    )
+    occupation: Mapped[str | None] = mapped_column(String(255), comment="อาชีพ (free-text เมื่อ occupation_type_id=99)")
     monthly_income: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), comment="รายได้/เดือน (บาท)")
     physical_condition: Mapped[str] = mapped_column(
         String(20),
@@ -137,4 +155,7 @@ class HouseholdMember(Base):
     )
     relation_type: Mapped["HouseholdMemberRelationType | None"] = relationship(
         foreign_keys=[relation_to_applicant_id], lazy="selectin"
+    )
+    occupation_type: Mapped["OccupationType | None"] = relationship(
+        foreign_keys=[occupation_type_id], lazy="selectin"
     )

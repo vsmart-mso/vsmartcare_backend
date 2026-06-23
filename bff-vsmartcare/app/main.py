@@ -2100,6 +2100,27 @@ async def bff_get_hardship_status_type(hardship_status_type_id: int):
 
 
 @router.get(
+    "/v1/lookups/occupation-types",
+    tags=["lookups"],
+    summary="ประเภทอาชีพ (นักเรียน / เกษตรกร / รับจ้าง / อื่นๆ ฯลฯ)",
+    description="ส่งต่อ `GET .../v1/lookups/occupation-types`",
+    dependencies=_v1_api_key,
+)
+async def bff_list_occupation_types():
+    return await _get(_case_lookup_url("v1/lookups/occupation-types"))
+
+
+@router.get(
+    "/v1/lookups/occupation-types/{occupation_type_id}",
+    tags=["lookups"],
+    summary="ดึงประเภทอาชีพตาม id",
+    dependencies=_v1_api_key,
+)
+async def bff_get_occupation_type(occupation_type_id: int):
+    return await _get(_case_lookup_url(f"v1/lookups/occupation-types/{occupation_type_id}"))
+
+
+@router.get(
     "/v1/geo/provinces",
     tags=["geo"],
     summary="รายการจังหวัด",

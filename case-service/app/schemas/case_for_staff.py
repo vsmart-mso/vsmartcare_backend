@@ -343,6 +343,12 @@ class PorKor1EconomicItem(BaseModel):
 
     economic: EconomicInfoRead
     housing_type_name: str | None = Field(None, max_length=255)
+    occupation_type_name: str | None = Field(
+        None, max_length=255, description="ชื่ออาชีพผู้ยื่นจาก master (occupation_types)"
+    )
+    family_occupation_type_name: str | None = Field(
+        None, max_length=255, description="ชื่ออาชีพหลักของครอบครัวจาก master (occupation_types)"
+    )
 
 
 class PorKor1WelfareRequestTypeItem(BaseModel):

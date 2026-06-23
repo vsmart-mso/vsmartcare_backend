@@ -338,6 +338,8 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         PorKor1EconomicItem(
             economic=EconomicInfoRead.model_validate(e),
             housing_type_name=e.housing_type.name if e.housing_type else None,
+            occupation_type_name=e.occupation_type.name if e.occupation_type else None,
+            family_occupation_type_name=e.family_occupation_type.name if e.family_occupation_type else None,
         )
         for e in sorted(orm.economic_infos, key=lambda x: x.id)
     ]
