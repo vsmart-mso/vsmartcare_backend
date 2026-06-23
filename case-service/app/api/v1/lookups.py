@@ -24,6 +24,7 @@ from ...models.lookup import (
     HousingType,
     IncomeSourceType,
     MaritalStatusType,
+    OccupationType,
     PrefixType,
     ReceivedWelfareType,
     RequesterRelationType,
@@ -42,6 +43,7 @@ from ...schemas.lookup import (
     HousingTypeRead,
     IncomeSourceTypeRead,
     MaritalStatusTypeRead,
+    OccupationTypeRead,
     PrefixTypeRead,
     ReceivedWelfareTypeRead,
     RequesterRelationTypeRead,
@@ -441,6 +443,24 @@ async def get_bank_account_type(
 ) -> BankAccountTypeRead:
     return await _get_row(
         session, BankAccountType, BankAccountTypeRead, bank_account_type_id, "bank_account_type_not_found"
+    )
+
+
+# --- occupation-types ---
+
+
+@router.get("/occupation-types", response_model=list[OccupationTypeRead])
+async def list_occupation_types(session: AsyncSession = Depends(get_session)) -> list[OccupationTypeRead]:
+    return await _list_rows(session, OccupationType, OccupationTypeRead)
+
+
+@router.get("/occupation-types/{occupation_type_id}", response_model=OccupationTypeRead)
+async def get_occupation_type(
+    occupation_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> OccupationTypeRead:
+    return await _get_row(
+        session, OccupationType, OccupationTypeRead, occupation_type_id, "occupation_type_not_found"
     )
 
 

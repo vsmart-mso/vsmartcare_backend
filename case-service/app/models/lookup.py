@@ -165,6 +165,12 @@ class HardshipStatusType(LookupMixin, Base):
     __tablename__ = "hardship_status_types"
 
 
+class OccupationType(LookupMixin, Base):
+    """ประเภทอาชีพ — dropdown สำหรับ economic_infos และ household_members"""
+
+    __tablename__ = "occupation_types"
+
+
 class CurrentStatus(Base):
     """สถานะคำร้องปัจจุบัน — ข้อความแยก public/staff + สีและลำดับ dropdown/filter"""
 

@@ -95,6 +95,7 @@ class HouseholdMemberInCase(BaseModel):
     last_name: str = Field(..., max_length=255)
     date_of_birth: date | None = None
     relation_to_applicant_id: int | None = None
+    occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     physical_condition: PhysicalCondition = "normal"
@@ -104,9 +105,11 @@ class HouseholdMemberInCase(BaseModel):
 class EconomicInfoInCase(BaseModel):
     housing_types_id: int | None = None
     housing_types_rent: Decimal | None = None
+    occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     household_members: int | None = Field(None, ge=0)
+    family_occupation_type_id: int | None = None
     family_occupation: str | None = Field(None, max_length=255)
     income_sources: list[EconomicIncomeSourceInCase] = Field(default_factory=list)
 

@@ -140,6 +140,14 @@ class HardshipStatusTypeRead(_LookupRead):
     pass
 
 
+class OccupationTypeCreate(_LookupBase):
+    pass
+
+
+class OccupationTypeRead(_LookupRead):
+    pass
+
+
 class BankAccountTypeRead(BaseModel):
     id: int
     name: str
