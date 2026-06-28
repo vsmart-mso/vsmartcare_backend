@@ -25,6 +25,20 @@ def _parse_birth_date(raw: str) -> Optional[date]:
             return datetime.strptime(raw[:10], fmt).date()
         except ValueError:
             continue
+    # กรณีผู้สูงอายุที่ ThaID ส่ง birthdate ไม่ครบ เช่น
+    #   "1952"         → date(1952, 1, 1)
+    #   "1952-00-00"   → date(1952, 1, 1)   (เดือน/วัน = 0)
+    #   "1952-05-00"   → date(1952, 5, 1)   (มีเดือน แต่ไม่มีวัน)
+    # ส่วนที่ขาดหาย/เป็น 0 ให้ default เป็น 1
+    m = re.match(r'^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?', raw)
+    if m:
+        try:
+            year  = int(m.group(1))
+            month = int(m.group(2) or 0) or 1
+            day   = int(m.group(3) or 0) or 1
+            return date(year, month, day)
+        except ValueError:
+            return None
     return None
 
 
