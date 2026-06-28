@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from .case_for_staff_schema import (
     ArticleCreateBody,
     ArticleUpdateBody,
+    CoverDocumentBatchCreateBody,
+    CoverDocumentBatchUpdateBody,
     CaseForStaffApplicantStaffFieldsRead,
     StaffCaseSectionsUpdateBody,
     StaffDataEditLogBody,
@@ -1320,6 +1322,68 @@ async def patch_article_for_staff(
         f"{base}/v1/case_for_staff/article?applicant_id={applicant_id}",
         json=payload,
     )
+
+
+@router.post(
+    "/v1/case_for_staff/cover-document-batch",
+    tags=["case_for_staff"],
+    summary="สร้าง cover document batch",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_cover_document_batch_for_staff(body: CoverDocumentBatchCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True, mode="json")
+    return await _post(f"{base}/v1/case_for_staff/cover-document-batch", json=payload)
+
+
+@router.patch(
+    "/v1/case_for_staff/cover-document-batch/{batch_id}",
+    tags=["case_for_staff"],
+    summary="แก้ header cover document batch",
+    dependencies=_v1_api_key,
+)
+async def patch_cover_document_batch_for_staff(
+    batch_id: int,
+    body: CoverDocumentBatchUpdateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True, mode="json")
+    return await _patch(
+        f"{base}/v1/case_for_staff/cover-document-batch/{batch_id}",
+        json=payload,
+    )
+
+
+@router.get(
+    "/v1/case_for_staff/cover-document-batch/{batch_id}",
+    tags=["case_for_staff"],
+    summary="ดึง cover document batch",
+    dependencies=_v1_api_key,
+)
+async def get_cover_document_batch_for_staff(batch_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/cover-document-batch/{batch_id}")
+
+
+@router.get(
+    "/v1/case_for_staff/cover-document-batch",
+    tags=["case_for_staff"],
+    summary="รายการ cover document batch",
+    dependencies=_v1_api_key,
+)
+async def list_cover_document_batches_for_staff(
+    province_id: Optional[int] = Query(None, ge=1),
+    pending: bool = Query(False),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    params = {}
+    if province_id is not None:
+        params["province_id"] = province_id
+    if pending:
+        params["pending"] = "true"
+    suffix = f"?{urlencode(params)}" if params else ""
+    return await _get(f"{base}/v1/case_for_staff/cover-document-batch{suffix}")
 
 
 @router.get(

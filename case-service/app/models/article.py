@@ -12,6 +12,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
+    from .cover_document_batch import CoverDocumentBatch
     from .payment import ApproveCase
 
 
@@ -25,6 +26,11 @@ class Article(Base):
         ForeignKey("applicants.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
+        index=True,
+    )
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cover_document_batch.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     service_vsmart_id: Mapped[str | None] = mapped_column(String(255))
@@ -51,4 +57,5 @@ class Article(Base):
     )
 
     applicant: Mapped["Applicant"] = relationship(back_populates="article", uselist=False)
+    cover_document_batch: Mapped["CoverDocumentBatch | None"] = relationship(back_populates="articles")
     approve_cases: Mapped[list["ApproveCase"]] = relationship(back_populates="article")
