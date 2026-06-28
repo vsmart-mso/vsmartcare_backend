@@ -52,7 +52,19 @@ class Settings(BaseSettings):
     thaid_mock_family_name: str = Field(default="ระบบจำลอง", description="Mock family_name")
     thaid_mock_birthdate: str = Field(
         default="1990-01-01",
-        description="Mock birthdate (YYYY-MM-DD) สำหรับทดสอบบันทึก persons",
+        description="Mock birthdate — รองรับทั้ง YYYY-MM-DD (เช่น 1990-01-01) และปีเดียว (เช่น 1952) สำหรับทดสอบกรณีผู้สูงอายุที่ ThaID ส่งวันเกิดไม่ครบ",
+    )
+    thaid_mock_address: str = Field(
+        default="11 ต.ลาดกระบัง อ.ลาดกระบัง จ.กรุงเทพมหานคร 10520",
+        description="Mock ที่อยู่รูปแบบ DOPA (เหมือน ThaID จริง) เช่น '11 ต.ลาดกระบัง อ.ลาดกระบัง จ.กรุงเทพมหานคร 10520'",
+    )
+    thaid_mock_address_postcode: str = Field(
+        default="10520",
+        description="Mock รหัสไปรษณีย์ — ต้องตรงกับที่อยู่ใน THAID_MOCK_ADDRESS",
+    )
+    thaid_mock_gender: str = Field(
+        default="",
+        description="Mock gender (M / F / ว่าง) — ThaID มักส่งว่างสำหรับบัตรเก่า",
     )
 
     # Optional: issue signed JWT access tokens (HS256). If empty, opaque in-memory tokens are used.
@@ -86,6 +98,9 @@ class Settings(BaseSettings):
         "thaid_mock_given_name",
         "thaid_mock_family_name",
         "thaid_mock_birthdate",
+        "thaid_mock_address",
+        "thaid_mock_address_postcode",
+        "thaid_mock_gender",
         "database_url",
         mode="before",
     )
