@@ -118,6 +118,46 @@ _TH_TITLES: set[str] = {
     "สิบตรี", "สิบโท", "สิบเอก",
 }
 
+_TH_TITLE_ALIASES: dict[str, str] = {
+    "น.ส.": "นางสาว",
+    "นส.": "นางสาว",
+    "นส": "นางสาว",
+    "ด.ช.": "เด็กชาย",
+    "ดช.": "เด็กชาย",
+    "ดช": "เด็กชาย",
+    "ด.ญ.": "เด็กหญิง",
+    "ดญ.": "เด็กหญิง",
+    "ดญ": "เด็กหญิง",
+    "ว่าที่ ร.ต.": "ว่าที่ร้อยตรี",
+    "ว่าที่ร.ต.": "ว่าที่ร้อยตรี",
+    "ว่าที่ ร.ท.": "ว่าที่ร้อยโท",
+    "ว่าที่ร.ท.": "ว่าที่ร้อยโท",
+    "ว่าที่ ร.อ.": "ว่าที่ร้อยเอก",
+    "ว่าที่ร.อ.": "ว่าที่ร้อยเอก",
+    "ร.ต.": "ร้อยตรี",
+    "ร.ท.": "ร้อยโท",
+    "ร.อ.": "ร้อยเอก",
+    "พ.ต.": "พันตรี",
+    "พ.ท.": "พันโท",
+    "พ.อ.": "พันเอก",
+    "น.ต.": "นาวาอากาศตรี",
+    "น.ท.": "นาวาอากาศโท",
+    "น.อ.": "นาวาอากาศเอก",
+    "จ.ส.ต.": "จ่าสิบตรี",
+    "จ.ส.ท.": "จ่าสิบโท",
+    "จ.ส.อ.": "จ่าสิบเอก",
+    "ส.ต.": "สิบตรี",
+    "ส.ท.": "สิบโท",
+    "ส.อ.": "สิบเอก",
+}
+
+
+def _title_candidates() -> list[tuple[str, str]]:
+    """Return (raw title/alias, canonical title), longest raw value first."""
+    candidates = [(title, title) for title in _TH_TITLES]
+    candidates.extend(_TH_TITLE_ALIASES.items())
+    return sorted(candidates, key=lambda item: len(item[0]), reverse=True)
+
 
 def _split_title_name(full_name: str) -> tuple[str, str]:
     """แยกคำนำหน้าออกจากชื่อ-นามสกุล.
@@ -126,11 +166,13 @@ def _split_title_name(full_name: str) -> tuple[str, str]:
     - title="" ถ้าไม่มีคำนำหน้า
     - name_rest คือชื่อที่เหลือหลังตัดคำนำหน้าออก
     """
-    full = full_name.strip()
-    for title in sorted(_TH_TITLES, key=len, reverse=True):
-        if full.startswith(title) and (len(full) > len(title) and full[len(title)] in (" ", "\u00a0")):
-            name_rest = full[len(title):].strip()
-            return title, name_rest
+    full = _normalize_text(full_name)
+    for raw_title, canonical_title in _title_candidates():
+        if full == raw_title:
+            return canonical_title, ""
+        if full.startswith(raw_title):
+            name_rest = full[len(raw_title):].strip()
+            return canonical_title, name_rest
     # ไม่เจอคำนำหน้า → ทั้งหมดเป็นชื่อ
     return "", full
 
@@ -285,7 +327,7 @@ async def run_ocr_pipeline(
     branch_name = _clean_optional_text(raw_bank.get("branch_name"))
     branch_code = _validate_branch_code(raw_bank.get("branch_code"))
 
-    # 5. Fuzzy match — แยกคำนำหน้าออก → match เฉพาะชื่อ-นามสกุล
+    # 5. Fuzzy match — แยกคำนำหน้าออกจากชื่อ และ normalize คำนำหน้าย่อก่อนเช็ก compatibility
     fuzzy_score = 0.0
     ocr_title = ""
     target_title = ""
@@ -297,7 +339,7 @@ async def run_ocr_pipeline(
         ocr_title, ocr_name_only = _split_title_name(account_name)
         target_title, target_name_only = _split_title_name(target_name)
 
-        # fuzzy match บนชื่อ-นามสกุลเท่านั้น (ไม่มีคำนำหน้า)
+        # fuzzy match บนชื่อ-นามสกุลเท่านั้น; คำนำหน้าใช้เช็ก compatibility แยกต่างหาก
         fuzzy_score = _fuzzy_score(ocr_name_only, target_name_only)
 
         logger.info(
