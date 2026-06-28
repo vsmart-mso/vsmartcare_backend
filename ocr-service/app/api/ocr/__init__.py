@@ -1,4 +1,4 @@
-"""OCR Pipeline Router — รับภาพสมุดบัญชีธนาคาร ส่ง Gemini OCR + เทียบชื่อ."""
+"""OCR routes with integration auth."""
 
 from __future__ import annotations
 
@@ -8,10 +8,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_session
+from ...core.integration_auth import (
+    mint_jwt,
+    verify_credentials,
+)
 from ...models.ocr_result import OcrResult
 from ...settings import settings
 from .schemas import OcrResponse, OcrResultListResponse, OcrResultRead
@@ -20,82 +25,108 @@ from .service import run_ocr_pipeline
 logger = logging.getLogger("ocr-service")
 
 router = APIRouter(prefix="/v1/ocr", tags=["ocr"])
-
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class OcrLoginBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=255)
+
+
+class OcrTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(..., ge=1)
+
+
+class LinkOcrRequest(BaseModel):
+    applicant_id: int
 
 
 async def require_ocr_auth(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)] = None,
 ) -> None:
-    """ตรวจสอบการ login เบื้องต้น — รองรับทั้ง Bearer token และ OCR_API_KEY.
-
-    - ถ้าตั้ง OCR_API_KEY ใน env → ต้องส่งตรงกับค่าใน header Authorization: Bearer <key>
-    - ถ้าไม่ตั้ง OCR_API_KEY → อนุญาตทุก request (dev mode)
-    """
     expected = settings.ocr_api_key
     if not expected:
         return
-
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ต้องส่ง header Authorization: Bearer <token>",
+            detail="must_send_bearer_token",
         )
-
     token = credentials.credentials
     if token != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="token ไม่ถูกต้อง",
+            detail="invalid_ocr_api_key",
         )
+
+
+@router.post(
+    "/auth/login",
+    response_model=OcrTokenResponse,
+    summary="Login for OCR integration",
+)
+async def ocr_auth_login(body: OcrLoginBody) -> OcrTokenResponse:
+    if not settings.ocr_auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ocr_auth_disabled",
+        )
+    if not verify_credentials(body.username, body.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_credentials",
+        )
+    token = mint_jwt(subject=body.username.strip())
+    return OcrTokenResponse(
+        access_token=token,
+        expires_in=settings.ocr_jwt_expire_minutes * 60,
+    )
 
 
 @router.post(
     "/bank-book",
     response_model=OcrResponse,
-    summary="OCR สมุดบัญชีธนาคาร และบันทึกผลลง DB",
-    description=(
-        "อัปโหลดรูปสมุดบัญชีธนาคาร แล้วเรียก Gemini Flash เพื่อทำ OCR "
-        "พร้อมสกัดข้อมูลบัญชี เทียบชื่อกับ `target_name` และบันทึกผลผูกกับ `applicant_id`"
-    ),
+    summary="OCR bank book and persist result",
 )
 async def ocr_bank_book(
-    target_name: Annotated[str, Form(description="ชื่อ-นามสกุลเป้าหมายสำหรับเทียบบัญชี")],
-    file: Annotated[UploadFile, File(description="รูปสมุดบัญชี (JPEG/PNG/WebP)")],
-    applicant_id: Annotated[int | None, Form(description="ID ของ applicant (ใบคำร้อง) — ส่งทีหลังได้")] = None,
+    target_name: Annotated[str, Form(description="Target full name to compare against OCR result")],
+    file: Annotated[UploadFile, File(description="Bank book image (JPEG/PNG/WebP)")],
+    applicant_id: Annotated[int | None, Form(description="Optional applicant id")] = None,
     _auth: None = Depends(require_ocr_auth),
     session: AsyncSession = Depends(get_session),
 ) -> OcrResponse:
     logger.info(
-        f"OCR request: applicant_id={applicant_id} | "
-        f"target_name={target_name!r} | file={file.filename}, type={file.content_type}, size={file.size}"
+        "OCR request: applicant_id=%s target_name=%r file=%s type=%s size=%s",
+        applicant_id,
+        target_name,
+        file.filename,
+        file.content_type,
+        file.size,
     )
 
-    # Validate file type
     allowed_types = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"รองรับเฉพาะ {', '.join(allowed_types)} — ได้ {file.content_type}",
+            detail=f"unsupported_file_type:{file.content_type}",
         )
 
-    # Read file bytes
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="ไฟล์ว่างเปล่า",
+            detail="empty_file",
         )
 
-    # Limit file size
     max_bytes = settings.max_upload_bytes
     if len(image_bytes) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"ขนาดไฟล์ต้องไม่เกิน {max_bytes // (1024 * 1024)} MB",
+            detail=f"file_too_large:{max_bytes}",
         )
 
-    # Generate UUID for pre_file
     ext_map = {
         "image/jpeg": ".jpg",
         "image/jpg": ".jpg",
@@ -105,7 +136,6 @@ async def ocr_bank_book(
     ext = ext_map.get(file.content_type, ".jpg")
     pre_file_uuid = f"{uuid.uuid4().hex}{ext}"
 
-    # Run OCR pipeline
     result = await run_ocr_pipeline(
         image_bytes=image_bytes,
         target_name=target_name.strip(),
@@ -113,13 +143,6 @@ async def ocr_bank_book(
         mime_type=file.content_type or "image/jpeg",
     )
 
-    logger.info(
-        f"OCR done: applicant_id={applicant_id} | target={target_name!r} | "
-        f"match_status={result['bank_info']['match_status']} | "
-        f"fuzzy_score={result['bank_info']['fuzzy_score']}"
-    )
-
-    # ── Persist OCR result ลง DB ──────────────────────────────────────────
     bi = result["bank_info"]
     db_row = OcrResult(
         applicant_id=applicant_id,
@@ -137,25 +160,15 @@ async def ocr_bank_book(
     )
     session.add(db_row)
     await session.flush()
-    logger.info(f"OCR result persisted: id={db_row.id}, applicant_id={applicant_id}")
+    logger.info("OCR result persisted: id=%s applicant_id=%s", db_row.id, applicant_id)
 
     return OcrResponse(id=db_row.id, **result)
-
-
-# ── PATCH: ผูกผล OCR กับ applicant_id ทีหลัง (หลังสร้างใบคำร้องแล้ว) ──────────
-
-from pydantic import BaseModel as PydanticBaseModel
-
-
-class LinkOcrRequest(PydanticBaseModel):
-    applicant_id: int
 
 
 @router.patch(
     "/results/{ocr_result_id}/link",
     response_model=OcrResultRead,
-    summary="ผูกผล OCR กับ applicant_id (ใบคำร้อง)",
-    description="ใช้หลังสร้างใบคำร้องสำเร็จแล้ว — อัปเดต applicant_id ในผล OCR ที่เคยบันทึกไว้",
+    summary="Link OCR result to applicant id",
 )
 async def link_ocr_to_applicant(
     ocr_result_id: int,
@@ -164,29 +177,25 @@ async def link_ocr_to_applicant(
     _auth: None = Depends(require_ocr_auth),
 ) -> OcrResultRead:
     stmt = select(OcrResult).where(OcrResult.id == ocr_result_id)
-    r = await session.execute(stmt)
-    row = r.scalar_one_or_none()
+    row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ocr_result_not_found")
 
     row.applicant_id = body.applicant_id
     await session.flush()
-    logger.info(f"OCR result {ocr_result_id} linked to applicant_id={body.applicant_id}")
+    logger.info("OCR result %s linked to applicant_id=%s", ocr_result_id, body.applicant_id)
 
     return OcrResultRead.model_validate(row)
 
 
-# ── GET: ดึงผล OCR ตาม applicant_id ──────────────────────────────────────────
-
 @router.get(
     "/results/{applicant_id}",
     response_model=OcrResultListResponse,
-    summary="ดึงผล OCR ทั้งหมดของ applicant (ใบคำร้อง)",
-    description="คืนค่าผล OCR ทั้งหมดที่เคยทำกับ applicant_id นี้ เรียงจากล่าสุดขึ้นก่อน",
+    summary="Get OCR results by applicant id",
 )
 async def get_ocr_results(
     applicant_id: int,
-    limit: Annotated[int, Query(ge=1, le=50, description="จำนวนผลลัพธ์สูงสุด")] = 10,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
     session: AsyncSession = Depends(get_session),
     _auth: None = Depends(require_ocr_auth),
 ) -> OcrResultListResponse:
@@ -196,9 +205,7 @@ async def get_ocr_results(
         .order_by(OcrResult.created_at.desc())
         .limit(limit)
     )
-    r = await session.execute(stmt)
-    rows = list(r.scalars().all())
-
+    rows = list((await session.execute(stmt)).scalars().all())
     return OcrResultListResponse(
         applicant_id=applicant_id,
         results=[OcrResultRead.model_validate(row) for row in rows],
