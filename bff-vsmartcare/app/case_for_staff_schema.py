@@ -208,6 +208,7 @@ class ArticleCreateBody(BaseModel):
 
     applicant_id: int = Field(..., ge=1)
     service_vsmart_id: Optional[str] = Field(None, max_length=255)
+    approver_sdhsv_id: Optional[str] = Field(None, max_length=64)
     phone_service: Optional[str] = Field(None, max_length=255)
     at: Optional[str] = Field(None, max_length=255)
     date_at: Optional[date] = None
@@ -228,6 +229,7 @@ class ArticleUpdateBody(BaseModel):
     """Mirror case-service ArticleUpdate."""
 
     service_vsmart_id: Optional[str] = Field(None, max_length=255)
+    approver_sdhsv_id: Optional[str] = Field(None, max_length=64)
     phone_service: Optional[str] = Field(None, max_length=255)
     at: Optional[str] = Field(None, max_length=255)
     date_at: Optional[date] = None

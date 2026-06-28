@@ -34,6 +34,7 @@ class Article(Base):
         index=True,
     )
     service_vsmart_id: Mapped[str | None] = mapped_column(String(255))
+    approver_sdhsv_id: Mapped[str | None] = mapped_column(String(64))
     phone_service: Mapped[str | None] = mapped_column(String(255))
     at: Mapped[str | None] = mapped_column(String(255))
     date_at: Mapped[date | None] = mapped_column(Date)

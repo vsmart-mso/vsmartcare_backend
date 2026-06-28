@@ -33,7 +33,7 @@ _BATCH_HEADER_FIELDS = (
 
 
 def _header_from_payload(payload: dict) -> dict:
-    data = {k: payload[k] for k in _BATCH_HEADER_FIELDS if k in payload and payload[k] is not None}
+    data = {k: payload[k] for k in _BATCH_HEADER_FIELDS if k in payload}
     if "director_vsmart_id" in data:
         data["director_vsmart_id"] = data["director_vsmart_id"]
     return data
@@ -42,6 +42,7 @@ def _header_from_payload(payload: dict) -> dict:
 def _article_fields_from_batch(batch: CoverDocumentBatch) -> dict:
     return {
         "service_vsmart_id": batch.service_vsmart_id,
+        "approver_sdhsv_id": batch.approver_sdhsv,
         "phone_service": batch.phone_service,
         "at": batch.at,
         "date_at": batch.date_at,
