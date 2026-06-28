@@ -4,6 +4,7 @@ from .address import Address
 from .admin import AdminUser, ProvinceAccessConfig
 from .applicant import Applicant
 from .article import Article
+from .cover_document_batch import CoverDocumentBatch
 from .dependency import DependencyLoad
 from .economic import EconomicIncomeSource, EconomicInfo
 from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
@@ -58,6 +59,7 @@ __all__ = [
     "AnnouncementRegulation",
     "Applicant",
     "Article",
+    "CoverDocumentBatch",
     "AttachmentType",
     "BankAccountType",
     "BankName",

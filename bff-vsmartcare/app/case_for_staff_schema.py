@@ -242,3 +242,46 @@ class ArticleUpdateBody(BaseModel):
     laws: Optional[str] = None
     consider: Optional[str] = None
     suggestion: Optional[str] = None
+
+
+class CoverDocumentBatchCreateBody(BaseModel):
+    applicant_ids: list[int] = Field(..., min_length=1, max_length=30)
+    service_vsmart_id: Optional[str] = Field(None, max_length=255)
+    phone_service: Optional[str] = Field(None, max_length=255)
+    at: Optional[str] = Field(None, max_length=255)
+    date_at: Optional[date] = None
+    title: Optional[str] = Field(None, max_length=255)
+    director_vsmart_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        validation_alias=AliasChoices("director_vsmart_id", "refer_vsmart_id"),
+    )
+    original_story: Optional[str] = None
+    fact_story: Optional[str] = None
+    laws: Optional[str] = None
+    consider: Optional[str] = None
+    suggestion: Optional[str] = None
+    type_money_id: Optional[int] = None
+    province_id: Optional[int] = None
+    approver_sdhsv: Optional[str] = Field(None, max_length=64)
+
+
+class CoverDocumentBatchUpdateBody(BaseModel):
+    service_vsmart_id: Optional[str] = Field(None, max_length=255)
+    phone_service: Optional[str] = Field(None, max_length=255)
+    at: Optional[str] = Field(None, max_length=255)
+    date_at: Optional[date] = None
+    title: Optional[str] = Field(None, max_length=255)
+    director_vsmart_id: Optional[str] = Field(
+        None,
+        max_length=255,
+        validation_alias=AliasChoices("director_vsmart_id", "refer_vsmart_id"),
+    )
+    original_story: Optional[str] = None
+    fact_story: Optional[str] = None
+    laws: Optional[str] = None
+    consider: Optional[str] = None
+    suggestion: Optional[str] = None
+    type_money_id: Optional[int] = None
+    province_id: Optional[int] = None
+    approver_sdhsv: Optional[str] = Field(None, max_length=64)
