@@ -175,9 +175,9 @@ def _mock_user_profile() -> Dict[str, str]:
         "family_name": settings.thaid_mock_family_name,
         "title_th": settings.thaid_mock_title_th,
         "birthdate": settings.thaid_mock_birthdate,
-        "gender": "",
-        "address": "",
-        "address_postcode": "",
+        "gender": settings.thaid_mock_gender,
+        "address": settings.thaid_mock_address,
+        "address_postcode": settings.thaid_mock_address_postcode,
     }
 
 

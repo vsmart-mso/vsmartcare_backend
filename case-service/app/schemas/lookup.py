@@ -132,6 +132,22 @@ class HouseholdMemberRelationTypeRead(_LookupRead):
     pass
 
 
+class HardshipStatusTypeCreate(_LookupBase):
+    pass
+
+
+class HardshipStatusTypeRead(_LookupRead):
+    pass
+
+
+class OccupationTypeCreate(_LookupBase):
+    pass
+
+
+class OccupationTypeRead(_LookupRead):
+    pass
+
+
 class BankAccountTypeRead(BaseModel):
     id: int
     name: str

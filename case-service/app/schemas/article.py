@@ -9,6 +9,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 class ArticleBase(BaseModel):
     service_vsmart_id: str | None = Field(None, max_length=255)
+    approver_sdhsv_id: str | None = Field(None, max_length=64)
     phone_service: str | None = Field(None, max_length=255)
     at: str | None = Field(None, max_length=255)
     date_at: date | None = None

@@ -32,9 +32,11 @@ class EconomicInfoBase(BaseModel):
     housing_types_id: int | None = None
     housing_types_rent: Decimal | None = None
 
+    occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     household_members: int | None = Field(None, ge=0)
+    family_occupation_type_id: int | None = None
     family_occupation: str | None = Field(None, max_length=255)
 
 
@@ -45,9 +47,11 @@ class EconomicInfoCreate(EconomicInfoBase):
 class EconomicInfoUpdate(BaseModel):
     housing_types_id: int | None = None
     housing_types_rent: Decimal | None = None
+    occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     household_members: int | None = Field(None, ge=0)
+    family_occupation_type_id: int | None = None
     family_occupation: str | None = Field(None, max_length=255)
 
 
@@ -68,6 +72,7 @@ class HouseholdMemberBase(BaseModel):
     last_name: str = Field(..., max_length=255)
     date_of_birth: date | None = None
     relation_to_applicant_id: int | None = None
+    occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
     monthly_income: Decimal | None = None
     physical_condition: PhysicalCondition = "normal"
@@ -83,6 +88,7 @@ class HouseholdMemberRead(HouseholdMemberBase):
     applicant_id: int
     prefix: Any = Field(default=None, exclude=True)
     relation_type: Any = Field(default=None, exclude=True)
+    occupation_type: Any = Field(default=None, exclude=True)
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -96,3 +102,8 @@ class HouseholdMemberRead(HouseholdMemberBase):
     @property
     def relation_to_applicant_name(self) -> str | None:
         return self.relation_type.name if self.relation_type else None
+
+    @computed_field
+    @property
+    def occupation_type_name(self) -> str | None:
+        return self.occupation_type.name if self.occupation_type else None

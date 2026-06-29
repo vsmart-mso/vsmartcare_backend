@@ -155,6 +155,22 @@ class HouseholdMemberRelationType(LookupMixin, Base):
     __tablename__ = "household_member_relation_types"
 
 
+class HardshipStatusType(LookupMixin, Base):
+    """สถานะความเดือดร้อน — ประสบปัญหาเอง / ครอบครัวประสบปัญหา (เลือกได้หลายข้อ)
+
+    ใช้เป็น master data ให้หน้าตรวจสอบสิทธิ์เบื้องต้น (CheckSelfPage) แสดงเป็น checkbox
+    id ที่ผู้ใช้เลือกจะถูกเก็บไว้ใน screening_logs.hardship_status_ids (JSON list)
+    """
+
+    __tablename__ = "hardship_status_types"
+
+
+class OccupationType(LookupMixin, Base):
+    """ประเภทอาชีพ — dropdown สำหรับ economic_infos และ household_members"""
+
+    __tablename__ = "occupation_types"
+
+
 class CurrentStatus(Base):
     """สถานะคำร้องปัจจุบัน — ข้อความแยก public/staff + สีและลำดับ dropdown/filter"""
 

@@ -89,6 +89,19 @@ from ...services.welfare_payment_flow import (
 )
 from ...schemas.address import AddressRead
 from ...schemas.article import ArticleCreate, ArticleRead, ArticleUpdate
+from ...schemas.cover_document_batch import (
+    CoverDocumentBatchCreate,
+    CoverDocumentBatchListResponse,
+    CoverDocumentBatchRead,
+    CoverDocumentBatchUpdate,
+)
+from ...services.cover_document_batch import (
+    batch_to_read,
+    create_cover_document_batch,
+    get_cover_document_batch,
+    list_cover_document_batches,
+    update_cover_document_batch,
+)
 from ...schemas.payment import (
     ApproveCaseCreate,
     ApproveCaseRead,
@@ -338,6 +351,8 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         PorKor1EconomicItem(
             economic=EconomicInfoRead.model_validate(e),
             housing_type_name=e.housing_type.name if e.housing_type else None,
+            occupation_type_name=e.occupation_type.name if e.occupation_type else None,
+            family_occupation_type_name=e.family_occupation_type.name if e.family_occupation_type else None,
         )
         for e in sorted(orm.economic_infos, key=lambda x: x.id)
     ]
@@ -2334,4 +2349,73 @@ async def create_mso_forward(
         )
 
     return _mso_forward_read_from_row(row)
+
+
+@router.post(
+    "/cover-document-batch",
+    response_model=CoverDocumentBatchRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="สร้าง cover document batch + ผูก applicant_ids",
+)
+async def create_cover_document_batch_for_staff(
+    body: CoverDocumentBatchCreate,
+    session: AsyncSession = Depends(get_session),
+) -> CoverDocumentBatchRead:
+    batch = await create_cover_document_batch(session, body.model_dump(exclude_none=True))
+    await session.commit()
+    batch = await get_cover_document_batch(session, batch.id)
+    return CoverDocumentBatchRead.model_validate(batch_to_read(batch))
+
+
+@router.patch(
+    "/cover-document-batch/{batch_id}",
+    response_model=CoverDocumentBatchRead,
+    summary="แก้ header cover document batch ที่เดียว",
+)
+async def patch_cover_document_batch_for_staff(
+    batch_id: int,
+    body: CoverDocumentBatchUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> CoverDocumentBatchRead:
+    batch = await update_cover_document_batch(
+        session,
+        batch_id,
+        body.model_dump(exclude_none=True),
+    )
+    await session.commit()
+    batch = await get_cover_document_batch(session, batch.id)
+    return CoverDocumentBatchRead.model_validate(batch_to_read(batch))
+
+
+@router.get(
+    "/cover-document-batch/{batch_id}",
+    response_model=CoverDocumentBatchRead,
+    summary="ดึง cover document batch พร้อมสมาชิก",
+)
+async def get_cover_document_batch_for_staff(
+    batch_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> CoverDocumentBatchRead:
+    batch = await get_cover_document_batch(session, batch_id)
+    return CoverDocumentBatchRead.model_validate(batch_to_read(batch))
+
+
+@router.get(
+    "/cover-document-batch",
+    response_model=CoverDocumentBatchListResponse,
+    summary="รายการ cover document batch",
+)
+async def list_cover_document_batches_for_staff(
+    province_id: int | None = Query(None, ge=1),
+    pending: bool = Query(False),
+    session: AsyncSession = Depends(get_session),
+) -> CoverDocumentBatchListResponse:
+    batches = await list_cover_document_batches(
+        session,
+        province_id=province_id,
+        pending=pending,
+    )
+    return CoverDocumentBatchListResponse(
+        items=[CoverDocumentBatchRead.model_validate(batch_to_read(batch)) for batch in batches]
+    )
 

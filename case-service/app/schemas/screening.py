@@ -14,6 +14,8 @@ class ScreeningLogBase(BaseModel):
     failure_reason_code: str | None = Field(None, max_length=255)
     screening_status: bool = False
     input_data_snapshot: dict[str, Any] | None = None
+    # สถานะความเดือดร้อนที่ผู้ใช้เลือก (เลือกได้หลายข้อ) — list ของ id จาก hardship_status_types
+    hardship_status_ids: list[int] | None = None
     ip_address: str | None = Field(None, max_length=255)
     user_agent: str | None = Field(None, max_length=500)
 

@@ -19,10 +19,12 @@ from ...models.lookup import (
     BankName,
     CurrentStatus,
     DependencyType,
+    HardshipStatusType,
     HouseholdMemberRelationType,
     HousingType,
     IncomeSourceType,
     MaritalStatusType,
+    OccupationType,
     PrefixType,
     ReceivedWelfareType,
     RequesterRelationType,
@@ -36,10 +38,12 @@ from ...schemas.lookup import (
     BankNameRead,
     CurrentStatusRead,
     DependencyTypeRead,
+    HardshipStatusTypeRead,
     HouseholdMemberRelationTypeRead,
     HousingTypeRead,
     IncomeSourceTypeRead,
     MaritalStatusTypeRead,
+    OccupationTypeRead,
     PrefixTypeRead,
     ReceivedWelfareTypeRead,
     RequesterRelationTypeRead,
@@ -353,6 +357,33 @@ async def get_household_member_relation_type(
     )
 
 
+# --- hardship-status-types ---
+
+
+@router.get("/hardship-status-types", response_model=list[HardshipStatusTypeRead])
+async def list_hardship_status_types(
+    session: AsyncSession = Depends(get_session),
+) -> list[HardshipStatusTypeRead]:
+    return await _list_rows(session, HardshipStatusType, HardshipStatusTypeRead)
+
+
+@router.get(
+    "/hardship-status-types/{hardship_status_type_id}",
+    response_model=HardshipStatusTypeRead,
+)
+async def get_hardship_status_type(
+    hardship_status_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> HardshipStatusTypeRead:
+    return await _get_row(
+        session,
+        HardshipStatusType,
+        HardshipStatusTypeRead,
+        hardship_status_type_id,
+        "hardship_status_type_not_found",
+    )
+
+
 # --- bank-names ---
 
 
@@ -412,6 +443,24 @@ async def get_bank_account_type(
 ) -> BankAccountTypeRead:
     return await _get_row(
         session, BankAccountType, BankAccountTypeRead, bank_account_type_id, "bank_account_type_not_found"
+    )
+
+
+# --- occupation-types ---
+
+
+@router.get("/occupation-types", response_model=list[OccupationTypeRead])
+async def list_occupation_types(session: AsyncSession = Depends(get_session)) -> list[OccupationTypeRead]:
+    return await _list_rows(session, OccupationType, OccupationTypeRead)
+
+
+@router.get("/occupation-types/{occupation_type_id}", response_model=OccupationTypeRead)
+async def get_occupation_type(
+    occupation_type_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> OccupationTypeRead:
+    return await _get_row(
+        session, OccupationType, OccupationTypeRead, occupation_type_id, "occupation_type_not_found"
     )
 
 

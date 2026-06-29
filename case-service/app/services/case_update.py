@@ -145,11 +145,13 @@ async def apply_case_update(
                 applicant_id=applicant_id,
                 housing_types_id=eco.housing_types_id,
                 housing_types_rent=eco.housing_types_rent,
+                occupation_type_id=eco.occupation_type_id,
                 occupation=eco.occupation,
                 monthly_income=eco.monthly_income,
                 household_members=hm_count_for_update
                 if hm_count_for_update is not None
                 else eco.household_members,
+                family_occupation_type_id=eco.family_occupation_type_id,
                 family_occupation=eco.family_occupation,
             )
             session.add(econ)
@@ -179,6 +181,7 @@ async def apply_case_update(
                     last_name=hm.last_name,
                     date_of_birth=hm.date_of_birth,
                     relation_to_applicant_id=hm.relation_to_applicant_id,
+                    occupation_type_id=hm.occupation_type_id,
                     occupation=hm.occupation,
                     monthly_income=hm.monthly_income,
                     physical_condition=hm.physical_condition,

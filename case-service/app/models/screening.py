@@ -29,6 +29,9 @@ class ScreeningLog(Base):
     failure_reason_code: Mapped[str | None] = mapped_column(String(255))
     screening_status: Mapped[bool] = mapped_column(default=False, nullable=False)
     input_data_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # สถานะความเดือดร้อนที่ผู้ใช้เลือก (เลือกได้หลายข้อ) — เก็บเป็น list ของ id
+    # อ้างอิงตาราง master hardship_status_types เช่น [1] หรือ [1, 2]
+    hardship_status_ids: Mapped[list[int] | None] = mapped_column(JSON)
     ip_address: Mapped[str | None] = mapped_column(String(255))
     user_agent: Mapped[str | None] = mapped_column(String(500))
 

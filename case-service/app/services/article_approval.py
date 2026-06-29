@@ -17,6 +17,7 @@ from .esignature_storage import save_esignature_base64
 
 _ARTICLE_CONTENT_FIELDS = (
     "service_vsmart_id",
+    "approver_sdhsv_id",
     "phone_service",
     "at",
     "date_at",
