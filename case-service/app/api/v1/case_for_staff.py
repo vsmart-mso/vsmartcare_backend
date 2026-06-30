@@ -133,6 +133,8 @@ from ...schemas.case_for_staff import (
     PorKor1DependencyItem,
     PorKor1EconomicItem,
     PorKor1EvidenceItem,
+    PorKor1MemberEvidenceItem,
+    PorKor1HouseholdMemberItem,
     PorKor1PersonSection,
     PorKor1Summary,
     PorKor1TypeMoney,
@@ -357,10 +359,29 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         for e in sorted(orm.economic_infos, key=lambda x: x.id)
     ]
 
-    household_members = [
-        HouseholdMemberRead.model_validate(m)
-        for m in sorted(orm.household_members, key=lambda x: x.seq)
-    ]
+    # สร้าง lookup: household_member_id → รายการ evidences ของสมาชิกคนนั้น
+    member_evidence_map: dict[int, list[PorKor1MemberEvidenceItem]] = {}
+    for ev in orm.welfare_evidences:
+        if ev.household_member_id is None:
+            continue
+        mid = ev.household_member_id
+        if mid not in member_evidence_map:
+            member_evidence_map[mid] = []
+        member_evidence_map[mid].append(
+            PorKor1MemberEvidenceItem(
+                evidence_id=ev.id,
+                attachment_type_id=ev.attachment_type_id,
+                attachment_type_name=ev.attachment_type.name if ev.attachment_type else None,
+                file_other_type_name=ev.file_other_type_name,
+                view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
+            )
+        )
+
+    household_members: list[PorKor1HouseholdMemberItem] = []
+    for m in sorted(orm.household_members, key=lambda x: x.seq):
+        item = PorKor1HouseholdMemberItem.model_validate(m)
+        item.member_evidences = member_evidence_map.get(m.id, [])
+        household_members.append(item)
 
     reg_money = None
     if orm.case_handling is not None and orm.case_handling.regulation_choice is not None:
@@ -436,6 +457,8 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
             ],
         )
 
+    # กรองเฉพาะ evidence ของผู้ยื่น (household_member_id IS NULL)
+    # evidence ของสมาชิกในครัวเรือนแยกใช้ endpoint /v1/cases/{id}/evidences?household_member_id=...
     evidences = [
         PorKor1EvidenceItem(
             evidence=WelfareEvidenceRead.model_validate(ev),
@@ -443,6 +466,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
             view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
         )
         for ev in sorted(orm.welfare_evidences, key=lambda x: x.id)
+        if ev.household_member_id is None
     ]
 
     data_edit_logs = [
