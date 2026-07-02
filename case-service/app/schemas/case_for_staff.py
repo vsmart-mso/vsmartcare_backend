@@ -424,6 +424,22 @@ class PorKor1EvidenceItem(BaseModel):
     )
 
 
+class PorKor1MemberEvidenceItem(BaseModel):
+    """หลักฐานเอกสารของสมาชิกในครัวเรือน 1 ไฟล์."""
+
+    evidence_id: int
+    attachment_type_id: int
+    attachment_type_name: str | None = None
+    file_other_type_name: str | None = None
+    view_path: str = Field(..., description="path GET ไฟล์รูป")
+
+
+class PorKor1HouseholdMemberItem(HouseholdMemberRead):
+    """สมาชิกในครัวเรือนพร้อมรูปเอกสารของสมาชิก."""
+
+    member_evidences: list[PorKor1MemberEvidenceItem] = Field(default_factory=list)
+
+
 class CaseForStaffPorKor1DetailResponse(BaseModel):
     """รายละเอียดคำร้อง ปศค 1 จัดกลุ่มสำหรับนำไปแสดงในระบบอื่น (บุคคล ที่อยู่ ฯลฯ)."""
 
@@ -442,9 +458,9 @@ class CaseForStaffPorKor1DetailResponse(BaseModel):
         default_factory=list,
         description="ข้อมูลทางเศรษฐกิจและรายได้",
     )
-    household_members: list[HouseholdMemberRead] = Field(
+    household_members: list[PorKor1HouseholdMemberItem] = Field(
         default_factory=list,
-        description="รายละเอียดสมาชิกในครัวเรือน",
+        description="รายละเอียดสมาชิกในครัวเรือน พร้อม member_evidences ของแต่ละคน",
     )
     welfare_request_types: list[PorKor1WelfareRequestTypeItem] = Field(
         default_factory=list,

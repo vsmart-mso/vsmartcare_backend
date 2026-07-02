@@ -639,6 +639,9 @@ async def upload_case_evidence(
     applicant_id: int,
     attachment_type_id: int = Form(...),
     file_other_type_name: Optional[str] = Form(None),
+    # household_member_seq: ส่งมาเมื่ออัปโหลดรูปของสมาชิกในครัวเรือน
+    # BFF ต้องรับและส่งต่อ — case-service จะ resolve เป็น household_member_id เอง
+    household_member_seq: Optional[int] = Form(None, ge=1),
     file: UploadFile = File(...),
 ) -> Dict[str, Any]:
     base = settings.case_service_url.rstrip("/")
@@ -648,6 +651,7 @@ async def upload_case_evidence(
         {
             "attachment_type_id": attachment_type_id,
             "file_other_type_name": file_other_type_name,
+            "household_member_seq": household_member_seq,
         },
         file,
     )

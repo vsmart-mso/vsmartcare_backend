@@ -69,6 +69,8 @@ class WelfareEvidenceBase(BaseModel):
     file_width: int | None = Field(None, ge=0)
     file_height: int | None = Field(None, ge=0)
     file_other_type_name: str | None = Field(None, max_length=255)
+    # FK ไปยัง household_members.id (nullable) — NULL = evidence ของผู้ยื่น
+    household_member_id: int | None = None
 
 
 class WelfareEvidenceCreate(WelfareEvidenceBase):
