@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     service_name: str = Field(validation_alias="SERVICE_NAME")
     port: int = Field(validation_alias="PORT")
     database_url: str = Field(validation_alias="DATABASE_URL")
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
 
     upload_root: str = Field(default=str(_DEFAULT_UPLOAD_ROOT), validation_alias="UPLOAD_ROOT")
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="MAX_UPLOAD_BYTES")
@@ -108,6 +109,12 @@ class Settings(BaseSettings):
 
     #: secret สำหรับ verify citizen JWT จาก thaid-auth-service (HS256) — ต้องตรงกับ THAID_JWT_SECRET
     thaid_jwt_secret: str = Field(default="", validation_alias="THAID_JWT_SECRET")
+
+    #: secret สำหรับเซ็น staff JWT (HS256) — แยกจาก admin/citizen
+    staff_jwt_secret: str = Field(default="", validation_alias="STAFF_JWT_SECRET")
+    staff_jwt_expire_minutes: int = Field(
+        default=480, ge=1, validation_alias="STAFF_JWT_EXPIRE_MINUTES"
+    )
 
 
 settings = Settings()

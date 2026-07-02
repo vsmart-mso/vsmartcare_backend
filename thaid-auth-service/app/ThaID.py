@@ -261,7 +261,7 @@ def decode_app_access_token(secret: str, token: str) -> Dict[str, Any] | None:
 
 
 def claims_from_id_token_unverified(id_token: str) -> Dict[str, Any]:
-    """ใช้เฉพาะเมื่อไม่มี userinfo — ไม่ verify ลายเซ็น (ควรใช้ JWKS verify บน production)."""
+    """Legacy fallback when JWKS verify is unavailable."""
     try:
         return jwt.decode(
             id_token,
@@ -270,3 +270,53 @@ def claims_from_id_token_unverified(id_token: str) -> Dict[str, Any]:
         )
     except jwt.PyJWTError:
         return {}
+
+
+_jwks_cache: Dict[str, Any] = {}
+_jwks_cache_expiry: float = 0.0
+
+
+async def fetch_jwks(jwks_uri: str) -> Dict[str, Any]:
+    global _jwks_cache, _jwks_cache_expiry
+    now = time.time()
+    if _jwks_cache and now < _jwks_cache_expiry:
+        return _jwks_cache
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(jwks_uri)
+        r.raise_for_status()
+        data = r.json()
+    _jwks_cache = data
+    _jwks_cache_expiry = now + _METADATA_TTL_SEC
+    return data
+
+
+def verify_id_token(id_token: str, jwks: Dict[str, Any], *, audience: str) -> Dict[str, Any]:
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    keys = jwks.get("keys") or []
+    key_data = next((k for k in keys if k.get("kid") == kid), None)
+    if key_data is None and keys:
+        key_data = keys[0]
+    if key_data is None:
+        raise ValueError("jwks_key_not_found")
+    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+    return jwt.decode(
+        id_token,
+        public_key,
+        algorithms=[header.get("alg", "RS256")],
+        audience=audience,
+        options={"verify_aud": bool(audience)},
+    )
+
+
+async def claims_from_id_token_verified(
+    id_token: str,
+    *,
+    metadata: Dict[str, Any],
+    audience: str,
+) -> Dict[str, Any]:
+    jwks_uri = str(metadata.get("jwks_uri") or "")
+    if not jwks_uri:
+        return claims_from_id_token_unverified(id_token)
+    jwks = await fetch_jwks(jwks_uri)
+    return verify_id_token(id_token, jwks, audience=audience)

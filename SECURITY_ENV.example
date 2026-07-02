@@ -1,0 +1,86 @@
+# =============================================================================
+# คู่มือตั้งค่า Security + วิธีใช้งาน (dev)
+# คัดลอกค่าที่เกี่ยวข้องไปใส่ใน .env ของแต่ละ service (อย่า commit secret จริง)
+# =============================================================================
+#
+# ── ไฟล์ .env ที่ต้องมี (dev) ───────────────────────────────────────────────
+#
+#   apps/service/case-service/.env
+#   apps/service/thaid-auth-service/.env
+#   apps/frontend/.env                    (หรือ .env.local)
+#   apps/service/ocr-service/.env         (ถ้าใช้ OCR)
+#
+# ── ค่า dev แนะนำ (คัดลอกไปวางได้เลย) ─────────────────────────────────────
+#
+#   THAID_JWT_SECRET=dev-thaid-jwt-secret-change-in-production
+#     → ต้องเหมือนกันทั้ง case-service และ thaid-auth-service
+#
+#   STAFF_JWT_SECRET=dev-staff-jwt-secret-change-in-production
+#     → ใส่ใน case-service/.env (staff login + /v1/case_for_staff/*)
+#
+#   ADMIN_JWT_SECRET=dev-admin-jwt-secret-change-in-production
+#     → ใส่ใน case-service/.env (admin login + /v1/admin/*)
+#
+#   BFF_API_PASSWORD=                    → ว่างได้ใน dev (ไม่บังคับ X-API-Key)
+#
+# ── Frontend (apps/frontend/.env) ───────────────────────────────────────────
+#
+#   VITE_API_URL=http://localhost:8000/api-vsmartcare
+#   VITE_BFF_API_KEY=                    → ใส่เมื่อ BFF ตั้ง BFF_API_PASSWORD แล้วเท่านั้น
+#                                          หลัง login มี Bearer แล้ว ไม่จำเป็นต้องใส่
+#
+# ── thaid-auth-service/.env (dev + mock ThaiD) ──────────────────────────────
+#
+#   APP_ENV=development
+#   THAID_JWT_SECRET=dev-thaid-jwt-secret-change-in-production
+#   THAID_SERVER_METADATA_URL=           → ว่าง = ใช้ mock OIDC
+#   THAID_CLIENT_SECRET=
+#   THAID_USE_MOCK=false
+#   THAID_REDIRECT_URI=http://localhost:8000/api-vsmartcare/v1/auth/thaid/callback
+#   THAID_MOCK_PROFILE_MODE=fixed
+#   THAID_MOCK_GIVEN_NAME=ภูริพัฒน
+#   THAID_MOCK_FAMILY_NAME=ปัญญา
+#   THAID_MOCK_TITLE_TH=นาย
+#   THAID_MOCK_BIRTHDATE=1990-05-14
+#
+#   โหมด mock (ค่าเริ่มต้น fixed) — ชื่อคงที่จาก ocr_fixture ใน
+#   thaid-auth-service/app/dev_mock/seed/mock_profile_seed.json จับคู่กับรูปตัวอย่าง
+#   apps/frontend/public/dev-fixtures/bank-book-ocr-sample.jpg
+#   ตั้ง THAID_MOCK_PROFILE_MODE=random เพื่อสุ่มชื่อใหม่ทุกครั้ง (ทดสอบ edge case)
+#   แก้ seed หรือรูปตัวอย่างแล้ว restart thaid-auth-service
+#
+# ── หลังแก้ .env ───────────────────────────────────────────────────────────
+#
+#   docker compose restart case-service thaid-auth-service bff-vsmartcare
+#
+# =============================================================================
+# ตัวแปรด้านล่าง = checklist (ไม่ใช่ไฟล์ .env เดียวที่รันได้ทันที)
+# =============================================================================
+
+APP_ENV=development
+
+# BFF — ว่างใน dev ได้; production ต้องตั้ง (openssl rand -hex 32)
+BFF_API_PASSWORD=
+
+# case-service — admin JWT (ต้องตั้งก่อน admin login ได้)
+ADMIN_JWT_SECRET=dev-admin-jwt-secret-change-in-production
+
+# case-service — staff JWT (ต้องตั้งก่อน staff login / case_for_staff ได้)
+STAFF_JWT_SECRET=dev-staff-jwt-secret-change-in-production
+
+# case-service + thaid-auth-service — ต้องตรงกันทั้งสองที่
+THAID_JWT_SECRET=dev-thaid-jwt-secret-change-in-production
+
+# ocr-service — สร้าง apps/service/ocr-service/.env จาก ocr-service/.env.example
+#   GEMINI_API_KEY=...   (key ใหม่จาก Google AI Studio — ห้าม commit)
+#   OCR_SERVICE_API_KEY= (dev ว่างได้; ถ้าตั้ง BFF อ่านจากไฟล์นี้ด้วยผ่าน compose)
+# อย่าใส่ GEMINI_API_KEY ใน docker-compose environment แบบ ${VAR:-}
+#   เพราะค่าว่างจะทับ env_file
+
+POSTGRES_PASSWORD=
+
+# thaid-auth — production เท่านั้น (dev ว่างได้ถ้า APP_ENV=development)
+THAID_SERVER_METADATA_URL=
+THAID_CLIENT_SECRET=
+THAID_USE_MOCK=false
+THAID_MOCK_PROFILE_MODE=fixed

@@ -33,7 +33,7 @@ from ...models.lookup import BankAccountType, BankName, CurrentStatus, TypeMoney
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.review import WelfareReviewComment
-from ...models.payment import WelfarePayment
+from ...models.payment import ApproveCase, WelfarePayment
 from ...services.payment_round_metrics import applicant_payment_metrics
 from ...services.province_access import is_province_enabled_by_person_id
 from ...models.welfare import (
@@ -65,9 +65,11 @@ from ...services.process_sla import process_sla_fields_dict
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
 )
+from ...core.file_validation import assert_image_magic_bytes
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
+from ...schemas.review import WelfareEditRequestCommentRead
 from ...schemas.status_log import WelfareRequestStatusRead
 from ...schemas.welfare import (
     WelfareEvidenceRead,
@@ -172,7 +174,63 @@ async def _load_full_applicant(
     return r.scalar_one_or_none()
 
 
-async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> WelfareCaseRead:
+async def _latest_approve_status_for_applicant(
+    session: AsyncSession,
+    applicant_id: int,
+) -> bool | None:
+    return await session.scalar(
+        select(ApproveCase.approve_status)
+        .where(ApproveCase.applicant_id == applicant_id)
+        .order_by(ApproveCase.id.desc())
+        .limit(1)
+    )
+
+
+async def _welfare_edit_request_comments_for_applicant(
+    session: AsyncSession,
+    applicant_id: int,
+) -> list[WelfareEditRequestCommentRead]:
+    result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(
+            WelfareRequestStatus.applicant_id == applicant_id,
+            WelfareRequestStatus.current_status_id == 8,
+        )
+        .order_by(WelfareRequestStatus.id.desc())
+        .limit(1)
+        .options(
+            selectinload(WelfareRequestStatus.review_comments).selectinload(
+                WelfareReviewComment.review_field
+            )
+        ),
+    )
+    status_row = result.scalar_one_or_none()
+    if status_row is None:
+        return []
+    comments: list[WelfareEditRequestCommentRead] = []
+    for comment in status_row.review_comments:
+        field = comment.review_field
+        if field is None:
+            continue
+        comments.append(
+            WelfareEditRequestCommentRead(
+                review_field_id=comment.review_field_id,
+                name=field.name,
+                label=field.label,
+                step=field.step,
+                reason=comment.reason,
+            )
+        )
+    return comments
+
+
+async def applicant_to_case_read(
+    applicant: Applicant,
+    count_037: int = 0,
+    *,
+    latest_approve_status: bool | None = None,
+    welfare_edit_request_comments: list[WelfareEditRequestCommentRead] | None = None,
+) -> WelfareCaseRead:
     """แปลง ORM Applicant + relationship เป็น WelfareCaseRead (หลัง selectinload แล้ว)"""
     histories = sorted(applicant.status_logs, key=lambda s: (s.updated_at, s.id), reverse=True)
 
@@ -235,6 +293,8 @@ async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> We
         else None,
         created_at=applicant.created_at,
         count_037=count_037,
+        latest_approve_status=latest_approve_status,
+        welfare_edit_request_comments=welfare_edit_request_comments or [],
     )
 
 
@@ -553,8 +613,17 @@ async def get_welfare_case(
     )
     metrics = applicant_payment_metrics(list(payments_result.scalars().all()))
     count_037 = int(metrics["count_037"])
+    latest_approve_status = await _latest_approve_status_for_applicant(session, applicant_id)
+    welfare_edit_request_comments = await _welfare_edit_request_comments_for_applicant(
+        session, applicant_id
+    )
 
-    return await applicant_to_case_read(row, count_037=count_037)
+    return await applicant_to_case_read(
+        row,
+        count_037=count_037,
+        latest_approve_status=latest_approve_status,
+        welfare_edit_request_comments=welfare_edit_request_comments,
+    )
 
 
 @router.get(
@@ -675,10 +744,12 @@ async def upload_welfare_evidence_image(
             detail="unsupported_media_type_expect_image",
         )
 
-    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
     blob = await file.read()
     if len(blob) > settings.max_upload_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
+
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
+    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
 
     base = resolved_upload_root()
     dest_dir = (base / str(applicant_id)).resolve()
@@ -752,6 +823,7 @@ async def update_welfare_evidence_image(
     if len(blob) > settings.max_upload_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
 
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
     ext = ALLOWED_IMAGE_TYPES[raw_content_type]
     base = resolved_upload_root()
     dest_dir = (base / str(applicant_id)).resolve()

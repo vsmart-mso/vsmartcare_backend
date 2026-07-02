@@ -18,6 +18,7 @@ from .address import AddressRead
 from .applicant import ApplicantRead
 from .dependency import DependencyLoadRead
 from .economic import EconomicInfoRead, HouseholdMemberRead, PhysicalCondition
+from .review import WelfareEditRequestCommentRead
 from .status_log import WelfareRequestStatusRead
 from .welfare import (
     WelfareEvidenceRead,
@@ -225,6 +226,14 @@ class WelfareCaseRead(BaseModel):
         0,
         ge=0,
         description="จำนวน welfare_payment ที่ is_037_or_038 = false (ฟอร์ม 037)",
+    )
+    latest_approve_status: bool | None = Field(
+        None,
+        description="approve_status ของแถว approve_case ล่าสุด (null = ยังไม่มีประวัติ)",
+    )
+    welfare_edit_request_comments: list[WelfareEditRequestCommentRead] = Field(
+        default_factory=list,
+        description="comment ล่าสุดจากการส่งกลับแก้ไข (status=8) สำหรับหน้าติดตามคำร้อง",
     )
     model_config = ConfigDict(from_attributes=True)
 

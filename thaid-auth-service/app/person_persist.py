@@ -25,17 +25,33 @@ def _parse_birth_date(raw: str) -> Optional[date]:
             return datetime.strptime(raw[:10], fmt).date()
         except ValueError:
             continue
-    # กรณีผู้สูงอายุที่ ThaID ส่ง birthdate ไม่ครบ เช่น
-    #   "1952"         → date(1952, 1, 1)
-    #   "1952-00-00"   → date(1952, 1, 1)   (เดือน/วัน = 0)
-    #   "1952-05-00"   → date(1952, 5, 1)   (มีเดือน แต่ไม่มีวัน)
-    # ส่วนที่ขาดหาย/เป็น 0 ให้ default เป็น 1
-    m = re.match(r'^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?', raw)
+    # กรณี ThaiD ส่ง birthdate ไม่ครบ เช่น
+    #   "2487"         → ไม่ส่งเดือน/วัน → 1 ม.ค. ของปีที่ส่ง (แปลง พ.ศ. ≥2400 เป็น ค.ศ.)
+    #   "2487-00-00"   → เช่นเดียวกับปีอย่างเดียว
+    #   "2487-05-00"   → มีเดือน ไม่มีวัน → วันที่ 1 ของเดือนนั้น
+    m = re.match(r"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2}))?)?", raw)
     if m:
         try:
-            year  = int(m.group(1))
-            month = int(m.group(2) or 0) or 1
-            day   = int(m.group(3) or 0) or 1
+            year = int(m.group(1))
+            if year >= 2400:
+                year -= 543
+
+            def _sent_part(value: str | None) -> int | None:
+                if value is None or value == "":
+                    return None
+                n = int(value)
+                return n if n > 0 else None
+
+            month_sent = _sent_part(m.group(2))
+            day_sent = _sent_part(m.group(3))
+            if month_sent is None and day_sent is None:
+                month, day = 1, 1
+            elif month_sent is not None and day_sent is None:
+                month, day = month_sent, 1
+            elif month_sent is None and day_sent is not None:
+                month, day = 1, day_sent
+            else:
+                month, day = month_sent, day_sent
             return date(year, month, day)
         except ValueError:
             return None

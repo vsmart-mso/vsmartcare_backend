@@ -67,6 +67,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BFF_CORS_ORIGINS"),
         description="ต้นทางที่อนุญาตให้เรียก BFF จากเบราว์เซอร์ (เช่น Vite)",
     )
+    app_env: str = Field(default="development", validation_alias=AliasChoices("APP_ENV"))
+    ocr_service_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OCR_SERVICE_API_KEY"),
+        description="Service-to-service key สำหรับ proxy OCR (ไม่ส่งให้ browser)",
+    )
 
     @field_validator("bff_api_prefix", mode="after")
     @classmethod

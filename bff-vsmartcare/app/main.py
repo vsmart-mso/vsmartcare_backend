@@ -44,6 +44,8 @@ from .dashboard_schema import (
     DashboardSubDistrictsRead,
 )
 from .submission_eligibility_schema import SubmissionEligibilityRead
+from .middleware import CaptureAuthMiddleware, SecurityHeadersMiddleware, StaffRouteAuthMiddleware, merge_forward_headers
+from .rate_limit import RateLimitMiddleware
 from .settings import cors_origin_list, settings
 from .welfare_case_schema import WelfareCaseCreate
 
@@ -51,8 +53,13 @@ _optional_bearer = HTTPBearer(auto_error=False)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-def require_bff_api_key(x_api_key: Optional[str] = Depends(_api_key_header)) -> None:
-    """ถ้าตั้ง `BFF_API_PASSWORD` ใน env จะบังคับให้ client ส่ง `X-API-Key` ให้ตรงกัน."""
+def require_bff_api_key(
+    x_api_key: Optional[str] = Depends(_api_key_header),
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
+) -> None:
+    """CR-02: ยอมรับ Bearer (citizen/staff/admin) แทน X-API-Key สำหรับ route ที่มี session."""
+    if creds and creds.scheme.lower() == "bearer" and creds.credentials.strip():
+        return
     expected = settings.bff_api_password
     if not expected:
         return
@@ -70,6 +77,14 @@ async def require_citizen_bearer(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
 ) -> str:
     """บังคับ Bearer token ของประชาชน — ใช้ forward ไป case-service (CR-01)."""
+    if not creds or creds.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="missing_bearer_token")
+    return f"Bearer {creds.credentials}"
+
+
+async def require_admin_bearer(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_optional_bearer),
+) -> str:
     if not creds or creds.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="missing_bearer_token")
     return f"Bearer {creds.credentials}"
@@ -97,6 +112,8 @@ _TAGS = [
     {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
     {"name": "satisfaction", "description": "ผลประเมินความพึงพอใจของผู้ยื่นคำขอ"},
     {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด"},
+    {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
+    {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
 ]
 
@@ -113,6 +130,10 @@ app = FastAPI(
 
 router = APIRouter()
 
+app.add_middleware(CaptureAuthMiddleware)
+app.add_middleware(StaffRouteAuthMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origin_list(),
@@ -138,7 +159,10 @@ def custom_openapi() -> Dict[str, Any]:
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": f"ใส่ access token ที่ได้จาก thaid-auth-service (ปุ่ม Authorize) — ใช้กับ `{_api_prefix}/v1/me`",
+        "description": (
+            "access_token จาก ThaiD login (`POST /v1/auth/thaid/login` → callback) "
+            f"หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
+        ),
     }
     components["BffApiKey"] = {
         "type": "apiKey",
@@ -146,6 +170,8 @@ def custom_openapi() -> Dict[str, Any]:
         "name": "X-API-Key",
         "description": "รหัสเข้าใช้ BFF — ตั้งค่าผ่าน env `BFF_API_PASSWORD` (ถ้าไม่ตั้ง จะไม่บังคับ)",
     }
+    # OR: Bearer หรือ X-API-Key — ให้ปุ่ม Authorize ส่ง header ไปกับทุก request
+    schema["security"] = [{"BearerAuth": []}, {"BffApiKey": []}]
     app.openapi_schema = schema
     return app.openapi_schema
 
@@ -217,7 +243,7 @@ async def _post(
 ) -> Dict[str, Any]:
     """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(url, json=_json_safe_payload(json), headers=headers)
+        r = await client.post(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -243,7 +269,7 @@ async def _post_evidence_multipart(
     ct = file.content_type or "application/octet-stream"
     async with httpx.AsyncClient(timeout=timeout) as client:
         files = {"file": (fname, content, ct)}
-        r = await client.post(url, data=data, files=files, headers=headers)
+        r = await client.post(url, data=data, files=files, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -269,7 +295,7 @@ async def _put_evidence_multipart(
     ct = file.content_type or "application/octet-stream"
     async with httpx.AsyncClient(timeout=timeout) as client:
         files = {"file": (fname, content, ct)}
-        r = await client.put(url, data=data, files=files, headers=headers)
+        r = await client.put(url, data=data, files=files, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
@@ -284,7 +310,7 @@ async def _patch(
 ) -> Dict[str, Any]:
     """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.patch(url, json=_json_safe_payload(json), headers=headers)
+        r = await client.patch(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -299,7 +325,7 @@ async def _put(
 ) -> Dict[str, Any]:
     """ยิง HTTP PUT JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.put(url, json=_json_safe_payload(json), headers=headers)
+        r = await client.put(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -308,7 +334,7 @@ async def _put(
 async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
     """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(url, headers=headers)
+        r = await client.get(url, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r.json()
@@ -322,7 +348,7 @@ async def _get_raw(
 ) -> httpx.Response:
     """GET แบบคืน Response ดิบ (ใช้โหลดไฟล์ไบนารี)."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.get(url, headers=headers)
+        r = await client.get(url, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
         return r
@@ -336,7 +362,7 @@ async def _delete(
 ) -> Any:
     """ยิง HTTP DELETE; คืน JSON ถ้ามี body และถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.delete(url, headers=headers)
+        r = await client.delete(url, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             detail: Any = r.text
             ct = (r.headers.get("content-type") or "").lower()
@@ -1667,36 +1693,43 @@ async def delete_applicants_by_cid(
 
 
 @router.delete(
-    "/v1/persons/by-cid",
+    "/v1/citizen/person",
     tags=["persons"],
-    summary="ลบ person ตามเลขบัตรประชาชน (reset บุคคลและเคส)",
-    description=(
-        "ส่งต่อ `DELETE …/v1/persons/by-cid?cid=…` ใน case-service — "
-        "ลบ applicants, screening_logs, welfare_request_consents และแถว persons"
-    ),
+    summary="PDPA — ลบตัวตนในระบบ (ประชาชน)",
     response_model=PersonDeleteByCidResponse,
     dependencies=_v1_api_key,
 )
-async def delete_person_by_cid(
-    cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
+async def delete_citizen_person(
+    cid: str = Query(..., min_length=13, max_length=13),
+    authorization: str = Depends(require_citizen_bearer),
 ) -> PersonDeleteByCidResponse:
     base = settings.case_service_url.rstrip("/")
-    data = await _delete(f"{base}/v1/persons/by-cid?cid={cid}", timeout=120.0)
+    data = await _delete(
+        f"{base}/v1/citizen/person?cid={cid}",
+        timeout=120.0,
+        headers=_forward_auth_headers(authorization),
+    )
     return PersonDeleteByCidResponse.model_validate(data)
 
 
 @router.delete(
-    "/v1/persons/all",
-    tags=["persons"],
-    summary="ลบ persons ทั้งหมด (reset ข้อมูลบุคคลและเคสทั้งระบบ)",
-    description="ส่งต่อ `DELETE …/v1/persons/all` ใน case-service",
-    response_model=PersonDeleteAllResponse,
+    "/v1/admin/persons/by-cid",
+    tags=["admin", "persons"],
+    summary="Admin — ลบ person ตาม cid",
+    response_model=PersonDeleteByCidResponse,
     dependencies=_v1_api_key,
 )
-async def delete_all_persons() -> PersonDeleteAllResponse:
+async def admin_delete_person_by_cid(
+    cid: str = Query(..., min_length=13, max_length=13),
+    authorization: str = Depends(require_admin_bearer),
+) -> PersonDeleteByCidResponse:
     base = settings.case_service_url.rstrip("/")
-    data = await _delete(f"{base}/v1/persons/all", timeout=300.0)
-    return PersonDeleteAllResponse.model_validate(data)
+    data = await _delete(
+        f"{base}/v1/admin/persons/by-cid?cid={cid}",
+        timeout=120.0,
+        headers=_forward_auth_headers(authorization),
+    )
+    return PersonDeleteByCidResponse.model_validate(data)
 
 
 @router.get(
@@ -2601,15 +2634,29 @@ async def thaid_login_status(state: str):
     description="ส่งต่อไปยัง thaid-auth-service `GET /v1/me` พร้อม header Authorization",
     dependencies=_v1_api_key,
 )
-async def me(authorization: Optional[str] = Header(default=None)):
+async def me(authorization: str = Depends(require_citizen_bearer)):
     """
     ดึงโปรไฟล์ผู้ใช้จาก thaid-auth-service โดยส่ง header Authorization ต่อไปตรง ๆ
-    (ใช้ Header raw แทน HTTPBearer เพื่อหลีกเลี่ยงเคส parser ไม่จับ header บางรูปแบบ).
     """
-    headers: Dict[str, str] = {}
-    if authorization and authorization.strip():
-        headers["Authorization"] = authorization.strip()
-    return await _get(f"{settings.thaid_auth_service_url}/v1/me", headers=headers)
+    return await _get(
+        f"{settings.thaid_auth_service_url}/v1/me",
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/auth/logout",
+    tags=["auth"],
+    summary="ออกจากระบบ",
+    description="ส่งต่อไปยัง thaid-auth-service `POST /v1/auth/logout` — ลบ opaque session (ถ้ามี)",
+    dependencies=_v1_api_key,
+)
+async def auth_logout(authorization: str = Depends(require_citizen_bearer)) -> Any:
+    return await _post(
+        f"{settings.thaid_auth_service_url}/v1/auth/logout",
+        json={},
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 
@@ -2932,6 +2979,91 @@ async def get_dashboard_sub_districts(
     pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
     data = await _get(f"{base}/v1/dashboard/sub-districts?{urlencode(pairs)}")
     return DashboardSubDistrictsRead.model_validate(data)
+
+
+def _ocr_service_headers() -> Dict[str, str]:
+    key = (settings.ocr_service_api_key or "").strip()
+    if key:
+        return {"Authorization": f"Bearer {key}"}
+    return {}
+
+
+@router.post(
+    "/v1/ocr/bank-book",
+    tags=["ocr"],
+    summary="OCR สมุดบัญชี (proxy → ocr-service)",
+    dependencies=_v1_api_key,
+)
+async def ocr_bank_book_proxy(
+    target_name: str = Form(...),
+    file: UploadFile = File(...),
+    applicant_id: Optional[int] = Form(None),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.ocr_service_url.rstrip("/")
+    content = await file.read()
+    data: Dict[str, str] = {"target_name": target_name}
+    if applicant_id is not None:
+        data["applicant_id"] = str(applicant_id)
+    headers = _ocr_service_headers()
+    fname = file.filename or "upload"
+    ct = file.content_type or "application/octet-stream"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(
+            f"{base}/v1/ocr/bank-book",
+            data=data,
+            files={"file": (fname, content, ct)},
+            headers=headers,
+        )
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
+        return r.json()
+
+
+@router.get(
+    "/v1/ocr/results/{applicant_id}",
+    tags=["ocr"],
+    dependencies=_v1_api_key,
+)
+async def ocr_results_proxy(
+    applicant_id: int,
+    limit: int = Query(10, ge=1, le=50),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.ocr_service_url.rstrip("/")
+    headers = _ocr_service_headers()
+    return await _get(f"{base}/v1/ocr/results/{applicant_id}?limit={limit}", headers=headers)
+
+
+@router.patch(
+    "/v1/ocr/results/{ocr_result_id}/link",
+    tags=["ocr"],
+    dependencies=_v1_api_key,
+)
+async def ocr_link_proxy(
+    ocr_result_id: int,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.ocr_service_url.rstrip("/")
+    headers = _ocr_service_headers()
+    return await _patch(f"{base}/v1/ocr/results/{ocr_result_id}/link", json=body, headers=headers)
+
+
+class StaffLoginProxyBody(BaseModel):
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=255)
+
+
+@router.post(
+    "/v1/staff/auth/login",
+    tags=["staff"],
+    summary="Staff login → JWT",
+    dependencies=_v1_api_key,
+)
+async def staff_login(body: StaffLoginProxyBody) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/staff/auth/login", json=body.model_dump())
 
 
 app.include_router(router, prefix=_api_prefix)

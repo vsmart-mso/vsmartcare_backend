@@ -8,9 +8,13 @@ services:
     image: service-bff-vsmartcare:latest
     build:
       context: ./bff-vsmartcare
+    env_file:
+      # แชร์ OCR_SERVICE_API_KEY กับ ocr-service (service-to-service auth)
+      - path: ./ocr-service/.env
+        required: false
     environment:
       - PORT=8000
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-1234567890}
+      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
@@ -39,14 +43,14 @@ services:
       - STATUS_EMAIL_ENABLED=true
       - STATUS_EMAIL_TIMEOUT_SECONDS=5
       - COOLDOWN_DAYS=30
-      - ADMIN_JWT_SECRET=your-long-random-secret-at-least-32-chars
-      - ADMIN_JWT_EXPIRE_MINUTES=480
+      - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET:-dev-admin-jwt-secret-change-in-production}
+      - STAFF_JWT_SECRET=${STAFF_JWT_SECRET:-dev-staff-jwt-secret-change-in-production}
       - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
-
-      - CHECK_CASE_ENABLE_VCARE_SELF=true
+      - ADMIN_JWT_EXPIRE_MINUTES=480
       - CHECK_CASE_ENABLE_MSO_LOGBOOK=false
       # CHECK_CASE_ENABLE_* ตั้งใน case-service/.env (อย่า hardcode ที่นี่ — จะทับ .env)
-      - VSMART_MAIN_API_KEY=1234567890
+      - VSMART_MAIN_API_KEY=${VSMART_MAIN_API_KEY:-}
+      - CHECK_CASE_ENABLE_VCARE_SELF=true
       - EXTERNAL_CHECK_TIMEOUT_SECONDS=10
     ports:
       - "8001:8000"
@@ -99,6 +103,9 @@ services:
     environment:
       - PORT=8000
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      # GEMINI_API_KEY / OCR_API_KEY — ตั้งใน ocr-service/.env เท่านั้น
+      # อย่าใส่ ${GEMINI_API_KEY:-} ที่นี่ (ค่าว่างจะทับ env_file)
+      - APP_ENV=${APP_ENV:-development}
     ports:
       - "8004:8000"
     depends_on:

@@ -172,7 +172,13 @@ from ...schemas.welfare import (
 )
 
 
-router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
+from ...core.staff_security import require_staff
+
+router = APIRouter(
+    prefix="/v1/case_for_staff",
+    tags=["case_for_staff"],
+    dependencies=[Depends(require_staff)],
+)
 
 
 def _person_age_from_birth_date(birth_date: date) -> int:

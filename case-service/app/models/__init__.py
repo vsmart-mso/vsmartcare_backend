@@ -2,6 +2,7 @@
 
 from .address import Address
 from .admin import AdminUser, ProvinceAccessConfig
+from .staff import SecurityAuditLog, StaffUser
 from .applicant import Applicant
 from .article import Article
 from .cover_document_batch import CoverDocumentBatch

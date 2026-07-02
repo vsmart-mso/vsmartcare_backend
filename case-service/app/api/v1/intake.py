@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...core.database import get_session
+from ...core.staff_security import require_staff
 from ...models.applicant import Applicant
 from ...models.intake import (
     AnnouncementRegulation,
@@ -48,7 +49,11 @@ from ...schemas.intake import (
     RegulationRead,
 )
 
-router = APIRouter(prefix="/v1/intake", tags=["intake"])
+router = APIRouter(
+    prefix="/v1/intake",
+    tags=["intake"],
+    dependencies=[Depends(require_staff)],
+)
 
 
 # ---------------------------------------------------------------------------

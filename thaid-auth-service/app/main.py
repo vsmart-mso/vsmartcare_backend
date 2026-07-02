@@ -7,7 +7,7 @@ from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -21,6 +21,12 @@ from .person_persist import (
     get_province_access_status,
     persist_new_person_if_absent,
 )
+from .dev_mock.profile import (
+    generate_fixed_mock_profile,
+    generate_mock_profile,
+    mock_profile_preview_fields,
+    strip_internal_profile_keys,
+)
 from .settings import cors_origin_list, settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
+    _validate_production_config()
     configure_database(settings.database_url)
     if not db.is_database_configured():
         logger.warning(
@@ -52,7 +59,25 @@ app.add_middleware(
 
 
 def _use_mock_oidc() -> bool:
+    if (settings.app_env or "").strip().lower() in {"production", "prod"}:
+        return False
     return bool(settings.thaid_use_mock) or not settings.thaid_server_metadata_url.strip()
+
+
+def _validate_production_config() -> None:
+    if not (settings.app_env or "").strip().lower() in {"production", "prod"}:
+        return
+    missing: list[str] = []
+    if not settings.thaid_server_metadata_url.strip():
+        missing.append("THAID_SERVER_METADATA_URL")
+    if not settings.thaid_client_secret.strip():
+        missing.append("THAID_CLIENT_SECRET")
+    if not settings.thaid_jwt_secret.strip():
+        missing.append("THAID_JWT_SECRET")
+    if settings.thaid_use_mock:
+        missing.append("THAID_USE_MOCK must be false")
+    if missing:
+        raise RuntimeError(f"Production config incomplete: {', '.join(missing)}")
 
 
 MOCK_OAUTH_CODE = "mock-dev-authorization-code"
@@ -123,6 +148,11 @@ class MockProfilePreview(BaseModel):
     given_name: str = ""
     family_name: str = ""
     title_th: str = ""
+    birthdate: str = ""
+    gender: str = ""
+    address: str = ""
+    birthdate_scenario: str = ""
+    birthdate_label: str = ""
 
 
 class LoginStartResponse(BaseModel):
@@ -149,11 +179,17 @@ def _register_state(
     browser_oauth_base: Optional[str] = None,
 ) -> str:
     state = str(uuid4())
-    _states[state] = {
+    rec: Dict[str, Any] = {
         "created_at": datetime.utcnow(),
         "post_login_redirect": (post_login_redirect or "").strip() or None,
         "browser_oauth_base": (browser_oauth_base or "").strip() or None,
     }
+    if _use_mock_oidc():
+        mode = (settings.thaid_mock_profile_mode or "fixed").strip().lower()
+        rec["mock_profile"] = (
+            generate_mock_profile() if mode == "random" else generate_fixed_mock_profile()
+        )
+    _states[state] = rec
     return state
 
 
@@ -168,7 +204,7 @@ def _consume_state(state: str) -> Dict[str, Any]:
 
 
 def _mock_user_profile() -> Dict[str, str]:
-    """ค่าเดียวกับ normalize_profile จาก userinfo จริง (รวมฟิลด์สำหรับบันทึก persons)"""
+    """ค่าคงที่จาก env — fallback เมื่อ state เก่าไม่มี mock_profile."""
     return {
         "pid": settings.thaid_mock_pid,
         "given_name": settings.thaid_mock_given_name,
@@ -181,14 +217,16 @@ def _mock_user_profile() -> Dict[str, str]:
     }
 
 
-def _mock_profile_preview() -> MockProfilePreview:
-    p = _mock_user_profile()
-    return MockProfilePreview(
-        pid=p.get("pid", ""),
-        given_name=p.get("given_name", ""),
-        family_name=p.get("family_name", ""),
-        title_th=p.get("title_th", ""),
-    )
+def _mock_profile_from_state(state: str) -> Dict[str, str]:
+    rec = _states.get(state) or {}
+    stored = rec.get("mock_profile")
+    if isinstance(stored, dict) and stored.get("pid"):
+        return {str(k): str(v) for k, v in stored.items()}
+    return _mock_user_profile()
+
+
+def _mock_profile_preview_from_state(state: str) -> MockProfilePreview:
+    return MockProfilePreview(**mock_profile_preview_fields(_mock_profile_from_state(state)))
 
 
 @app.get("/v1/auth/thaid/mock/continue")
@@ -227,7 +265,7 @@ async def start_login_post(request: Request, body: LoginStartBody = LoginStartBo
             authorization_url=authorization_url,
             state=state,
             flow="dev_mock",
-            mock_profile=_mock_profile_preview(),
+            mock_profile=_mock_profile_preview_from_state(state),
         )
 
     if not settings.thaid_client_secret.strip():
@@ -421,13 +459,9 @@ def _respond_province_blocked(state_rec: Dict[str, Any]) -> Union[RedirectRespon
 
 def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse:
     expires_in = settings.thaid_jwt_expire_minutes * 60
-    if settings.thaid_jwt_secret.strip():
-        token = ThaID.mint_app_access_token(
-            settings.thaid_jwt_secret,
-            profile=profile,
-            expire_minutes=settings.thaid_jwt_expire_minutes,
-        )
-    else:
+    if not settings.thaid_jwt_secret.strip():
+        if (settings.app_env or "").strip().lower() in {"production", "prod"}:
+            raise HTTPException(status_code=503, detail="thaid_jwt_secret_not_configured")
         token = str(uuid4())
         _sessions[token] = {
             "user_id": profile.get("pid") or "unknown",
@@ -440,6 +474,12 @@ def _issue_access_and_store_session(profile: Dict[str, str]) -> CallbackResponse
             "birthdate": profile.get("birthdate", ""),
             "gender": profile.get("gender", ""),
         }
+    else:
+        token = ThaID.mint_app_access_token(
+            settings.thaid_jwt_secret,
+            profile=profile,
+            expire_minutes=settings.thaid_jwt_expire_minutes,
+        )
     return CallbackResponse(
         access_token=token,
         expires_in=expires_in,
@@ -469,20 +509,16 @@ _THAID_CALLBACK_OK_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-def _respond_after_thaid_login(state_rec: Dict[str, Any], payload: CallbackResponse) -> Union[RedirectResponse, HTMLResponse]:
-    """คืน HTML บนมือถือหลังยืนยัน หรือ 302 ถ้ามี post_login_redirect (ผลสำหรับ poll เก็บไว้ก่อนแล้ว)."""
+def _respond_after_thaid_login(
+    state_rec: Dict[str, Any], payload: CallbackResponse, *, oauth_state: str
+) -> Union[RedirectResponse, HTMLResponse]:
+    """Redirect กลับ frontend ด้วย login_state — ไม่ส่ง access_token ใน URL (HI-02)."""
     target = (state_rec.get("post_login_redirect") or settings.thaid_post_login_redirect or "").strip()
     if not target:
         return HTMLResponse(content=_THAID_CALLBACK_OK_HTML, media_type="text/html; charset=utf-8")
     from urllib.parse import urlencode, urlparse, urlunparse
 
-    q = urlencode(
-        {
-            "access_token": payload.access_token,
-            "token_type": payload.token_type,
-            "expires_in": str(payload.expires_in),
-        }
-    )
+    q = urlencode({"login_state": oauth_state})
     parts = urlparse(target)
     sep = "&" if parts.query else "?"
     new_query = f"{parts.query}{sep}{q}" if parts.query else q
@@ -506,7 +542,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     
     # ถ้าใช้ mock oidc จะสร้าง access token และ store session
     if _use_mock_oidc():
-        mock_profile = _mock_user_profile()
+        mock_profile = strip_internal_profile_keys(_mock_profile_from_state(state))
         # ตรวจสิทธิ์จังหวัด (mock address มักว่าง → ผ่าน) — TASK-v-care-12062026-01
         try:
             await _check_province_access_or_raise(mock_profile)
@@ -518,7 +554,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
         await _persist_person_safe(mock_profile)
         _store_login_completion(state, payload)
         _consume_state(state)
-        return _respond_after_thaid_login(state_rec, payload)
+        return _respond_after_thaid_login(state_rec, payload, oauth_state=state)
 
     if not settings.thaid_client_secret.strip():
         raise HTTPException(status_code=500, detail="thaid_client_secret_required_for_real_oidc")
@@ -543,7 +579,14 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
             raw_userinfo = {}
         id_tok = tokens.get("id_token")
         if isinstance(id_tok, str) and id_tok.strip():
-            id_claims = ThaID.claims_from_id_token_unverified(id_tok)
+            if (settings.app_env or "").strip().lower() in {"production", "prod"}:
+                id_claims = await ThaID.claims_from_id_token_verified(
+                    id_tok,
+                    metadata=metadata,
+                    audience=settings.thaid_client_id,
+                )
+            else:
+                id_claims = ThaID.claims_from_id_token_unverified(id_tok)
             raw_userinfo = ThaID.merge_oidc_userinfo(id_claims, raw_userinfo)
         profile = ThaID.normalize_profile(raw_userinfo)
         if not profile.get("pid"):
@@ -568,7 +611,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     _store_login_completion(state, payload)
     # ลบ state ออกจาก memory กรณีใช้ login สำเร็จเเล้วในรอบนั้น 
     _consume_state(state)
-    return _respond_after_thaid_login(state_rec, payload)
+    return _respond_after_thaid_login(state_rec, payload, oauth_state=state)
 
 class MeResponse(BaseModel):
     user_id: str
@@ -637,3 +680,13 @@ async def me(authorization: Optional[str] = Header(default=None)):
         gender=s.get("gender", ""),
         person_id=person_id,
     )
+
+
+@app.post("/v1/auth/logout", status_code=status.HTTP_200_OK)
+async def logout(authorization: Optional[str] = Header(default=None)) -> dict[str, bool]:
+    """ยกเลิก opaque session (dev ไม่มี JWT secret) — JWT ฝั่ง client ลบ token เอง."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="missing_bearer_token")
+    token = authorization.split(" ", 1)[1].strip()
+    _sessions.pop(token, None)
+    return {"ok": True}
