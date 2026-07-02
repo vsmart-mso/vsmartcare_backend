@@ -26,8 +26,7 @@
 # ── Frontend (apps/frontend/.env) ───────────────────────────────────────────
 #
 #   VITE_API_URL=http://localhost:8000/api-vsmartcare
-#   VITE_BFF_API_KEY=                    → ใส่เมื่อ BFF ตั้ง BFF_API_PASSWORD แล้วเท่านั้น
-#                                          หลัง login มี Bearer แล้ว ไม่จำเป็นต้องใส่
+#   (CR-02: ไม่ตั้ง VITE_BFF_API_KEY — browser ใช้ Bearer JWT หลัง login เท่านั้น)
 #
 # ── thaid-auth-service/.env (dev + mock ThaiD) ──────────────────────────────
 #
@@ -60,7 +59,11 @@
 APP_ENV=development
 
 # BFF — ว่างใน dev ได้; production ต้องตั้ง (openssl rand -hex 32)
+# ใช้เฉพาะ trusted server clients (volunteer_smart) — ไม่ฝังใน browser
 BFF_API_PASSWORD=
+
+# BFF → case-service internal key (beta/prod ต้องตรงกับ STAFF_INTERNAL_API_KEY ของ case-service)
+STAFF_INTERNAL_API_KEY=
 
 # case-service — admin JWT (ต้องตั้งก่อน admin login ได้)
 ADMIN_JWT_SECRET=dev-admin-jwt-secret-change-in-production

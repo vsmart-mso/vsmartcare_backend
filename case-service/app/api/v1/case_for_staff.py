@@ -86,6 +86,10 @@ from ...services.status_email_notification import (
     enqueue_status_email,
 )
 from ...services.welfare_evidence import validate_welfare_evidence_upload
+
+
+def _staff_evidence_view_path(applicant_id: int, evidence_id: int) -> str:
+    return f"/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}/file"
 from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
@@ -393,7 +397,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
                 attachment_type_id=ev.attachment_type_id,
                 attachment_type_name=ev.attachment_type.name if ev.attachment_type else None,
                 file_other_type_name=ev.file_other_type_name,
-                view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
+                view_path=_staff_evidence_view_path(orm.id, ev.id),
             )
         )
 
@@ -483,7 +487,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         PorKor1EvidenceItem(
             evidence=WelfareEvidenceRead.model_validate(ev),
             attachment_type_name=ev.attachment_type.name if ev.attachment_type else None,
-            view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
+            view_path=_staff_evidence_view_path(orm.id, ev.id),
         )
         for ev in sorted(orm.welfare_evidences, key=lambda x: x.id)
         if ev.household_member_id is None
@@ -1684,6 +1688,26 @@ async def update_case_for_staff_evidence_image(
     await session.flush()
     await session.refresh(ev)
     return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(ev))
+
+
+@router.patch(
+    "/applicant/{applicant_id}/evidences/{evidence_id}",
+    summary="แก้ไขชื่อเอกสาร (สำหรับ attachment_type_id = อื่นๆ)",
+)
+async def patch_case_for_staff_evidence_name(
+    applicant_id: int,
+    evidence_id: int,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+    if "file_other_type_name" in body:
+        ev.file_other_type_name = body["file_other_type_name"]
+    await session.commit()
+    await session.refresh(ev)
+    return {"id": ev.id, "file_other_type_name": ev.file_other_type_name}
 
 
 @router.delete(

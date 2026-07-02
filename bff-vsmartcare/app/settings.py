@@ -10,6 +10,8 @@ _SERVICE_ROOT = _APP_DIR.parent
 _ENV_CANDIDATES: tuple[Path, ...] = (_SERVICE_ROOT / ".env", _APP_DIR / ".env")
 _ENV_FILES: tuple[Path, ...] = tuple(p for p in _ENV_CANDIDATES if p.is_file())
 
+_DEV_PLACEHOLDER_PASSWORD = "1234567890"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -30,7 +32,7 @@ class Settings(BaseSettings):
     bff_api_password: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("BFF_API_PASSWORD"),
-        description="ถ้าตั้งค่า ทุก endpoint ใต้ /v1/* ต้องส่ง header X-API-Key ให้ตรง",
+        description="รหัสสำหรับ trusted server clients (volunteer_smart) — ไม่ฝังใน browser",
     )
 
     # Docker Compose ตั้ง CASE_SERVICE_URL=http://case-service:8000 — รัน BFF บน host ใช้ http://localhost:8001 (พอร์ต map จาก compose)
@@ -68,6 +70,11 @@ class Settings(BaseSettings):
         description="ต้นทางที่อนุญาตให้เรียก BFF จากเบราว์เซอร์ (เช่น Vite)",
     )
     app_env: str = Field(default="development", validation_alias=AliasChoices("APP_ENV"))
+    staff_internal_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("STAFF_INTERNAL_API_KEY"),
+        description="Service-to-service key forwarded to case-service (defaults to BFF_API_PASSWORD)",
+    )
     ocr_service_api_key: str = Field(
         default="",
         validation_alias=AliasChoices("OCR_SERVICE_API_KEY"),
@@ -100,7 +107,29 @@ class Settings(BaseSettings):
         return s
 
 
-settings = Settings()
+def is_production() -> bool:
+    return settings.app_env.strip().lower() in {"production", "prod"}
+
+
+def internal_api_key() -> str:
+    """Key BFF injects when forwarding to case-service (STAFF_INTERNAL_API_KEY or BFF_API_PASSWORD)."""
+    explicit = (settings.staff_internal_api_key or "").strip()
+    if explicit:
+        return explicit
+    return (settings.bff_api_password or "").strip()
+
+
+def validate_production_settings() -> None:
+    if not is_production():
+        return
+    pwd = (settings.bff_api_password or "").strip()
+    if not pwd or pwd == _DEV_PLACEHOLDER_PASSWORD:
+        raise RuntimeError(
+            "BFF_API_PASSWORD must be set to a strong secret in production (not empty or dev placeholder)"
+        )
+    if not internal_api_key():
+        raise RuntimeError("STAFF_INTERNAL_API_KEY or BFF_API_PASSWORD required in production")
+
 
 _DEV_CORS_ORIGINS: List[str] = [
     "http://localhost:5173",
@@ -116,3 +145,7 @@ def cors_origin_list() -> List[str]:
         return list(_DEV_CORS_ORIGINS)
     parsed = [o.strip() for o in raw.split(",") if o.strip()]
     return parsed if parsed else list(_DEV_CORS_ORIGINS)
+
+
+settings = Settings()
+validate_production_settings()

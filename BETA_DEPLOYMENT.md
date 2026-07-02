@@ -93,7 +93,7 @@ flowchart LR
 
 ### 6. Frontend
 
-- [ ] build จาก [`frontend/`](../frontend) ด้วย `VITE_API_URL` และ `VITE_BFF_API_KEY` ตาม [Frontend](#frontend)
+- [ ] build จาก [`frontend/`](../frontend) ด้วย `VITE_API_URL` ตาม [Frontend](#frontend) (**ไม่ตั้ง** `VITE_BFF_API_KEY` — CR-02)
 - [ ] deploy ไฟล์ static ไป path ที่ nginx เสิร์ฟ
 
 ### 7. ตรวจสอบ
@@ -143,7 +143,7 @@ location /api-vsmartcare/ {
 | `NOTIFICATION_SERVICE_URL` | จำเป็น | `http://notification-service:8000` | URL ภายใน cluster |
 | `THAID_AUTH_SERVICE_URL` | จำเป็น | `http://thaid-auth-service:8000` | URL ภายใน cluster |
 | `BFF_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค |
-| `BFF_API_PASSWORD` | ไม่บังคับ | ค่าลับ | ถ้าตั้ง ทุก `/v1/*` ต้องส่ง `X-API-Key` — ต้องตรงกับ `VITE_BFF_API_KEY` |
+| `BFF_API_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | trusted server clients (`volunteer_smart`) — ต้องตรงกับ `STAFF_INTERNAL_API_KEY` |
 
 ### case-service
 
@@ -209,9 +209,10 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 | ตัวแปร | ตัวอย่างแบบ A | หมายเหตุ |
 |--------|----------------|----------|
 | `VITE_API_URL` | `https://vsmart-demo.m-society.go.th/api-vsmartcare` | ฐาน URL ที่ client เรียก BFF (รวม prefix `/api-vsmartcare`) |
-| `VITE_BFF_API_KEY` | ค่าเดียวกับ `BFF_API_PASSWORD` | ถ้าเปิดใช้ API key บน BFF |
 
-การแนบ header: [`frontend/src/api/client.ts`](../frontend/src/api/client.ts)
+**CR-02:** ไม่ตั้ง `VITE_BFF_API_KEY` ใน beta/prod — browser ใช้ Bearer JWT หลัง ThaiD/admin login เท่านั้น
+
+การแนบ header: [`frontend/src/api/client.ts`](../frontend/src/api/client.ts) (Bearer เท่านั้น)
 
 ---
 
@@ -220,7 +221,7 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 1. Redirect URI ใน ThaiD = `THAID_REDIRECT_URI` ตรงทุกตัวอักษร (`https`, path `/api-vsmartcare/v1/auth/thaid/callback` หรือตาม topology ที่เลือก)
 2. TLS บนโดเมนสาธารณะ
 3. ไม่ commit secret / `.env`
-4. `BFF_API_PASSWORD` กับ `VITE_BFF_API_KEY` ต้องเป็นคู่เดียวกันเมื่อเปิดใช้
+4. `BFF_API_PASSWORD` = `STAFF_INTERNAL_API_KEY` (ค่าเดียวกัน) สำหรับ `volunteer_smart` — **ไม่** build ลง frontend
 
 ---
 
@@ -307,7 +308,7 @@ curl -sS http://127.0.0.1:8003/healthz
 
 ### Frontend (build บนเครื่อง CI หรือเซิร์ฟเวอร์ build)
 
-จากโฟลเดอร์ [`frontend/`](../frontend) ตั้ง `VITE_API_URL` และ `VITE_BFF_API_KEY` ตาม [Frontend](#frontend) แล้ว build (คำสั่งตาม stack ของโปรเจกต์ เช่น `npm ci` แล้ว `npm run build`) นำผลลัพธ์ไป path ที่ nginx เสิร์ฟ static
+จากโฟลเดอร์ [`frontend/`](../frontend) ตั้ง `VITE_API_URL` ตาม [Frontend](#frontend) แล้ว build (คำสั่งตาม stack ของโปรเจกต์ เช่น `npm ci` แล้ว `npm run build`) นำผลลัพธ์ไป path ที่ nginx เสิร์ฟ static — **ไม่ตั้ง** `VITE_BFF_API_KEY`
 
 ### Nginx (หลังแก้ config)
 

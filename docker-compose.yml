@@ -14,7 +14,8 @@ services:
         required: false
     environment:
       - PORT=8000
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-1234567890}
+      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
+      - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
@@ -45,7 +46,7 @@ services:
       - COOLDOWN_DAYS=30
       - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET:-dev-admin-jwt-secret-change-in-production}
       - STAFF_JWT_SECRET=${STAFF_JWT_SECRET:-dev-staff-jwt-secret-change-in-production}
-      - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-1234567890}
+      - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-}
       - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
       - ADMIN_JWT_EXPIRE_MINUTES=480
       - CHECK_CASE_ENABLE_MSO_LOGBOOK=false
