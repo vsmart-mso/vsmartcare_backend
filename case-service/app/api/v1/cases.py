@@ -725,6 +725,9 @@ async def upload_welfare_evidence_image(
     applicant_id: int,
     attachment_type_id: int = Form(..., ge=1),
     file_other_type_name: str | None = Form(None),
+    # household_member_seq: ส่งมาเมื่ออัปโหลดรูปของสมาชิกในครัวเรือน
+    # backend resolve เป็น household_member_id ภายใน (applicant_id + seq → id)
+    household_member_seq: int | None = Form(None, ge=1),
     file: UploadFile = File(..., description="ไฟล์รูป (jpeg/png/webp/gif) — ไม่ใช้ Base64"),
     session: AsyncSession = Depends(get_session),
     claims: CitizenClaims = Depends(require_citizen),
@@ -736,6 +739,23 @@ async def upload_welfare_evidence_image(
         attachment_type_id,
         file_other_type_name,
     )
+
+    # resolve household_member_seq → household_member_id
+    household_member_id: int | None = None
+    if household_member_seq is not None:
+        member_row = await session.execute(
+            select(HouseholdMember.id).where(
+                HouseholdMember.applicant_id == applicant_id,
+                HouseholdMember.seq == household_member_seq,
+            )
+        )
+        member_id = member_row.scalar_one_or_none()
+        if member_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="household_member_not_found",
+            )
+        household_member_id = member_id
 
     raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
     if raw_content_type not in ALLOWED_IMAGE_TYPES:
@@ -774,6 +794,7 @@ async def upload_welfare_evidence_image(
         file_stored_name=stored,
         file_size=len(blob),
         file_other_type_name=normalized_other_name,
+        household_member_id=household_member_id,
     )
     session.add(evidence)
     try:

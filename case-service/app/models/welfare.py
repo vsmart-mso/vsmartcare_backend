@@ -19,6 +19,7 @@ from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
+    from .economic import HouseholdMember
     from .lookup import AttachmentType, ReceivedWelfareType, RequestType
 
 
@@ -133,5 +134,19 @@ class WelfareEvidence(Base):
     file_height: Mapped[int | None] = mapped_column(Integer)
     file_other_type_name: Mapped[str | None] = mapped_column(String(255))
 
+    # FK → household_members.id (nullable)
+    # NULL = evidence ของผู้ยื่นคำร้อง, NOT NULL = evidence ของสมาชิกในครัวเรือน
+    # CASCADE DELETE: ลบสมาชิก → รูปหายตามอัตโนมัติ
+    household_member_id: Mapped[int | None] = mapped_column(
+        ForeignKey("household_members.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+        comment="FK → household_members.id; NULL = evidence ของผู้ยื่น",
+    )
+
     applicant: Mapped["Applicant"] = relationship(back_populates="welfare_evidences")
     attachment_type: Mapped["AttachmentType"] = relationship(lazy="selectin")
+    household_member: Mapped["HouseholdMember | None"] = relationship(
+        foreign_keys=[household_member_id],
+        lazy="selectin",
+    )
