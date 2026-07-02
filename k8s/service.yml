@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-bff
+  labels:
+    app: vcare-bff
+spec:
+  selector:
+    app: vcare-bff
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-case-service
+  labels:
+    app: vcare-case-service
+spec:
+  selector:
+    app: vcare-case-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-notification-service
+  labels:
+    app: vcare-notification-service
+spec:
+  selector:
+    app: vcare-notification-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-ocr-service
+  labels:
+    app: vcare-ocr-service
+spec:
+  selector:
+    app: vcare-ocr-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-thaid-auth-service
+  labels:
+    app: vcare-thaid-auth-service
+spec:
+  selector:
+    app: vcare-thaid-auth-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-dashboard-service
+  labels:
+    app: vcare-dashboard-service
+spec:
+  selector:
+    app: vcare-dashboard-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
