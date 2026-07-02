@@ -166,28 +166,73 @@ async def apply_case_update(
                 )
 
     if body.household_members is not None:
-        await session.execute(
-            delete(HouseholdMember).where(HouseholdMember.applicant_id == applicant_id)
+        # ใช้ upsert-by-seq แทน delete-all + recreate
+        # เพื่อรักษา household_member.id ของสมาชิกเดิมไว้
+        # (welfare_evidences.household_member_id FK ondelete=CASCADE — ถ้า delete แล้วสร้างใหม่ รูปหาย)
+        new_seqs = {hm.seq for hm in body.household_members}
+
+        # ดึง existing members
+        existing_rows = await session.execute(
+            select(HouseholdMember.id, HouseholdMember.seq)
+            .where(HouseholdMember.applicant_id == applicant_id)
         )
-        for hm in body.household_members:
-            session.add(
-                HouseholdMember(
-                    applicant_id=applicant_id,
-                    seq=hm.seq,
-                    national_id=hm.national_id,
-                    prefix_id=hm.prefix_id,
-                    prefix_other=hm.prefix_other,
-                    first_name=hm.first_name,
-                    last_name=hm.last_name,
-                    date_of_birth=hm.date_of_birth,
-                    relation_to_applicant_id=hm.relation_to_applicant_id,
-                    occupation_type_id=hm.occupation_type_id,
-                    occupation=hm.occupation,
-                    monthly_income=hm.monthly_income,
-                    physical_condition=hm.physical_condition,
-                    self_care=hm.self_care,
+        existing_by_seq: dict[int, int] = {row.seq: row.id for row in existing_rows}
+
+        # ลบเฉพาะ member ที่ไม่อยู่ใน list ใหม่ (seq หายไป)
+        seqs_to_delete = set(existing_by_seq.keys()) - new_seqs
+        if seqs_to_delete:
+            await session.execute(
+                delete(HouseholdMember).where(
+                    HouseholdMember.applicant_id == applicant_id,
+                    HouseholdMember.seq.in_(seqs_to_delete),
                 )
             )
+
+        for hm in body.household_members:
+            if hm.seq in existing_by_seq:
+                # UPDATE — คง id เดิมไว้ (welfare_evidences ยังชี้ถูก)
+                await session.execute(
+                    sa_update(HouseholdMember)
+                    .where(
+                        HouseholdMember.applicant_id == applicant_id,
+                        HouseholdMember.seq == hm.seq,
+                    )
+                    .values(
+                        national_id=hm.national_id,
+                        prefix_id=hm.prefix_id,
+                        prefix_other=hm.prefix_other,
+                        first_name=hm.first_name,
+                        last_name=hm.last_name,
+                        date_of_birth=hm.date_of_birth,
+                        relation_to_applicant_id=hm.relation_to_applicant_id,
+                        occupation_type_id=hm.occupation_type_id,
+                        occupation=hm.occupation,
+                        monthly_income=hm.monthly_income,
+                        physical_condition=hm.physical_condition,
+                        self_care=hm.self_care,
+                    )
+                )
+            else:
+                # INSERT — member ใหม่ (seq ยังไม่มีในฐานข้อมูล)
+                session.add(
+                    HouseholdMember(
+                        applicant_id=applicant_id,
+                        seq=hm.seq,
+                        national_id=hm.national_id,
+                        prefix_id=hm.prefix_id,
+                        prefix_other=hm.prefix_other,
+                        first_name=hm.first_name,
+                        last_name=hm.last_name,
+                        date_of_birth=hm.date_of_birth,
+                        relation_to_applicant_id=hm.relation_to_applicant_id,
+                        occupation_type_id=hm.occupation_type_id,
+                        occupation=hm.occupation,
+                        monthly_income=hm.monthly_income,
+                        physical_condition=hm.physical_condition,
+                        self_care=hm.self_care,
+                    )
+                )
+
         if body.economic_infos is None:
             await session.execute(
                 sa_update(EconomicInfo)

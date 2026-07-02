@@ -1,9 +1,22 @@
+from pathlib import Path
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SERVICE_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILES: tuple[Path, ...] = tuple(
+    p
+    for p in (
+        _SERVICE_ROOT / ".env",
+        _SERVICE_ROOT / ".env.local",
+    )
+    if p.is_file()
+)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES if _ENV_FILES else None,
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
@@ -14,7 +27,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # ── Gemini / OCR ──────────────────────────────────────────────
-    gemini_api_key: str = "AIzaSyALzFw-kOAq3liKl2QJuzEEoM7yLCYNsLg"
+    gemini_api_key: str = Field(validation_alias="GEMINI_API_KEY")
     gemini_model: str = "gemini-3.1-flash-lite"
     blur_threshold: int = 100
     fuzzy_match_threshold: float = 90.0

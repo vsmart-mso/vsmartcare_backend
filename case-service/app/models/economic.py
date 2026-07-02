@@ -20,6 +20,7 @@ from ..core.base import Base
 if TYPE_CHECKING:
     from .applicant import Applicant
     from .lookup import HouseholdMemberRelationType, HousingType, IncomeSourceType, OccupationType, PrefixType
+    from .welfare import WelfareEvidence
 
 
 class EconomicInfo(Base):
@@ -158,4 +159,11 @@ class HouseholdMember(Base):
     )
     occupation_type: Mapped["OccupationType | None"] = relationship(
         foreign_keys=[occupation_type_id], lazy="selectin"
+    )
+    # รูปภาพเอกสารของสมาชิกคนนี้ — lazy load เพราะไม่ต้องดึงทุกครั้งที่ load household_members
+    evidences: Mapped[list["WelfareEvidence"]] = relationship(
+        foreign_keys="WelfareEvidence.household_member_id",
+        back_populates="household_member",
+        cascade="all, delete-orphan",
+        lazy="select",
     )
