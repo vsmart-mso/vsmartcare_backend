@@ -29,7 +29,7 @@ spec:
     - protocol: TCP
       port: 8001
       targetPort: 8000
-      nodePort: 30801
+      nodePort: 30802
   type: NodePort
 ---
 apiVersion: v1
@@ -46,7 +46,7 @@ spec:
     - protocol: TCP
       port: 8002
       targetPort: 8000
-      nodePort: 30802
+      nodePort: 30803
   type: NodePort
 ---
 apiVersion: v1
@@ -63,7 +63,7 @@ spec:
     - protocol: TCP
       port: 8003
       targetPort: 8000
-      nodePort: 30803
+      nodePort: 30804
   type: NodePort
 ---
 apiVersion: v1
@@ -80,7 +80,7 @@ spec:
     - protocol: TCP
       port: 8004
       targetPort: 8000
-      nodePort: 30804
+      nodePort: 30805
   type: NodePort
 ---
 apiVersion: v1
@@ -97,5 +97,5 @@ spec:
     - protocol: TCP
       port: 8005
       targetPort: 8000
-      nodePort: 30805
+      nodePort: 30806
   type: NodePort
