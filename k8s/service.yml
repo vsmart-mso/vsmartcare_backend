@@ -12,7 +12,8 @@ spec:
     - protocol: TCP
       port: 8000
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30800
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
@@ -26,9 +27,10 @@ spec:
     app: vcare-case-service
   ports:
     - protocol: TCP
-      port: 8000
+      port: 8001
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30801
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
@@ -42,9 +44,10 @@ spec:
     app: vcare-notification-service
   ports:
     - protocol: TCP
-      port: 8000
+      port: 8002
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30802
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
@@ -58,9 +61,10 @@ spec:
     app: vcare-ocr-service
   ports:
     - protocol: TCP
-      port: 8000
+      port: 8003
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30803
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
@@ -74,9 +78,10 @@ spec:
     app: vcare-thaid-auth-service
   ports:
     - protocol: TCP
-      port: 8000
+      port: 8004
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30804
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
@@ -90,6 +95,7 @@ spec:
     app: vcare-dashboard-service
   ports:
     - protocol: TCP
-      port: 8000
+      port: 8005
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 30805
+  type: NodePort
