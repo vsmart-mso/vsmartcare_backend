@@ -1,20 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vcare-db-proxy
+  namespace: vcare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vcare-db-proxy
+  template:
+    metadata:
+      labels:
+        app: vcare-db-proxy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "events {} stream { server { listen 5432; proxy_pass 192.168.10.64:5432; } }" > /etc/nginx/nginx.conf
+          exec nginx -g 'daemon off;'
+        ports:
+        - containerPort: 5432
+---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
   name: vcare-db
+  namespace: vcare
 spec:
   ports:
     - port: 5432
       targetPort: 5432
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-  namespace: vcare
-  name: vcare-db
-subsets:
-  - addresses:
-      - ip: 192.168.10.64
-    ports:
-      - port: 5432
+  selector:
+    app: vcare-db-proxy
