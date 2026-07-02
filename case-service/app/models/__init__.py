@@ -7,6 +7,7 @@ from .applicant import Applicant
 from .article import Article
 from .cover_document_batch import CoverDocumentBatch
 from .dependency import DependencyLoad
+from .diagnosis import CaseDiagnosis, CaseDiagnosisEditHistory
 from .economic import EconomicIncomeSource, EconomicInfo
 from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from .intake import (
@@ -65,6 +66,8 @@ __all__ = [
     "BankAccountType",
     "BankName",
     "CaseDataEditLog",
+    "CaseDiagnosis",
+    "CaseDiagnosisEditHistory",
     "CaseHandling",
     "CaseKtbCorporate",
     "CasePayment",

@@ -210,6 +210,68 @@ class CaseKtbCorporateRead(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# CaseDiagnosis — คำวินิจฉัยหลายรายการ (BR-DIAG-01..06)
+# ---------------------------------------------------------------------------
+
+
+class CaseDiagnosisCreate(BaseModel):
+    """Body สำหรับ POST /cases/{id}/diagnoses — เพิ่มคำวินิจฉัยของ user ตนเอง."""
+
+    diagnosis_text: str = Field(..., min_length=1)
+    owner_user_id: int = Field(..., gt=0, description="Django user id ฝั่ง VSmart")
+    owner_sdshv: str | None = Field(None, max_length=255)
+    owner_name: str | None = Field(None, max_length=255)
+    owner_position: str | None = Field(None, max_length=255)
+    owner_organization: str | None = Field(None, max_length=255)
+
+
+class CaseDiagnosisUpdate(BaseModel):
+    """Body สำหรับ PATCH /cases/{id}/diagnoses/{diagnosis_id} — แก้ได้เฉพาะของตนเอง."""
+
+    diagnosis_text: str = Field(..., min_length=1)
+    actor_user_id: int = Field(..., gt=0, description="user ผู้ขอแก้ — ต้องตรง owner_user_id")
+    actor_name: str | None = Field(None, max_length=255)
+    edit_reason: str | None = None
+    # snapshot ใหม่ (ตำแหน่ง/หน่วยงานอาจเปลี่ยน) — optional, อัปเดตเมื่อส่งมา
+    owner_position: str | None = Field(None, max_length=255)
+    owner_organization: str | None = Field(None, max_length=255)
+
+
+class CaseDiagnosisEditHistoryRead(BaseModel):
+    id: int
+    diagnosis_id: int
+    old_text: str
+    new_text: str
+    edit_reason: str | None = None
+    edited_by_user_id: int
+    edited_by_name: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaseDiagnosisRead(BaseModel):
+    id: int
+    applicant_id: int
+    diagnosis_text: str
+    owner_user_id: int
+    owner_sdshv: str | None = None
+    owner_name: str | None = None
+    owner_position: str | None = None
+    owner_organization: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    is_owner: bool = Field(default=False, description="True เมื่อ actor_user_id ตรง owner")
+    edit_count: int = Field(default=0, description="จำนวนครั้งที่แก้ไข")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CaseDiagnosisDetailRead(CaseDiagnosisRead):
+    edit_histories: list[CaseDiagnosisEditHistoryRead] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # CaseIntakeRead — สถานะ intake ทั้งหมดของ applicant
 # ---------------------------------------------------------------------------
 
