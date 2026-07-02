@@ -27,6 +27,7 @@ class StaffClaims:
     username: str
     province_id: int
     display_name: str
+    is_internal: bool = False
 
 
 def mint_staff_jwt(
@@ -77,6 +78,8 @@ def _claims_from_raw(raw: dict[str, Any]) -> StaffClaims:
 
 
 def assert_province_scope(staff: StaffClaims, province_id: int) -> None:
+    if staff.is_internal:
+        return
     if staff.province_id != province_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="province_scope_denied")
 
@@ -107,9 +110,19 @@ async def assert_applicant_in_staff_province(
 async def require_staff(
     request: Request,
     authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> StaffClaims:
     secret = (settings.staff_jwt_secret or "").strip()
+    internal_api_key = (settings.staff_internal_api_key or "").strip()
+    if internal_api_key and (x_api_key or "").strip() == internal_api_key:
+        return StaffClaims(
+            staff_id=0,
+            username="internal-api",
+            province_id=0,
+            display_name="internal-api",
+            is_internal=True,
+        )
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -12,10 +12,15 @@ from starlette.responses import JSONResponse
 from .settings import settings
 
 _forward_auth: ContextVar[Optional[str]] = ContextVar("_forward_auth", default=None)
+_forward_api_key: ContextVar[Optional[str]] = ContextVar("_forward_api_key", default=None)
 
 
 def get_forward_auth_header() -> Optional[str]:
     return _forward_auth.get()
+
+
+def get_forward_api_key_header() -> Optional[str]:
+    return _forward_api_key.get()
 
 
 def merge_forward_headers(headers: Optional[dict[str, str]] = None) -> dict[str, str]:
@@ -23,17 +28,23 @@ def merge_forward_headers(headers: Optional[dict[str, str]] = None) -> dict[str,
     auth = get_forward_auth_header()
     if auth and "Authorization" not in merged:
         merged["Authorization"] = auth
+    api_key = get_forward_api_key_header()
+    if api_key and "X-API-Key" not in merged:
+        merged["X-API-Key"] = api_key
     return merged
 
 
 class CaptureAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         auth = request.headers.get("authorization")
-        token = _forward_auth.set(auth)
+        api_key = request.headers.get("x-api-key")
+        auth_token = _forward_auth.set(auth)
+        api_key_token = _forward_api_key.set(api_key)
         try:
             return await call_next(request)
         finally:
-            _forward_auth.reset(token)
+            _forward_auth.reset(auth_token)
+            _forward_api_key.reset(api_key_token)
 
 
 class StaffRouteAuthMiddleware(BaseHTTPMiddleware):
@@ -48,7 +59,10 @@ class StaffRouteAuthMiddleware(BaseHTTPMiddleware):
             rel = path
         if rel.startswith("/v1/case_for_staff") or rel.startswith("/v1/intake"):
             auth = (request.headers.get("authorization") or "").strip()
-            if not auth.lower().startswith("bearer "):
+            api_key = (request.headers.get("x-api-key") or "").strip()
+            expected_api_key = (settings.bff_api_password or "").strip()
+            has_valid_api_key = bool(expected_api_key) and api_key == expected_api_key
+            if not auth.lower().startswith("bearer ") and not has_valid_api_key:
                 return JSONResponse({"detail": "missing_bearer_token"}, status_code=401)
         return await call_next(request)
 

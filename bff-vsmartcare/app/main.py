@@ -696,6 +696,78 @@ async def create_case(
 
 
 @router.post(
+    "/v1/case_for_staff/applicant/{applicant_id}/evidences",
+    tags=["case_for_staff"],
+    summary="อัปโหลดรูปหลักฐานสำหรับเจ้าหน้าที่",
+    description="ส่งต่อ `POST …/v1/case_for_staff/applicant/{applicant_id}/evidences` — เก็บไฟล์รูปลงจานและ welfare_evidences",
+    dependencies=_v1_api_key,
+)
+async def upload_case_for_staff_evidence(
+    applicant_id: int,
+    attachment_type_id: int = Form(...),
+    file_other_type_name: Optional[str] = Form(None),
+    household_member_seq: Optional[int] = Form(None, ge=1),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/evidences"
+    return await _post_evidence_multipart(
+        url,
+        {
+            "attachment_type_id": attachment_type_id,
+            "file_other_type_name": file_other_type_name,
+            "household_member_seq": household_member_seq,
+        },
+        file,
+    )
+
+
+@router.put(
+    "/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}",
+    tags=["case_for_staff"],
+    summary="แก้ไขรูปหลักฐานสำหรับเจ้าหน้าที่",
+    description="ส่งต่อ `PUT …/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}` — แทนที่รูปเดิมด้วยรูปใหม่",
+    dependencies=_v1_api_key,
+)
+async def update_case_for_staff_evidence(
+    applicant_id: int,
+    evidence_id: int,
+    attachment_type_id: int = Form(...),
+    file_other_type_name: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}"
+    return await _put_evidence_multipart(
+        url,
+        {
+            "attachment_type_id": attachment_type_id,
+            "file_other_type_name": file_other_type_name,
+        },
+        file,
+    )
+
+
+@router.delete(
+    "/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}",
+    tags=["case_for_staff"],
+    summary="ลบรูปหลักฐานสำหรับเจ้าหน้าที่",
+    description="ส่งต่อ `DELETE …/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}`",
+    dependencies=_v1_api_key,
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_case_for_staff_evidence(
+    applicant_id: int,
+    evidence_id: int,
+) -> Response:
+    base = settings.case_service_url.rstrip("/")
+    await _delete(
+        f"{base}/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}"
+    )
+    return Response(status_code=204)
+
+
+@router.post(
     "/v1/cases/{applicant_id}/evidences",
     tags=["cases"],
     summary="อัปโหลดรูปหลักฐาน (multipart)",
@@ -1642,6 +1714,31 @@ async def delete_case_evidence(
         headers=_forward_auth_headers(authorization),
     )
     return Response(status_code=204)
+
+
+@router.get(
+    "/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}/file",
+    tags=["case_for_staff"],
+    summary="ดาวน์โหลดไฟล์หลักฐานสำหรับเจ้าหน้าที่",
+    description="ส่งต่อ `GET …/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}/file` ใน case-service",
+    dependencies=_v1_api_key,
+)
+async def get_case_for_staff_evidence_file_proxy(
+    applicant_id: int,
+    evidence_id: int,
+) -> Response:
+    base = settings.case_service_url.rstrip("/")
+    r = await _get_raw(
+        f"{base}/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}/file"
+    )
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        media_type=r.headers.get("content-type", "application/octet-stream"),
+        headers=out_headers,
+    )
 
 
 @router.get(

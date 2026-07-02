@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     staff_jwt_expire_minutes: int = Field(
         default=480, ge=1, validation_alias="STAFF_JWT_EXPIRE_MINUTES"
     )
+    staff_internal_api_key: str = Field(default="", validation_alias="STAFF_INTERNAL_API_KEY")
 
 
 settings = Settings()
