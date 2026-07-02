@@ -16,7 +16,7 @@ spec:
         app: vcare-bff
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-bff
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-bff:latest
@@ -51,7 +51,7 @@ spec:
         app: vcare-case-service
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-case-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-case-service:latest
@@ -86,7 +86,7 @@ spec:
         app: vcare-notification-service
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-notification-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-notification-service:latest
@@ -121,7 +121,7 @@ spec:
         app: vcare-ocr-service
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-ocr-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-ocr-service:latest
@@ -156,7 +156,7 @@ spec:
         app: vcare-thaid-auth-service
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-thaid-auth-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-thaid-auth-service:latest
@@ -191,7 +191,7 @@ spec:
         app: vcare-dashboard-service
     spec:
       imagePullSecrets:
-        - name: registrycred
+        - name: backcred
       containers:
         - name: vcare-dashboard-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-dashboard-service:latest
