@@ -12,7 +12,8 @@ spec:
     metadata:
       labels:
         app: vcare-db-proxy
-    spec: # <--- จุดที่ต้องแก้ไข: ก่อนหน้านี้ spec แถวนี้ย่อหน้าเกินไป 2 เคาะ
+    spec:
+      hostNetwork: true # <--- 🌟 เพิ่มบรรทัดนี้ เพื่อให้ใช้ IP ของ Node คุยขายนอกได้ทันที
       containers:
       - name: nginx
         image: nginx:alpine
