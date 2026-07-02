@@ -19,7 +19,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-bff
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-bff:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-bff-latest
           ports:
             - containerPort: 8000
           envFrom:
@@ -54,7 +54,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-case-service
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-case-service:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-case-service-latest
           ports:
             - containerPort: 8000
           envFrom:
@@ -89,7 +89,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-notification-service
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-notification-service:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-notification-service-latest
           ports:
             - containerPort: 8000
           envFrom:
@@ -124,7 +124,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-ocr-service
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-ocr-service:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-ocr-service-latest
           ports:
             - containerPort: 8000
           envFrom:
@@ -159,7 +159,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-thaid-auth-service
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-thaid-auth-service:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-thaid-auth-service-latest
           ports:
             - containerPort: 8000
           envFrom:
@@ -194,7 +194,7 @@ spec:
         - name: backcred
       containers:
         - name: vcare-dashboard-service
-          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend/vcare-dashboard-service:latest
+          image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-dashboard-service-latest
           ports:
             - containerPort: 8000
           envFrom:

@@ -23,6 +23,7 @@ pipeline {
         REGISTRY   = "registry-vs.m-society.go.th"
         PROJECT    = "kitsune-cop"
         REPO       = "vcare-backend"
+        BASE_IMAGE = "registry-vs.m-society.go.th/kitsune-cop/vcare-backend"
         IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
         NAMESPACE  = "vcare"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
@@ -46,12 +47,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-bff:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-bff:latest \
+                                -t ${BASE_IMAGE}:vcare-bff-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-bff-latest \
                                 bff-vsmartcare/
-                        """
+                        '''
                     }
                 }
                 stage('case-service') {
@@ -62,12 +63,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-case-service:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-case-service:latest \
+                                -t ${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-case-service-latest \
                                 case-service/
-                        """
+                        '''
                     }
                 }
                 stage('notification-service') {
@@ -78,12 +79,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-notification-service:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-notification-service:latest \
+                                -t ${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-notification-service-latest \
                                 notification-service/
-                        """
+                        '''
                     }
                 }
                 stage('ocr-service') {
@@ -94,12 +95,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-ocr-service:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-ocr-service:latest \
+                                -t ${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-ocr-service-latest \
                                 ocr-service/
-                        """
+                        '''
                     }
                 }
                 stage('thaid-auth-service') {
@@ -110,12 +111,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-thaid-auth-service:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-thaid-auth-service:latest \
+                                -t ${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-thaid-auth-service-latest \
                                 thaid-auth-service/
-                        """
+                        '''
                     }
                 }
                 stage('dashboard-service') {
@@ -126,12 +127,12 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
+                        sh '''
                             docker build \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-dashboard-service:${IMAGE_TAG} \
-                                -t ${REGISTRY}/${PROJECT}/${REPO}/vcare-dashboard-service:latest \
+                                -t ${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-dashboard-service-latest \
                                 dashboard-service/
-                        """
+                        '''
                     }
                 }
             }
@@ -165,10 +166,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-bff:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-bff:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-bff-latest
+                        '''
                     }
                 }
                 stage('case-service') {
@@ -179,10 +180,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-case-service:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-case-service:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-case-service-latest
+                        '''
                     }
                 }
                 stage('notification-service') {
@@ -193,10 +194,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-notification-service:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-notification-service:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-notification-service-latest
+                        '''
                     }
                 }
                 stage('ocr-service') {
@@ -207,10 +208,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-ocr-service:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-ocr-service:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-ocr-service-latest
+                        '''
                     }
                 }
                 stage('thaid-auth-service') {
@@ -221,10 +222,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-thaid-auth-service:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-thaid-auth-service:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service-latest
+                        '''
                     }
                 }
                 stage('dashboard-service') {
@@ -235,10 +236,10 @@ pipeline {
                         }
                     }
                     steps {
-                        sh """
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-dashboard-service:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${PROJECT}/${REPO}/vcare-dashboard-service:latest
-                        """
+                        sh '''
+                            docker push ${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-dashboard-service-latest
+                        '''
                     }
                 }
             }
@@ -269,7 +270,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-bff \
-                                        vcare-bff=${REGISTRY}/${PROJECT}/${REPO}/vcare-bff:${IMAGE_TAG}
+                                        vcare-bff=${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=300s
                                 '''
                             }
@@ -285,7 +286,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-case-service \
-                                        vcare-case-service=${REGISTRY}/${PROJECT}/${REPO}/vcare-case-service:${IMAGE_TAG}
+                                        vcare-case-service=${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=300s
                                 '''
                             }
@@ -301,7 +302,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service \
-                                        vcare-notification-service=${REGISTRY}/${PROJECT}/${REPO}/vcare-notification-service:${IMAGE_TAG}
+                                        vcare-notification-service=${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=300s
                                 '''
                             }
@@ -317,7 +318,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service \
-                                        vcare-ocr-service=${REGISTRY}/${PROJECT}/${REPO}/vcare-ocr-service:${IMAGE_TAG}
+                                        vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=300s
                                 '''
                             }
@@ -333,7 +334,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service \
-                                        vcare-thaid-auth-service=${REGISTRY}/${PROJECT}/${REPO}/vcare-thaid-auth-service:${IMAGE_TAG}
+                                        vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=300s
                                 '''
                             }
@@ -349,7 +350,7 @@ pipeline {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service \
-                                        vcare-dashboard-service=${REGISTRY}/${PROJECT}/${REPO}/vcare-dashboard-service:${IMAGE_TAG}
+                                        vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
                                     kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=300s
                                 '''
                             }
