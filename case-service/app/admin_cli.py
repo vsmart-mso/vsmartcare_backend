@@ -5,6 +5,7 @@
     python -m app.admin_cli add-admin --username admin           # แนะนำ — รหัสผ่านถามผ่าน prompt
     python -m app.admin_cli add-admin --username admin --password "SecurePass!123"  # หรือส่งตรง (บันทึกใน history)
     python -m app.admin_cli list-admins
+    python -m app.admin_cli purge-all --confirm   # dev/staging เท่านั้น (CR-05)
 
 หมายเหตุ: ต้อง migrate ถึง revision 0058 ก่อน (ตาราง admin_users)
 """
@@ -85,6 +86,16 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list-admins", help="แสดงรายการ admin")
 
+    p_purge = sub.add_parser(
+        "purge-all",
+        help="ลบ persons ทั้งหมด (dev/staging เท่านั้น — ไม่ทำงานเมื่อ APP_ENV=production)",
+    )
+    p_purge.add_argument(
+        "--confirm",
+        action="store_true",
+        help="ยืนยันการลบทั้งหมด",
+    )
+
     args = parser.parse_args(argv)
 
     if SessionLocal is None:
@@ -106,8 +117,30 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_add_admin(args.username, password))
     if args.command == "list-admins":
         return asyncio.run(_list_admins())
+    if args.command == "purge-all":
+        if not args.confirm:
+            print("error: ต้องส่ง --confirm เพื่อยืนยัน", file=sys.stderr)
+            return 2
+        return asyncio.run(_purge_all())
     parser.print_help()
     return 2
+
+
+async def _purge_all() -> int:
+    from .api.v1.person_purge import purge_all_persons_dev
+
+    try:
+        async with SessionLocal() as session:
+            result = await purge_all_persons_dev(session)
+            await session.commit()
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"ok: ลบ persons {result.deleted_person_count} คน, "
+        f"applicants {result.deleted_applicant_count} รายการ"
+    )
+    return 0
 
 
 if __name__ == "__main__":

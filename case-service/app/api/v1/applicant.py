@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.citizen_security import CitizenClaims, assert_cid_owner, require_citizen
 from ...core.database import get_session
 from ...models.person import Person
 from ...schemas.applicant import ApplicantDeleteByCidResponse
@@ -32,11 +33,14 @@ router = APIRouter(prefix="/v1/applicants", tags=["applicants"])
 async def delete_applicants_by_cid(
     cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> ApplicantDeleteByCidResponse:
     try:
         normalized_cid = validate_thai_cid(cid)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    assert_cid_owner(normalized_cid, claims)
 
     stmt = (
         select(Person)

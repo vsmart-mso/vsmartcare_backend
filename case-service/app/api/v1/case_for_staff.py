@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import uuid
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -22,15 +24,18 @@ from ...services.article_approval import (
 )
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
 from ...core.database import get_session
+from ...core.file_validation import assert_image_magic_bytes
 from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyCategory
+from ...models.economic import HouseholdMember
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.intake import CaseHandling, CaseRegulationChoice
 from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
+from ...models.welfare import WelfareEvidence
 from ...services.process_sla import (
     apply_emergency_flag_for_money_category,
     apply_process_sla_to_applicant,
@@ -55,7 +60,7 @@ from ...services.staff_edit_audit import (
     build_staff_survey_edit_remarks,
     record_staff_data_edit_audit,
 )
-from ...schemas.case_welfare import WelfareApplicantUpdate, WelfareCaseUpdate
+from ...schemas.case_welfare import WelfareApplicantUpdate, WelfareCaseUpdate, WelfareEvidenceUploadRead
 from ...models.review import WelfareReviewComment
 from ...services.file_payment_upload import (
     ATTACHMENT_PDF_037_ID,
@@ -80,6 +85,11 @@ from ...services.status_email_notification import (
     enqueue_payment_037_upload_email,
     enqueue_status_email,
 )
+from ...services.welfare_evidence import validate_welfare_evidence_upload
+
+
+def _staff_evidence_view_path(applicant_id: int, evidence_id: int) -> str:
+    return f"/v1/case_for_staff/applicant/{applicant_id}/evidences/{evidence_id}/file"
 from ...services.welfare_payment_flow import (
     apply_037_update,
     apply_038_update,
@@ -87,6 +97,7 @@ from ...services.welfare_payment_flow import (
     apply_payment_update_by_id,
     file_payment_owned_by_applicant,
 )
+from ...settings import resolved_upload_root, settings
 from ...schemas.address import AddressRead
 from ...schemas.article import ArticleCreate, ArticleRead, ArticleUpdate
 from ...schemas.cover_document_batch import (
@@ -174,7 +185,20 @@ from ...schemas.welfare import (
 )
 
 
-router = APIRouter(prefix="/v1/case_for_staff", tags=["case_for_staff"])
+from ...core.staff_security import require_staff
+
+router = APIRouter(
+    prefix="/v1/case_for_staff",
+    tags=["case_for_staff"],
+    dependencies=[Depends(require_staff)],
+)
+
+ALLOWED_IMAGE_TYPES: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 def _person_age_from_birth_date(birth_date: date) -> int:
@@ -373,7 +397,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
                 attachment_type_id=ev.attachment_type_id,
                 attachment_type_name=ev.attachment_type.name if ev.attachment_type else None,
                 file_other_type_name=ev.file_other_type_name,
-                view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
+                view_path=_staff_evidence_view_path(orm.id, ev.id),
             )
         )
 
@@ -463,7 +487,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         PorKor1EvidenceItem(
             evidence=WelfareEvidenceRead.model_validate(ev),
             attachment_type_name=ev.attachment_type.name if ev.attachment_type else None,
-            view_path=f"/v1/cases/{orm.id}/evidences/{ev.id}/file",
+            view_path=_staff_evidence_view_path(orm.id, ev.id),
         )
         for ev in sorted(orm.welfare_evidences, key=lambda x: x.id)
         if ev.household_member_id is None
@@ -1479,6 +1503,231 @@ async def get_attachment_type_for_staff(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="attachment_type_not_found")
     return AttachmentTypeRead.model_validate(row)
+
+
+@router.get(
+    "/applicant/{applicant_id}/evidences/{evidence_id}/file",
+    response_class=FileResponse,
+    summary="ดาวน์โหลดไฟล์หลักฐานสำหรับเจ้าหน้าที่",
+)
+async def get_case_for_staff_evidence_file(
+    applicant_id: int,
+    evidence_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    root = resolved_upload_root().resolve()
+    path = (root / ev.file_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="evidence_file_invalid_path",
+        ) from e
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_file_missing")
+
+    suffix = path.suffix.lower()
+    media = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(suffix, "application/octet-stream")
+    download_name = ev.file_original_name or ev.file_stored_name or path.name
+    return FileResponse(path, media_type=media, filename=download_name)
+
+
+@router.post(
+    "/applicant/{applicant_id}/evidences",
+    response_model=WelfareEvidenceUploadRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="อัปโหลดรูปหลักฐานสำหรับเจ้าหน้าที่",
+)
+async def upload_case_for_staff_evidence_image(
+    applicant_id: int,
+    attachment_type_id: int = Form(..., ge=1),
+    file_other_type_name: str | None = Form(None),
+    household_member_seq: int | None = Form(None, ge=1),
+    file: UploadFile = File(..., description="ไฟล์รูป (jpeg/png/webp/gif)"),
+    session: AsyncSession = Depends(get_session),
+) -> WelfareEvidenceUploadRead:
+    normalized_other_name = await validate_welfare_evidence_upload(
+        session,
+        attachment_type_id,
+        file_other_type_name,
+    )
+
+    household_member_id: int | None = None
+    if household_member_seq is not None:
+        member_row = await session.execute(
+            select(HouseholdMember.id).where(
+                HouseholdMember.applicant_id == applicant_id,
+                HouseholdMember.seq == household_member_seq,
+            )
+        )
+        member_id = member_row.scalar_one_or_none()
+        if member_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="household_member_not_found",
+            )
+        household_member_id = member_id
+
+    raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if raw_content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="unsupported_media_type_expect_image",
+        )
+
+    blob = await file.read()
+    if len(blob) > settings.max_upload_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
+
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
+    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
+
+    base = resolved_upload_root()
+    dest_dir = (base / str(applicant_id)).resolve()
+    try:
+        dest_dir.relative_to(base.resolve())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upload_path_invalid") from e
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}{ext}"
+    full_path = dest_dir / stored
+    full_path.write_bytes(blob)
+
+    evidence = WelfareEvidence(
+        attachment_type_id=attachment_type_id,
+        applicant_id=applicant_id,
+        file_path=f"{applicant_id}/{stored}",
+        file_original_name=file.filename,
+        file_stored_name=stored,
+        file_size=len(blob),
+        file_other_type_name=normalized_other_name,
+        household_member_id=household_member_id,
+    )
+    session.add(evidence)
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        if full_path.is_file():
+            full_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+
+    await session.refresh(evidence)
+    return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(evidence))
+
+
+@router.put(
+    "/applicant/{applicant_id}/evidences/{evidence_id}",
+    response_model=WelfareEvidenceUploadRead,
+    summary="แก้ไขรูปหลักฐานสำหรับเจ้าหน้าที่",
+)
+async def update_case_for_staff_evidence_image(
+    applicant_id: int,
+    evidence_id: int,
+    attachment_type_id: int = Form(..., ge=1),
+    file_other_type_name: str | None = Form(None),
+    file: UploadFile = File(..., description="ไฟล์รูปใหม่ (jpeg/png/webp/gif)"),
+    session: AsyncSession = Depends(get_session),
+) -> WelfareEvidenceUploadRead:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    normalized_other_name = await validate_welfare_evidence_upload(
+        session,
+        attachment_type_id,
+        file_other_type_name,
+    )
+
+    raw_content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if raw_content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="unsupported_media_type_expect_image",
+        )
+
+    blob = await file.read()
+    if len(blob) > settings.max_upload_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
+
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
+    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
+    base = resolved_upload_root()
+    dest_dir = (base / str(applicant_id)).resolve()
+    try:
+        dest_dir.relative_to(base.resolve())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="upload_path_invalid") from e
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}{ext}"
+    new_full_path = dest_dir / stored
+    new_full_path.write_bytes(blob)
+
+    old_file = (base / ev.file_path).resolve()
+    old_file.unlink(missing_ok=True)
+
+    ev.attachment_type_id = attachment_type_id
+    ev.file_path = f"{applicant_id}/{stored}"
+    ev.file_original_name = file.filename
+    ev.file_stored_name = stored
+    ev.file_size = len(blob)
+    ev.file_other_type_name = normalized_other_name
+
+    await session.flush()
+    await session.refresh(ev)
+    return WelfareEvidenceUploadRead(evidence=WelfareEvidenceRead.model_validate(ev))
+
+
+@router.patch(
+    "/applicant/{applicant_id}/evidences/{evidence_id}",
+    summary="แก้ไขชื่อเอกสาร (สำหรับ attachment_type_id = อื่นๆ)",
+)
+async def patch_case_for_staff_evidence_name(
+    applicant_id: int,
+    evidence_id: int,
+    body: dict,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+    if "file_other_type_name" in body:
+        ev.file_other_type_name = body["file_other_type_name"]
+    await session.commit()
+    await session.refresh(ev)
+    return {"id": ev.id, "file_other_type_name": ev.file_other_type_name}
+
+
+@router.delete(
+    "/applicant/{applicant_id}/evidences/{evidence_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="ลบรูปหลักฐานสำหรับเจ้าหน้าที่",
+)
+async def delete_case_for_staff_evidence_image(
+    applicant_id: int,
+    evidence_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    ev = await session.get(WelfareEvidence, evidence_id)
+    if ev is None or ev.applicant_id != applicant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
+
+    file_path = (resolved_upload_root() / ev.file_path).resolve()
+    await session.delete(ev)
+    await session.flush()
+    file_path.unlink(missing_ok=True)
 
 
 @router.get(

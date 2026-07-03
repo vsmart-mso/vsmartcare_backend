@@ -46,3 +46,13 @@ class WelfareEditRequestCreate(BaseModel):
 class WelfareEditRequestRead(BaseModel):
     welfare_request_status_id: int
     comments: list[WelfareReviewCommentRead]
+
+
+class WelfareEditRequestCommentRead(BaseModel):
+    """comment ต่อ field จากการส่งกลับแก้ไข (status=8) — สำหรับฝั่งประชาชน."""
+
+    review_field_id: int
+    name: str
+    label: str
+    step: int
+    reason: str
