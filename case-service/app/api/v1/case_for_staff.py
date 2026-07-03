@@ -27,6 +27,7 @@ from ...core.database import get_session
 from ...core.file_validation import assert_image_magic_bytes
 from ...models.address import Address
 from ...models.applicant import Applicant
+from ...models.applicant_submission_audit import ApplicantSubmissionAudit
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyCategory
 from ...models.economic import HouseholdMember
@@ -75,6 +76,7 @@ from ...services.payment_round_metrics import (
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
 from ...services.self_submit_fiscal_siblings import load_fiscal_year_self_submit_enrichment
+from ...services.ktb_audit_read import enrich_case_for_staff_ktb_defaults, ktb_audit_api_fields
 from ...services.citizen_status_email_policy import (
     CitizenStatusEmailTrigger,
     fetch_latest_status_id,
@@ -242,6 +244,7 @@ def _enrich_case_for_staff_row(data: dict[str, object]) -> None:
     data.setdefault("prior_self_submit_case_numbers", [])
     data.setdefault("self_submit_fiscal_year_count", 0)
     data.setdefault("self_submit_fiscal_year_case_numbers", [])
+    enrich_case_for_staff_ktb_defaults(data)
     _enrich_row_process_sla(data)
     has_return_edit_resubmitted = data.pop("has_return_edit_resubmitted", None)
     if has_return_edit_resubmitted is not None:
@@ -332,6 +335,7 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
             else False
         ),
         **_process_sla_fields_from_applicant(orm),
+        **ktb_audit_api_fields(orm),
     )
 
     person_orm = orm.person
@@ -787,6 +791,18 @@ async def list_cases_for_staff(
                 else_=False,
             ).label("is_pmj_rejected"),
             active_pmj_reject_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
+            ApplicantSubmissionAudit.require_ktb_corporate.label("require_ktb_corporate"),
+            ApplicantSubmissionAudit.require_ktb_reason.label("require_ktb_reason"),
+            ApplicantSubmissionAudit.existing_case_source.label("existing_case_source"),
+            ApplicantSubmissionAudit.existing_case_detected_sources.label(
+                "existing_case_detected_sources",
+            ),
+            ApplicantSubmissionAudit.existing_case_ref_id.label("existing_case_ref_id"),
+            ApplicantSubmissionAudit.existing_case_province_id.label("existing_case_province_id"),
+            ApplicantSubmissionAudit.existing_case_province_name.label("existing_case_province_name"),
+            ApplicantSubmissionAudit.submission_province_id.label("submission_province_id"),
+            ApplicantSubmissionAudit.submission_province_name.label("submission_province_name"),
+            ApplicantSubmissionAudit.is_account_changed.label("is_account_changed"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(
@@ -828,6 +844,10 @@ async def list_cases_for_staff(
                 active_pmj_reject_sq.c.applicant_id == Applicant.id,
                 active_pmj_reject_sq.c.rn == 1,
             ),
+        )
+        .outerjoin(
+            ApplicantSubmissionAudit,
+            ApplicantSubmissionAudit.applicant_id == Applicant.id,
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
         .where(Province.id == province_id)

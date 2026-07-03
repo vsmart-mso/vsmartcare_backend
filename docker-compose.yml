@@ -50,8 +50,7 @@ services:
       - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
       - ADMIN_JWT_EXPIRE_MINUTES=480
       - CHECK_CASE_ENABLE_MSO_LOGBOOK=false
-      # CHECK_CASE_ENABLE_* ตั้งใน case-service/.env (อย่า hardcode ที่นี่ — จะทับ .env)
-      - VSMART_MAIN_API_KEY=${VSMART_MAIN_API_KEY:-}
+      # CHECK_CASE_ENABLE_* / VSMART_MAIN_* ตั้งใน case-service/.env (อย่า hardcode ที่นี่ — จะทับ .env)
       - CHECK_CASE_ENABLE_VCARE_SELF=true
       - EXTERNAL_CHECK_TIMEOUT_SECONDS=10
     ports:

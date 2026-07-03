@@ -25,6 +25,7 @@ from ...core.citizen_security import (
 from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
+from ...models.applicant_submission_audit import ApplicantSubmissionAudit
 from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo, HouseholdMember
@@ -55,6 +56,7 @@ from ...schemas.case_welfare import (
 from ...schemas.economic import HouseholdMemberRead
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
+from ...services.ktb_requirement import build_submission_audit_fields
 from ...services.case_number import allocate_case_number
 from ...services.case_update import apply_case_update, dedupe_preserve_order
 from ...services.submission_eligibility import (
@@ -121,6 +123,7 @@ def _applicant_load_options():  # noqa: ANN001
         .selectinload(WelfareRequestStatus.review_comments)
         .selectinload(WelfareReviewComment.review_field),
         selectinload(Applicant.data_edit_logs),
+        selectinload(Applicant.submission_audit),
     ]
 
 
@@ -391,6 +394,12 @@ async def create_welfare_case(
     existing_check = await check_existing_case_by_cid(session, person_cid)
 
     a = body.applicant
+    audit_fields = await build_submission_audit_fields(
+        session,
+        existing_check=existing_check,
+        addresses=body.addresses,
+        bank_account_no=a.bank_account_no,
+    )
     applicant_row = Applicant(
         persons_id=a.persons_id,
         requester_relation_id=a.requester_relation_id,
@@ -427,6 +436,8 @@ async def create_welfare_case(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
     aid = applicant_row.id
+
+    session.add(ApplicantSubmissionAudit(applicant_id=aid, **audit_fields))
 
     for addr in body.addresses:
         session.add(

@@ -2079,6 +2079,61 @@ async def bff_patch_intake_ktb(applicant_id: int, request: Request):
     return await _patch(f"{base}/v1/intake/cases/{applicant_id}/ktb", json=body)
 
 
+@router.get(
+    "/v1/intake/cases/{applicant_id}/diagnoses",
+    tags=["intake"],
+    summary="รายการคำวินิจฉัยทั้งหมดของเคส (BR-DIAG-01)",
+)
+async def bff_list_case_diagnoses(
+    applicant_id: int,
+    actor_user_id: Optional[int] = Query(None),
+):
+    base = settings.case_service_url.rstrip("/")
+    url = f"{base}/v1/intake/cases/{applicant_id}/diagnoses"
+    if actor_user_id is not None:
+        url = f"{url}?actor_user_id={actor_user_id}"
+    return await _get(url)
+
+
+@router.post(
+    "/v1/intake/cases/{applicant_id}/diagnoses",
+    tags=["intake"],
+    summary="เพิ่มคำวินิจฉัยของ user ตนเอง (BR-DIAG-02)",
+    status_code=status.HTTP_201_CREATED,
+)
+async def bff_create_case_diagnosis(applicant_id: int, request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/intake/cases/{applicant_id}/diagnoses", json=body)
+
+
+@router.patch(
+    "/v1/intake/cases/{applicant_id}/diagnoses/{diagnosis_id}",
+    tags=["intake"],
+    summary="แก้ไขคำวินิจฉัยของตนเอง (BR-DIAG-04, 05, 06)",
+)
+async def bff_update_case_diagnosis(
+    applicant_id: int, diagnosis_id: int, request: Request
+):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _patch(
+        f"{base}/v1/intake/cases/{applicant_id}/diagnoses/{diagnosis_id}", json=body
+    )
+
+
+@router.get(
+    "/v1/intake/cases/{applicant_id}/diagnoses/{diagnosis_id}/history",
+    tags=["intake"],
+    summary="ประวัติการแก้ไขคำวินิจฉัย (BR-DIAG-06)",
+)
+async def bff_case_diagnosis_history(applicant_id: int, diagnosis_id: int):
+    base = settings.case_service_url.rstrip("/")
+    return await _get(
+        f"{base}/v1/intake/cases/{applicant_id}/diagnoses/{diagnosis_id}/history"
+    )
+
+
 # --- lookups: เส้นและชื่อพารามิเตอร์ตรงกับ case-service (ไม่ใช้ query บอกประเภท master) ---
 
 

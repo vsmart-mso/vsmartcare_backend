@@ -4,9 +4,11 @@ from .address import Address
 from .admin import AdminUser, ProvinceAccessConfig
 from .staff import SecurityAuditLog, StaffUser
 from .applicant import Applicant
+from .applicant_submission_audit import ApplicantSubmissionAudit
 from .article import Article
 from .cover_document_batch import CoverDocumentBatch
 from .dependency import DependencyLoad
+from .diagnosis import CaseDiagnosis, CaseDiagnosisEditHistory
 from .economic import EconomicIncomeSource, EconomicInfo
 from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from .intake import (
@@ -59,12 +61,15 @@ __all__ = [
     "AdminUser",
     "AnnouncementRegulation",
     "Applicant",
+    "ApplicantSubmissionAudit",
     "Article",
     "CoverDocumentBatch",
     "AttachmentType",
     "BankAccountType",
     "BankName",
     "CaseDataEditLog",
+    "CaseDiagnosis",
+    "CaseDiagnosisEditHistory",
     "CaseHandling",
     "CaseKtbCorporate",
     "CasePayment",
