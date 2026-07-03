@@ -14,6 +14,8 @@ CURRENT_STATUS_AID_COMPLETED: Final[int] = 4
 CURRENT_STATUS_INELIGIBLE: Final[int] = 5
 # ดำเนินการแก้ไขข้อมูล
 CURRENT_STATUS_EDIT_REQUESTED: Final[int] = 8
+# อยู่ระหว่างการหาข้อมูลเพิ่มเติม
+CURRENT_STATUS_GATHERING_ADDITIONAL_INFO: Final[int] = 9
 # อยู่ระหว่างการเบิก (หลังบันทึกผลจ่าย 037) — ประชาชนเห็น "เบิกจ่ายสำเร็จ"
 CURRENT_STATUS_WITHDRAWING = 10
 
@@ -29,6 +31,7 @@ ACTIVE_CASE_STATUS_IDS: Final[frozenset[int]] = frozenset({
     CURRENT_STATUS_RECEIVED,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
     CURRENT_STATUS_EDIT_REQUESTED,
+    CURRENT_STATUS_GATHERING_ADDITIONAL_INFO,
 })
 
 # นักสังคมฯ แก้ไขส่วนที่ 2–4 ปสค.1 โดยตรงได้ (default = active cases)
