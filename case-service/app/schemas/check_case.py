@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-CheckCaseSource = Literal["self", "mso_logbook", "vsmart_main"]
+CheckCaseSource = Literal["vcare_main", "mso_logbook", "vsmart_main"]
 
 
 class SourceCheckResult(BaseModel):

@@ -4,6 +4,7 @@ from .address import Address
 from .admin import AdminUser, ProvinceAccessConfig
 from .staff import SecurityAuditLog, StaffUser
 from .applicant import Applicant
+from .applicant_submission_audit import ApplicantSubmissionAudit
 from .article import Article
 from .cover_document_batch import CoverDocumentBatch
 from .dependency import DependencyLoad
@@ -60,6 +61,7 @@ __all__ = [
     "AdminUser",
     "AnnouncementRegulation",
     "Applicant",
+    "ApplicantSubmissionAudit",
     "Article",
     "CoverDocumentBatch",
     "AttachmentType",

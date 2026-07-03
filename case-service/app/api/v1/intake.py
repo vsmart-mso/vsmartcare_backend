@@ -54,6 +54,10 @@ from ...schemas.intake import (
     RegulationDropdownItem,
     RegulationRead,
 )
+from ...services.ktb_requirement import (
+    load_applicant_for_audit_refresh,
+    refresh_applicant_submission_audit,
+)
 
 router = APIRouter(
     prefix="/v1/intake",
@@ -447,6 +451,18 @@ async def upsert_intake_payment(
     if handling.intake_completed_at is None:
         handling.intake_completed_at = datetime.utcnow()
 
+    account_number = (body.account_number or "").strip()
+    applicant = await load_applicant_for_audit_refresh(session, applicant_id)
+    if applicant is not None:
+        if account_number:
+            applicant.bank_account_no = account_number
+        bank_for_audit = account_number or applicant.bank_account_no
+        await refresh_applicant_submission_audit(
+            session,
+            applicant,
+            bank_account_no=bank_for_audit,
+        )
+
     await session.commit()
 
     reloaded = await session.scalar(
@@ -526,6 +542,21 @@ async def upsert_intake_ktb(
     body: CaseKtbCorporateUpsert = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> CaseKtbCorporateRead:
+    applicant = await session.scalar(
+        select(Applicant)
+        .where(Applicant.id == applicant_id)
+        .options(selectinload(Applicant.submission_audit)),
+    )
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    audit = applicant.submission_audit
+    if audit is not None and not audit.require_ktb_corporate:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ktb_not_required",
+        )
+
     handling = await _get_handling_or_404(session, applicant_id)
 
     # ตรวจว่าเลือก ktb_corporate จริง ๆ ก่อนบันทึกหน้า 20

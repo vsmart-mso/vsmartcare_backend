@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.base import Base
 
 if TYPE_CHECKING:
+    from .applicant_submission_audit import ApplicantSubmissionAudit
     from .address import Address
     from .dependency import DependencyLoad
     from .economic import EconomicInfo, HouseholdMember
@@ -180,6 +181,11 @@ class Applicant(Base):
         cascade="all, delete-orphan",
     )
     case_handling: Mapped["CaseHandling | None"] = relationship(
+        back_populates="applicant",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    submission_audit: Mapped["ApplicantSubmissionAudit | None"] = relationship(
         back_populates="applicant",
         uselist=False,
         cascade="all, delete-orphan",
