@@ -25,6 +25,7 @@ class ApplicantBase(BaseModel):
     is_government_officer: bool = False
 
     problem_details: str | None = None
+    family_distress: str | None = None
 
     bank_name_id: int | None = Field(None, ge=1)
     bank_account_no: str | None = Field(None, max_length=50)

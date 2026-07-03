@@ -50,6 +50,7 @@ class AddressBase(BaseModel):
 
     latitude: str | None = Field(None, max_length=50)
     longitude: str | None = Field(None, max_length=50)
+    nearby_landmark: str | None = Field(None, max_length=500)
 
 
 class AddressCreate(AddressBase):
@@ -68,6 +69,7 @@ class AddressUpdate(BaseModel):
     mobile_phone: str | None = Field(None, max_length=20)
     latitude: str | None = Field(None, max_length=50)
     longitude: str | None = Field(None, max_length=50)
+    nearby_landmark: str | None = Field(None, max_length=500)
 
 
 class AddressRead(AddressBase):

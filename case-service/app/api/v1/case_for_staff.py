@@ -1952,8 +1952,11 @@ async def create_welfare_request_status_for_staff(
 
 def _staff_sections_to_welfare_update(body: StaffCaseSectionsUpdate) -> WelfareCaseUpdate:
     applicant = None
-    if body.problem_details is not None:
-        applicant = WelfareApplicantUpdate(problem_details=body.problem_details)
+    if body.problem_details is not None or body.family_distress is not None:
+        applicant = WelfareApplicantUpdate(
+            problem_details=body.problem_details,
+            family_distress=body.family_distress,
+        )
     return WelfareCaseUpdate(
         applicant=applicant,
         addresses=body.addresses,

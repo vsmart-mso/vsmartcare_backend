@@ -76,6 +76,7 @@ class Applicant(Base):
     is_government_officer: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     problem_details: Mapped[str | None] = mapped_column(Text)
+    family_distress: Mapped[str | None] = mapped_column(Text, nullable=True, comment="สภาพปัญหาความเดือดร้อน")
 
     bank_name_id: Mapped[int | None] = mapped_column(
         ForeignKey("bank_name.id"),

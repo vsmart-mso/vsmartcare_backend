@@ -188,6 +188,7 @@ class StaffCaseSectionsUpdateBody(BaseModel):
     household_members: list[HouseholdMemberInCase] | None = None
     welfare_history: WelfareHistoryInCase | None = None
     problem_details: str | None = None
+    family_distress: str | None = None
     request_type_ids: list[int] | None = None
     request_other_text: str | None = Field(None, max_length=500)
     request_in_kind_text: str | None = Field(None, max_length=500)

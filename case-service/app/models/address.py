@@ -58,6 +58,7 @@ class Address(Base):
 
     latitude: Mapped[str | None] = mapped_column(String(50))
     longitude: Mapped[str | None] = mapped_column(String(50))
+    nearby_landmark: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="สถานที่ตั้งใกล้เคียงที่มองเห็นง่าย")
 
     applicant: Mapped["Applicant"] = relationship(back_populates="addresses")
     sub_district_postcode: Mapped["SubDistrictPostcode"] = relationship(lazy="selectin")
