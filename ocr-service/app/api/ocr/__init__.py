@@ -87,6 +87,13 @@ async def ocr_bank_book(
             detail="ไฟล์ว่างเปล่า",
         )
 
+    if image_bytes.startswith(b"\xff\xd8\xff") or image_bytes.startswith(b"\x89PNG") or (
+        image_bytes[:4] == b"RIFF" and len(image_bytes) > 12 and image_bytes[8:12] == b"WEBP"
+    ):
+        pass
+    else:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="unsupported_file_content")
+
     # Limit file size
     max_bytes = settings.max_upload_bytes
     if len(image_bytes) > max_bytes:
@@ -105,13 +112,45 @@ async def ocr_bank_book(
     ext = ext_map.get(file.content_type, ".jpg")
     pre_file_uuid = f"{uuid.uuid4().hex}{ext}"
 
+    if not (settings.gemini_api_key or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="gemini_api_key_not_configured",
+        )
+
     # Run OCR pipeline
-    result = await run_ocr_pipeline(
-        image_bytes=image_bytes,
-        target_name=target_name.strip(),
-        pre_file_uuid=pre_file_uuid,
-        mime_type=file.content_type or "image/jpeg",
-    )
+    try:
+        result = await run_ocr_pipeline(
+            image_bytes=image_bytes,
+            target_name=target_name.strip(),
+            pre_file_uuid=pre_file_uuid,
+            mime_type=file.content_type or "image/jpeg",
+        )
+    except ValueError as exc:
+        if "api key" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="gemini_api_key_not_configured",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="ocr_pipeline_failed",
+        ) from exc
+    except Exception as exc:
+        detail = "gemini_api_error"
+        err_text = str(exc).lower()
+        if "leaked" in err_text or "permission_denied" in err_text:
+            detail = "gemini_api_key_leaked"
+        elif "api key" in err_text:
+            detail = "gemini_api_key_invalid"
+        err_name = type(exc).__name__
+        if err_name == "ClientError" or "genai" in type(exc).__module__:
+            logger.error("Gemini API error: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=detail,
+            ) from exc
+        raise
 
     logger.info(
         f"OCR done: applicant_id={applicant_id} | target={target_name!r} | "

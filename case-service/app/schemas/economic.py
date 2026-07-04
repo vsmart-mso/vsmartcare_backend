@@ -30,6 +30,7 @@ class EconomicIncomeSourceRead(EconomicIncomeSourceBase):
 class EconomicInfoBase(BaseModel):
     applicant_id: int
     housing_types_id: int | None = None
+    housing_shelter: str | None = None
     housing_types_rent: Decimal | None = None
 
     occupation_type_id: int | None = None

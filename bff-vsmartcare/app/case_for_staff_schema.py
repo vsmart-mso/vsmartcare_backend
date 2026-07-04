@@ -30,7 +30,22 @@ class ProcessSlaFields(BaseModel):
     process_is_overdue: bool | None = None
 
 
-class CaseForStaffRead(ProcessSlaFields):
+class KtbSubmissionAuditFields(BaseModel):
+    require_ktb_corporate: bool = True
+    require_ktb_reason: str = Field("NEW_CASE", max_length=32)
+    existing_case_source: str | None = Field(None, max_length=16)
+    existing_case_detected_sources: list[str] | None = None
+    existing_case_ref_id: int | None = None
+    existing_case_province_id: int | None = None
+    existing_case_province_name: str | None = Field(None, max_length=255)
+    submission_province_id: int | None = None
+    submission_province_name: str | None = Field(None, max_length=255)
+    is_account_changed: bool | None = None
+    has_ktb_evidence: bool = False
+    prior_ktb_reuse_applicant_id: int | None = None
+
+
+class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
     applicant_id: int
     case_number: str | None = Field(None, max_length=100)
     current_status_id: int | None = None
@@ -173,6 +188,7 @@ class StaffCaseSectionsUpdateBody(BaseModel):
     household_members: list[HouseholdMemberInCase] | None = None
     welfare_history: WelfareHistoryInCase | None = None
     problem_details: str | None = None
+    family_distress: str | None = None
     request_type_ids: list[int] | None = None
     request_other_text: str | None = Field(None, max_length=500)
     request_in_kind_text: str | None = Field(None, max_length=500)

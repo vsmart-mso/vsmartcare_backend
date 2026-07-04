@@ -20,11 +20,14 @@ from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...core.database import get_session
+from ...core.staff_security import require_staff
 from ...models.applicant import Applicant
+from ...models.diagnosis import CaseDiagnosis, CaseDiagnosisEditHistory
 from ...models.intake import (
     AnnouncementRegulation,
     CaseHandling,
@@ -36,6 +39,10 @@ from ...models.intake import (
 from ...models.lookup import BankName
 from ...models.person import Person
 from ...schemas.intake import (
+    CaseDiagnosisCreate,
+    CaseDiagnosisEditHistoryRead,
+    CaseDiagnosisRead,
+    CaseDiagnosisUpdate,
     CaseHandlingRead,
     CaseIntakeRead,
     CaseKtbCorporateRead,
@@ -47,8 +54,16 @@ from ...schemas.intake import (
     RegulationDropdownItem,
     RegulationRead,
 )
+from ...services.ktb_requirement import (
+    load_applicant_for_audit_refresh,
+    refresh_applicant_submission_audit,
+)
 
-router = APIRouter(prefix="/v1/intake", tags=["intake"])
+router = APIRouter(
+    prefix="/v1/intake",
+    tags=["intake"],
+    dependencies=[Depends(require_staff)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +451,18 @@ async def upsert_intake_payment(
     if handling.intake_completed_at is None:
         handling.intake_completed_at = datetime.utcnow()
 
+    account_number = (body.account_number or "").strip()
+    applicant = await load_applicant_for_audit_refresh(session, applicant_id)
+    if applicant is not None:
+        if account_number:
+            applicant.bank_account_no = account_number
+        bank_for_audit = account_number or applicant.bank_account_no
+        await refresh_applicant_submission_audit(
+            session,
+            applicant,
+            bank_account_no=bank_for_audit,
+        )
+
     await session.commit()
 
     reloaded = await session.scalar(
@@ -515,6 +542,21 @@ async def upsert_intake_ktb(
     body: CaseKtbCorporateUpsert = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> CaseKtbCorporateRead:
+    applicant = await session.scalar(
+        select(Applicant)
+        .where(Applicant.id == applicant_id)
+        .options(selectinload(Applicant.submission_audit)),
+    )
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    audit = applicant.submission_audit
+    if audit is not None and not audit.require_ktb_corporate:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ktb_not_required",
+        )
+
     handling = await _get_handling_or_404(session, applicant_id)
 
     # ตรวจว่าเลือก ktb_corporate จริง ๆ ก่อนบันทึกหน้า 20
@@ -617,3 +659,182 @@ async def patch_intake_ktb(
             status_code=status.HTTP_404_NOT_FOUND, detail="case_ktb_corporate_not_found"
         )
     return await upsert_intake_ktb(applicant_id, body, session)
+
+
+# ---------------------------------------------------------------------------
+# CaseDiagnosis — คำวินิจฉัยหลายรายการต่อเคส (BR-DIAG-01..06)
+# ---------------------------------------------------------------------------
+
+
+def _diagnosis_read(row: CaseDiagnosis, actor_user_id: int | None) -> CaseDiagnosisRead:
+    read = CaseDiagnosisRead.model_validate(row)
+    read.is_owner = actor_user_id is not None and actor_user_id > 0 and row.owner_user_id == actor_user_id
+    read.edit_count = len(row.edit_histories or [])
+    return read
+
+
+@router.get(
+    "/cases/{applicant_id}/diagnoses",
+    response_model=list[CaseDiagnosisRead],
+    summary="รายการคำวินิจฉัยทั้งหมดของเคส (BR-DIAG-01)",
+    description="เรียงตาม updated_at ล่าสุดก่อน — ส่ง actor_user_id เพื่อให้คำนวณ is_owner",
+)
+async def list_case_diagnoses(
+    applicant_id: int,
+    actor_user_id: int | None = Query(None, description="Django user id ของผู้เรียกดู"),
+    session: AsyncSession = Depends(get_session),
+) -> list[CaseDiagnosisRead]:
+    await _get_applicant_or_404(session, applicant_id)
+    rows = list(
+        (
+            await session.execute(
+                select(CaseDiagnosis)
+                .where(CaseDiagnosis.applicant_id == applicant_id)
+                .options(selectinload(CaseDiagnosis.edit_histories))
+                .order_by(CaseDiagnosis.updated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_diagnosis_read(r, actor_user_id) for r in rows]
+
+
+@router.post(
+    "/cases/{applicant_id}/diagnoses",
+    response_model=CaseDiagnosisRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="เพิ่มคำวินิจฉัยของ user ตนเอง (BR-DIAG-02, 03)",
+    description="1 user เพิ่มได้ 1 รายการต่อเคส — ถ้ามีแล้วให้ใช้ PATCH (409)",
+)
+async def create_case_diagnosis(
+    applicant_id: int,
+    body: CaseDiagnosisCreate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseDiagnosisRead:
+    await _get_applicant_or_404(session, applicant_id)
+
+    existing = await session.scalar(
+        select(CaseDiagnosis).where(
+            CaseDiagnosis.applicant_id == applicant_id,
+            CaseDiagnosis.owner_user_id == body.owner_user_id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="diagnosis_already_exists",
+        )
+
+    row = CaseDiagnosis(
+        applicant_id=applicant_id,
+        diagnosis_text=body.diagnosis_text.strip(),
+        owner_user_id=body.owner_user_id,
+        owner_sdshv=body.owner_sdshv,
+        owner_name=body.owner_name,
+        owner_position=body.owner_position,
+        owner_organization=body.owner_organization,
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        # check-then-insert ไม่ atomic — สองแท็บกดพร้อมกันชน unique constraint ได้
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="diagnosis_already_exists",
+        )
+
+    reloaded = await session.scalar(
+        select(CaseDiagnosis)
+        .where(CaseDiagnosis.id == row.id)
+        .options(selectinload(CaseDiagnosis.edit_histories))
+    )
+    return _diagnosis_read(reloaded, body.owner_user_id)
+
+
+@router.patch(
+    "/cases/{applicant_id}/diagnoses/{diagnosis_id}",
+    response_model=CaseDiagnosisRead,
+    summary="แก้ไขคำวินิจฉัยของตนเอง + เก็บประวัติ (BR-DIAG-04, 05, 06)",
+    description="403 not_diagnosis_owner ถ้า actor_user_id ไม่ตรง owner_user_id",
+)
+async def update_case_diagnosis(
+    applicant_id: int,
+    diagnosis_id: int,
+    body: CaseDiagnosisUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseDiagnosisRead:
+    await _get_applicant_or_404(session, applicant_id)
+
+    row = await session.scalar(
+        select(CaseDiagnosis)
+        .where(
+            CaseDiagnosis.id == diagnosis_id,
+            CaseDiagnosis.applicant_id == applicant_id,
+        )
+        .options(selectinload(CaseDiagnosis.edit_histories))
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="diagnosis_not_found"
+        )
+
+    # BR-DIAG-05: enforce ownership ฝั่ง backend — owner_user_id=0 (migrate เดิม) แก้ไม่ได้
+    if row.owner_user_id <= 0 or row.owner_user_id != body.actor_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="not_diagnosis_owner"
+        )
+
+    new_text = body.diagnosis_text.strip()
+    if new_text != row.diagnosis_text:
+        session.add(
+            CaseDiagnosisEditHistory(
+                diagnosis_id=row.id,
+                old_text=row.diagnosis_text,
+                new_text=new_text,
+                edit_reason=(body.edit_reason or "").strip() or None,
+                edited_by_user_id=body.actor_user_id,
+                edited_by_name=body.actor_name,
+            )
+        )
+        row.diagnosis_text = new_text
+    if body.owner_position is not None:
+        row.owner_position = body.owner_position
+    if body.owner_organization is not None:
+        row.owner_organization = body.owner_organization
+    row.updated_at = datetime.utcnow()
+
+    await session.commit()
+
+    # expire_on_commit=False — ต้อง refresh ไม่งั้น edit_histories เป็นชุดเก่าใน identity map
+    await session.refresh(row, attribute_names=["edit_histories"])
+    return _diagnosis_read(row, body.actor_user_id)
+
+
+@router.get(
+    "/cases/{applicant_id}/diagnoses/{diagnosis_id}/history",
+    response_model=list[CaseDiagnosisEditHistoryRead],
+    summary="ประวัติการแก้ไขคำวินิจฉัย (BR-DIAG-06)",
+)
+async def list_case_diagnosis_history(
+    applicant_id: int,
+    diagnosis_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[CaseDiagnosisEditHistoryRead]:
+    row = await session.scalar(
+        select(CaseDiagnosis)
+        .where(
+            CaseDiagnosis.id == diagnosis_id,
+            CaseDiagnosis.applicant_id == applicant_id,
+        )
+        .options(selectinload(CaseDiagnosis.edit_histories))
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="diagnosis_not_found"
+        )
+    return [
+        CaseDiagnosisEditHistoryRead.model_validate(h) for h in (row.edit_histories or [])
+    ]

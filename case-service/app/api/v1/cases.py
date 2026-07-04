@@ -16,9 +16,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ...core.citizen_security import (
+    CitizenClaims,
+    assert_person_owner,
+    get_owned_applicant,
+    require_citizen,
+)
 from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
+from ...models.applicant_submission_audit import ApplicantSubmissionAudit
 from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.dependency import DependencyLoad
 from ...models.economic import EconomicIncomeSource, EconomicInfo, HouseholdMember
@@ -27,7 +34,7 @@ from ...models.lookup import BankAccountType, BankName, CurrentStatus, TypeMoney
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.review import WelfareReviewComment
-from ...models.payment import WelfarePayment
+from ...models.payment import ApproveCase, WelfarePayment
 from ...services.payment_round_metrics import applicant_payment_metrics
 from ...services.province_access import is_province_enabled_by_person_id
 from ...models.welfare import (
@@ -49,6 +56,7 @@ from ...schemas.case_welfare import (
 from ...schemas.economic import HouseholdMemberRead
 from ...schemas.lookup import CurrentStatusRead
 from ...api.check_case import check_existing_case_by_cid
+from ...services.ktb_requirement import build_submission_audit_fields
 from ...services.case_number import allocate_case_number
 from ...services.case_update import apply_case_update, dedupe_preserve_order
 from ...services.submission_eligibility import (
@@ -59,9 +67,11 @@ from ...services.process_sla import process_sla_fields_dict
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
 )
+from ...core.file_validation import assert_image_magic_bytes
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
+from ...schemas.review import WelfareEditRequestCommentRead
 from ...schemas.status_log import WelfareRequestStatusRead
 from ...schemas.welfare import (
     WelfareEvidenceRead,
@@ -113,6 +123,7 @@ def _applicant_load_options():  # noqa: ANN001
         .selectinload(WelfareRequestStatus.review_comments)
         .selectinload(WelfareReviewComment.review_field),
         selectinload(Applicant.data_edit_logs),
+        selectinload(Applicant.submission_audit),
     ]
 
 
@@ -166,7 +177,63 @@ async def _load_full_applicant(
     return r.scalar_one_or_none()
 
 
-async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> WelfareCaseRead:
+async def _latest_approve_status_for_applicant(
+    session: AsyncSession,
+    applicant_id: int,
+) -> bool | None:
+    return await session.scalar(
+        select(ApproveCase.approve_status)
+        .where(ApproveCase.applicant_id == applicant_id)
+        .order_by(ApproveCase.id.desc())
+        .limit(1)
+    )
+
+
+async def _welfare_edit_request_comments_for_applicant(
+    session: AsyncSession,
+    applicant_id: int,
+) -> list[WelfareEditRequestCommentRead]:
+    result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(
+            WelfareRequestStatus.applicant_id == applicant_id,
+            WelfareRequestStatus.current_status_id == 8,
+        )
+        .order_by(WelfareRequestStatus.id.desc())
+        .limit(1)
+        .options(
+            selectinload(WelfareRequestStatus.review_comments).selectinload(
+                WelfareReviewComment.review_field
+            )
+        ),
+    )
+    status_row = result.scalar_one_or_none()
+    if status_row is None:
+        return []
+    comments: list[WelfareEditRequestCommentRead] = []
+    for comment in status_row.review_comments:
+        field = comment.review_field
+        if field is None:
+            continue
+        comments.append(
+            WelfareEditRequestCommentRead(
+                review_field_id=comment.review_field_id,
+                name=field.name,
+                label=field.label,
+                step=field.step,
+                reason=comment.reason,
+            )
+        )
+    return comments
+
+
+async def applicant_to_case_read(
+    applicant: Applicant,
+    count_037: int = 0,
+    *,
+    latest_approve_status: bool | None = None,
+    welfare_edit_request_comments: list[WelfareEditRequestCommentRead] | None = None,
+) -> WelfareCaseRead:
     """แปลง ORM Applicant + relationship เป็น WelfareCaseRead (หลัง selectinload แล้ว)"""
     histories = sorted(applicant.status_logs, key=lambda s: (s.updated_at, s.id), reverse=True)
 
@@ -229,13 +296,9 @@ async def applicant_to_case_read(applicant: Applicant, count_037: int = 0) -> We
         else None,
         created_at=applicant.created_at,
         count_037=count_037,
+        latest_approve_status=latest_approve_status,
+        welfare_edit_request_comments=welfare_edit_request_comments or [],
     )
-
-
-async def _ensure_person_exists(session: AsyncSession, person_id: int) -> None:
-    r = await session.execute(select(Person.id).where(Person.id == person_id))
-    if r.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="person_not_found")
 
 
 async def _ensure_current_status_exists(session: AsyncSession, current_status_id: int) -> None:
@@ -278,8 +341,9 @@ async def _ensure_type_money_category_exists(
 async def get_submission_eligibility(
     persons_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> SubmissionEligibilityRead:
-    await _ensure_person_exists(session, persons_id)
+    assert_person_owner(persons_id, claims)
     result = await resolve_submission_eligibility(session, persons_id=persons_id)
     return result.to_read()
 
@@ -288,8 +352,9 @@ async def get_submission_eligibility(
 async def create_welfare_case(
     body: WelfareCaseCreate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
-    await _ensure_person_exists(session, body.applicant.persons_id)
+    assert_person_owner(body.applicant.persons_id, claims)
 
     # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้า admin ปิดจังหวัดของผู้ใช้ระหว่างกรอกฟอร์ม
     # จังหวะบันทึกสุดท้ายต้องบล็อก → FE จับ 403 แล้วเตะออกจากระบบ
@@ -329,6 +394,12 @@ async def create_welfare_case(
     existing_check = await check_existing_case_by_cid(session, person_cid)
 
     a = body.applicant
+    audit_fields = await build_submission_audit_fields(
+        session,
+        existing_check=existing_check,
+        addresses=body.addresses,
+        bank_account_no=a.bank_account_no,
+    )
     applicant_row = Applicant(
         persons_id=a.persons_id,
         requester_relation_id=a.requester_relation_id,
@@ -365,6 +436,8 @@ async def create_welfare_case(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
     aid = applicant_row.id
+
+    session.add(ApplicantSubmissionAudit(applicant_id=aid, **audit_fields))
 
     for addr in body.addresses:
         session.add(
@@ -498,8 +571,9 @@ async def create_welfare_case(
 async def list_welfare_cases_display(
     persons_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> list[CaseDisplayRead]:
-    await _ensure_person_exists(session, persons_id)
+    assert_person_owner(persons_id, claims)
     rows = await _load_applicants_for_display(session, persons_id)
     return [await applicant_to_display_read(row) for row in rows]
 
@@ -509,14 +583,13 @@ async def update_welfare_case(
     applicant_id: int,
     body: WelfareCaseUpdate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
     """แก้ไข case โดยส่งเฉพาะ section ที่ต้องการเปลี่ยน
     - field = None → ไม่แตะ section นั้น
     - field = list ใหม่ → ลบของเดิมทั้งหมดแล้ว insert ใหม่ (replace)
     """
-    applicant_row = await session.get(Applicant, applicant_id)
-    if applicant_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+    applicant_row = await get_owned_applicant(session, applicant_id, claims)
 
     # Gate จังหวัด (TASK-v-care-12062026-01) — ถ้าจังหวัดถูกปิด ห้ามแก้ไข/บันทึกซ้ำ
     if not await is_province_enabled_by_person_id(session, applicant_row.persons_id):
@@ -537,7 +610,9 @@ async def update_welfare_case(
 async def get_welfare_case(
     applicant_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareCaseRead:
+    await get_owned_applicant(session, applicant_id, claims)
     row = await _load_full_applicant(session, applicant_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
@@ -549,8 +624,17 @@ async def get_welfare_case(
     )
     metrics = applicant_payment_metrics(list(payments_result.scalars().all()))
     count_037 = int(metrics["count_037"])
+    latest_approve_status = await _latest_approve_status_for_applicant(session, applicant_id)
+    welfare_edit_request_comments = await _welfare_edit_request_comments_for_applicant(
+        session, applicant_id
+    )
 
-    return await applicant_to_case_read(row, count_037=count_037)
+    return await applicant_to_case_read(
+        row,
+        count_037=count_037,
+        latest_approve_status=latest_approve_status,
+        welfare_edit_request_comments=welfare_edit_request_comments,
+    )
 
 
 @router.get(
@@ -562,7 +646,9 @@ async def get_welfare_evidence_file(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> FileResponse:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -600,7 +686,9 @@ async def delete_welfare_evidence(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> None:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -626,7 +714,9 @@ async def update_welfare_evidence_name(
     evidence_id: int,
     body: dict,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> dict:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -651,10 +741,9 @@ async def upload_welfare_evidence_image(
     household_member_seq: int | None = Form(None, ge=1),
     file: UploadFile = File(..., description="ไฟล์รูป (jpeg/png/webp/gif) — ไม่ใช้ Base64"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareEvidenceUploadRead:
-    row_check = await session.execute(select(Applicant.id).where(Applicant.id == applicant_id))
-    if row_check.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="case_not_found")
+    await get_owned_applicant(session, applicant_id, claims)
 
     normalized_other_name = await validate_welfare_evidence_upload(
         session,
@@ -686,10 +775,12 @@ async def upload_welfare_evidence_image(
             detail="unsupported_media_type_expect_image",
         )
 
-    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
     blob = await file.read()
     if len(blob) > settings.max_upload_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
+
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
+    ext = ALLOWED_IMAGE_TYPES[raw_content_type]
 
     base = resolved_upload_root()
     dest_dir = (base / str(applicant_id)).resolve()
@@ -740,7 +831,9 @@ async def update_welfare_evidence_image(
     file_other_type_name: str | None = Form(None),
     file: UploadFile = File(..., description="ไฟล์รูปใหม่ (jpeg/png/webp/gif)"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareEvidenceUploadRead:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")
@@ -762,6 +855,7 @@ async def update_welfare_evidence_image(
     if len(blob) > settings.max_upload_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file_too_large")
 
+    assert_image_magic_bytes(blob, allowed_exts=set(ALLOWED_IMAGE_TYPES.values()))
     ext = ALLOWED_IMAGE_TYPES[raw_content_type]
     base = resolved_upload_root()
     dest_dir = (base / str(applicant_id)).resolve()
@@ -799,7 +893,9 @@ async def delete_welfare_evidence_image(
     applicant_id: int,
     evidence_id: int,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> None:
+    await get_owned_applicant(session, applicant_id, claims)
     ev = await session.get(WelfareEvidence, evidence_id)
     if ev is None or ev.applicant_id != applicant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence_not_found")

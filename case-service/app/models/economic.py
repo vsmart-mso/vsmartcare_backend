@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -40,6 +40,7 @@ class EconomicInfo(Base):
     housing_types_id: Mapped[int | None] = mapped_column(
         ForeignKey("housing_types.id"),
     )
+    housing_shelter: Mapped[str | None] = mapped_column(Text, nullable=True, comment="สภาพที่อยู่อาศัย")
     housing_types_rent: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2),
         comment="ค่าเช่าต่อเดือน (บาท) — กรอกเมื่อ housing_types เป็นบ้านเช่า",

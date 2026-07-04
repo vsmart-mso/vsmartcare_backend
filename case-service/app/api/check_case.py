@@ -1,13 +1,26 @@
-"""ตรวจสอบรายใหม่ / รายเดิมจากเลขบัตรประชาชน (self DB, MSO logbook, vsmart_main).
+"""ตรวจสอบรายใหม่ / รายเดิมจากเลขบัตรประชาชน (vcare_main, MSO logbook, vsmart_main).
 
 เป้าหมาย
 --------
 ตอบว่า CID นี้เป็น **รายเดิม** (`is_existing_case=true`) หรือ **รายใหม่** (`false`)
 โดยเช็คแหล่งที่เปิดใช้งานพร้อมกัน แล้วรวมผล — ถ้าแหล่งใดแหล่งหนึ่งที่ตรวจได้พบข้อมูล ถือเป็นรายเดิม
 
-แหล่งข้อมูล
------------
-- ``self``       — ฐาน VCARE (case-service): มี ``applicants`` ของ ``persons`` ที่ cid ตรงกัน
+แหล่งข้อมูลและข้อมูลสำหรับ ``applicant_submission_audit``
+-----------------------------------------------------------
+- ``vcare_main`` (VCARE) — อ่านจากตาราง ``applicant_submission_audit`` ของเคส VCARE ล่าสุด
+  (ถ้ายังไม่มีแถว audit จะ fallback จังหวัดจากที่อยู่ + เลขบัญชีจาก ``applicants``)
+  คืน ``detail.submission_audit`` + ``detail.prior_case`` สำหรับคำนวณ Require KTB
+
+- ``vsmart_main`` (Legacy vSmart) — ไม่มีตาราง audit ใน Legacy แต่ API ``check-cid``
+  คืน ``prior_case`` (จังหวัด / เลขบัญชี / informer_id) ซึ่ง map เป็น ``detail.submission_audit``
+  ในฟิลด์เดียวกับ ``applicant_submission_audit``
+
+- ``mso_logbook`` (Welfare / logbook) — บอกได้แค่ **รายใหม่หรือรายเดิม** (``found``)
+  **ไม่** คืน ``prior_case`` / ``submission_audit`` (ไม่มี snapshot สำหรับ Require KTB)
+
+แหล่งข้อมูล (สรุป)
+-------------------
+- ``vcare_main`` — ฐาน VCARE (case-service): มี ``applicants`` ของ ``persons`` ที่ cid ตรงกัน
 - ``mso_logbook`` — API ภายนอก MSO logbook (ตั้ง ``MSO_LOGBOOK_*`` ใน .env)
 - ``vsmart_main``   — API ภายนอก VSmart หลัก (ตั้ง ``VSMART_MAIN_*`` ใน .env)
 
@@ -66,11 +79,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.citizen_security import CitizenClaims, assert_cid_owner, require_citizen
 from ..core.database import get_session
 from ..models.applicant import Applicant
 from ..models.person import Person
 from ..schemas.check_case import CheckCaseSource, ExistingCaseCheckResult, SourceCheckResult
 from ..schemas.person import validate_thai_cid
+from ..services.ktb_requirement import (
+    attach_submission_audit_to_detail,
+    fetch_vcare_prior_case_detail,
+)
 from ..settings import settings
 
 logger = logging.getLogger(__name__)
@@ -88,6 +106,94 @@ _BOOL_KEYS = (
 )
 _COUNT_KEYS = ("count", "total", "total_count")
 _LIST_KEYS = ("data", "items", "results", "records", "cases", "petitions")
+
+
+def _dig_value(payload: Any, keys: tuple[str, ...]) -> Any:
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        if key in payload and payload[key] not in (None, ""):
+            return payload[key]
+    return None
+
+
+def _parse_prior_case_from_payload(payload: Any) -> dict[str, Any] | None:
+    """ดึง prior_case จาก response ภายนอก (Legacy prior_case หรือ MSO get-problem)."""
+    if not isinstance(payload, dict):
+        return None
+
+    nested = payload.get("prior_case")
+    if isinstance(nested, dict):
+        root = nested
+    else:
+        root = payload
+        for wrap_key in ("data", "Data", "result"):
+            inner = payload.get(wrap_key)
+            if isinstance(inner, dict):
+                root = inner
+                break
+
+    province_id = _dig_value(root, ("province_id", "provinceId", "cm_province_id"))
+    if province_id is not None:
+        try:
+            province_id = int(province_id)
+        except (TypeError, ValueError):
+            province_id = None
+
+    ref_raw = _dig_value(
+        root,
+        ("ref_id", "informer_id", "applicant_id", "problem_id", "logbook_id", "id"),
+    )
+    ref_id: int | None = None
+    if ref_raw is not None:
+        try:
+            ref_id = int(ref_raw)
+        except (TypeError, ValueError):
+            ref_id = None
+
+    province_name = _dig_value(root, ("province_name", "provinceName", "cm_province", "province"))
+    if province_name is not None:
+        province_name = str(province_name).strip() or None
+
+    bank_account_no = _dig_value(
+        root,
+        ("bank_account_no", "account_number", "account_no"),
+    )
+    if bank_account_no is None:
+        payee_bank = root.get("payee_detail_bank")
+        if isinstance(payee_bank, dict):
+            bank_account_no = payee_bank.get("account_number") or payee_bank.get("account_no")
+    if bank_account_no is not None:
+        bank_account_no = str(bank_account_no).strip() or None
+
+    if (
+        province_id is None
+        and not province_name
+        and ref_id is None
+        and not bank_account_no
+    ):
+        return None
+
+    prior: dict[str, Any] = {
+        "ref_id": ref_id,
+        "province_id": province_id,
+        "province_name": province_name,
+        "bank_account_no": bank_account_no,
+    }
+    if ref_id is not None and "informer_id" not in prior:
+        prior["informer_id"] = ref_id
+    return prior
+
+
+def _merge_detail_with_prior(
+    detail: dict[str, Any] | None,
+    prior: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if prior is None:
+        return detail
+    merged = dict(detail or {})
+    merged["prior_case"] = prior
+    return merged
 
 
 def _normalize_cid(cid: str) -> str:
@@ -274,23 +380,27 @@ async def _check_mso_logbook(cid: str, timeout: float) -> SourceCheckResult:
             detail={"body": body if isinstance(body, dict) else {"raw": response.text[:500]}},
         )
 
+    detail: dict[str, Any] | None = None
+    if isinstance(body, (dict, list)):
+        detail = {"body": body, "has_submission_audit": False}
+
     return SourceCheckResult(
         source="mso_logbook",
         found=found,
         available=available,
         message=message,
-        detail={"body": body} if isinstance(body, (dict, list)) else None,
+        detail=detail,
     )
 
 
 async def _check_self_database(session: AsyncSession, cid: str) -> SourceCheckResult:
     if not settings.check_case_enable_vcare_self:
-        return _disabled_source_result("self")
+        return _disabled_source_result("vcare_main")
 
     person_id = await session.scalar(select(Person.id).where(Person.cid == cid))
     if person_id is None:
         return SourceCheckResult(
-            source="self",
+            source="vcare_main",
             found=False,
             available=True,
             message="no_person",
@@ -301,12 +411,17 @@ async def _check_self_database(session: AsyncSession, cid: str) -> SourceCheckRe
         select(func.count()).select_from(Applicant).where(Applicant.persons_id == person_id)
     )
     count = int(applicant_count or 0)
+    detail: dict[str, Any] = {"person_id": person_id, "applicant_count": count}
+    if count > 0:
+        prior_detail = await fetch_vcare_prior_case_detail(session, person_id)
+        if prior_detail:
+            detail.update(prior_detail)
     return SourceCheckResult(
-        source="self",
+        source="vcare_main",
         found=count > 0,
         available=True,
         message="has_applicants" if count > 0 else "person_only",
-        detail={"person_id": person_id, "applicant_count": count},
+        detail=detail,
     )
 
 
@@ -407,12 +522,20 @@ async def _check_external_source(
             detail={"body": body if isinstance(body, dict) else {"raw": body}},
         )
 
+    prior = _parse_prior_case_from_payload(body) if isinstance(body, dict) else None
+    detail = _merge_detail_with_prior(
+        {"body": body, "has_submission_audit": prior is not None} if isinstance(body, dict) else None,
+        prior,
+    )
+    if prior is not None and detail is not None:
+        attach_submission_audit_to_detail(detail, prior, source_label="Legacy")
+
     return SourceCheckResult(
         source=source,
         found=found,
         available=True,
         message="found" if found else "not_found",
-        detail={"body": body} if isinstance(body, dict) else None,
+        detail=detail,
     )
 
 
@@ -420,7 +543,7 @@ async def check_existing_case_by_cid(
     session: AsyncSession,
     cid: str,
 ) -> ExistingCaseCheckResult:
-    """เช็ค CID กับแหล่งที่เปิดใช้งาน (self / MSO logbook / vsmart_main).
+    """เช็ค CID กับแหล่งที่เปิดใช้งาน (vcare_main / MSO logbook / vsmart_main).
 
     ``is_existing_case`` เป็น OR ของ ``found`` จากทุกแหล่งที่ ``available=true``.
     """
@@ -456,8 +579,10 @@ async def check_existing_case_by_cid(
 async def get_existing_case_check(
     cid: str = Query(..., min_length=13, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> ExistingCaseCheckResult:
     """Endpoint ทดสอบ / เรียกก่อนยื่นคำร้อง — ดูรายละเอียดได้ที่ module docstring."""
+    assert_cid_owner(cid, claims)
     try:
         return await check_existing_case_by_cid(session, cid)
     except ValueError as exc:

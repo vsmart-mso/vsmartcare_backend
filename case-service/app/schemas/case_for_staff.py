@@ -32,7 +32,40 @@ from .case_welfare import (
 )
 
 
-class CaseForStaffRead(ProcessSlaFields):
+class KtbSubmissionAuditFields(BaseModel):
+    """ฟิลด์ snapshot Require KTB — default เคสเก่าก่อน migration."""
+
+    require_ktb_corporate: bool = Field(
+        True,
+        description="true = ต้องมีเอกสาร KTB Corporate Online ใหม่",
+    )
+    require_ktb_reason: str = Field(
+        "NEW_CASE",
+        max_length=32,
+        description="NEW_CASE | NONE | ACCOUNT_CHANGED | PROVINCE_CHANGED",
+    )
+    existing_case_source: str | None = Field(None, max_length=16)
+    existing_case_detected_sources: list[str] | None = Field(
+        None,
+        description="แหล่งที่พบรายเดิมตอน snapshot เช่น vcare_main, vsmart_main",
+    )
+    existing_case_ref_id: int | None = None
+    existing_case_province_id: int | None = None
+    existing_case_province_name: str | None = Field(None, max_length=255)
+    submission_province_id: int | None = None
+    submission_province_name: str | None = Field(None, max_length=255)
+    is_account_changed: bool | None = None
+    has_ktb_evidence: bool = Field(
+        False,
+        description="มี welfare_evidences attachment type 11",
+    )
+    prior_ktb_reuse_applicant_id: int | None = Field(
+        None,
+        description="เมื่อ require=false และ prior มาจาก VCARE — อ้างอิงเคสเดิม",
+    )
+
+
+class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
     applicant_id: int
     case_number: str | None = Field(None, max_length=100)
     current_status_id: int | None = None
@@ -208,6 +241,7 @@ class StaffCaseSectionsUpdate(BaseModel):
     household_members: list[HouseholdMemberInCase] | None = None
     welfare_history: WelfareHistoryInCase | None = None
     problem_details: str | None = None
+    family_distress: str | None = None
     request_type_ids: list[int] | None = None
     request_other_text: str | None = Field(None, max_length=500)
     request_in_kind_text: str | None = Field(None, max_length=500)
@@ -252,7 +286,7 @@ class PorKor1TypeMoney(BaseModel):
     color: str | None = Field(None, max_length=32)
 
 
-class PorKor1Summary(ProcessSlaFields):
+class PorKor1Summary(ProcessSlaFields, KtbSubmissionAuditFields):
     """สรุปอ้างอิงคำร้อง — ใช้หัวจอสรุป / ระบบอื่น."""
 
     applicant_id: int

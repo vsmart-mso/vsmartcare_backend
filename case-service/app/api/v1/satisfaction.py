@@ -8,12 +8,16 @@ Endpoints:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.citizen_security import (
+    CitizenClaims,
+    get_owned_applicant,
+    require_citizen,
+)
 from ...core.database import get_session
-from ...models.applicant import Applicant
 from ...models.satisfaction import SatisfactionSurvey
 from ...schemas.satisfaction import SatisfactionSurveyCreate, SatisfactionSurveyRead
 
@@ -29,13 +33,9 @@ router = APIRouter(prefix="/v1/satisfaction", tags=["satisfaction"])
 async def create_satisfaction_survey(
     body: SatisfactionSurveyCreate,
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> SatisfactionSurvey:
-    applicant = await session.get(Applicant, body.applicant_id)
-    if not applicant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"ไม่พบ applicant id={body.applicant_id}",
-        )
+    await get_owned_applicant(session, body.applicant_id, claims)
 
     survey = SatisfactionSurvey(
         applicant_id=body.applicant_id,
@@ -57,7 +57,9 @@ async def create_satisfaction_survey(
 async def list_satisfaction_surveys(
     applicant_id: int = Query(..., ge=1),
     session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
 ) -> list[SatisfactionSurvey]:
+    await get_owned_applicant(session, applicant_id, claims)
     result = await session.execute(
         select(SatisfactionSurvey)
         .where(SatisfactionSurvey.applicant_id == applicant_id)
