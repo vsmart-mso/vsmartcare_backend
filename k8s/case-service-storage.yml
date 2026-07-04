@@ -1,0 +1,36 @@
+# NFS server ต้อง setup ก่อนบนเครื่อง 192.168.10.63 (ดู NFS_SETUP.md หรือคำสั่งด้านล่าง)
+# export path บนเครื่อง 63: /srv/nfs/vcare/case-service/uploads
+#   ซึ่งข้างในมี 2 โฟลเดอร์ย่อย: welfare-evidence, file-payments
+# ทุก worker node ที่ vcare-case-service อาจถูก schedule ไปลง ต้องลง nfs-common (Debian/Ubuntu)
+# หรือ nfs-utils (RHEL/CentOS) ไม่งั้น mount จะ fail ตอน pod สร้าง
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vcare-case-service-uploads-pv
+  labels:
+    app: vcare-case-service
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-manual
+  nfs:
+    server: 192.168.10.63
+    path: /srv/nfs/vcare/case-service/uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vcare-case-service-uploads-pvc
+  namespace: vcare
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-manual
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: vcare-case-service-uploads-pv

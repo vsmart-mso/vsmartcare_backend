@@ -60,6 +60,13 @@ spec:
           envFrom:
             - secretRef:
                 name: vcare-case-service-secret
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads/welfare-evidence
+              subPath: welfare-evidence
+            - name: uploads
+              mountPath: /app/uploads/file-payments
+              subPath: file-payments
           resources:
             requests:
               cpu: "200m"
@@ -67,6 +74,10 @@ spec:
             limits:
               cpu: "1000m"
               memory: "512Mi"
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: vcare-case-service-uploads-pvc
 ---
 apiVersion: apps/v1
 kind: Deployment
