@@ -32,6 +32,7 @@ services:
       - ./case-service/app:/app/app
       - ./case-service/alembic:/app/alembic
       - ./case-service/alembic.ini:/app/alembic.ini
+      - case_uploads:/app/uploads
     command:
       [
         "sh",
