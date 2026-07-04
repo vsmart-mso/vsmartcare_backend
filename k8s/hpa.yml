@@ -8,8 +8,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vcare-bff
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 20
+  maxReplicas: 20
   metrics:
     - type: Resource
       resource:
@@ -34,8 +34,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vcare-case-service
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 20
+  maxReplicas: 20
   metrics:
     - type: Resource
       resource:
@@ -60,8 +60,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vcare-notification-service
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 20
+  maxReplicas: 20
   metrics:
     - type: Resource
       resource:
@@ -86,8 +86,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vcare-ocr-service
-  minReplicas: 2
-  maxReplicas: 3
+  minReplicas: 20
+  maxReplicas: 20
   metrics:
     - type: Resource
       resource:
@@ -138,8 +138,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: vcare-dashboard-service
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 20
+  maxReplicas: 20
   metrics:
     - type: Resource
       resource:
