@@ -55,6 +55,10 @@ class EconomicIncomeSourceInCase(BaseModel):
 
 
 class HouseholdMemberInCase(BaseModel):
+    id: int | None = Field(
+        None,
+        description="household_member.id เดิม — ระบุเมื่อแก้ไขสมาชิกที่มีอยู่แล้ว เพื่อจับคู่แทน seq",
+    )
     seq: int = Field(..., ge=1)
     national_id: str | None = Field(None, max_length=13)
     prefix_id: int | None = None
