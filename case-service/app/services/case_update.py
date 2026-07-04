@@ -80,6 +80,8 @@ async def apply_case_update(
             applicant_row.email_address = str(a.email_address)
         if a.problem_details is not None:
             applicant_row.problem_details = a.problem_details
+        if a.family_distress is not None:
+            applicant_row.family_distress = a.family_distress
         if a.bank_name_id is not None:
             await _ensure_bank_name_exists(session, a.bank_name_id)
             applicant_row.bank_name_id = a.bank_name_id
@@ -116,6 +118,7 @@ async def apply_case_update(
                     mobile_phone=addr.mobile_phone,
                     latitude=addr.latitude,
                     longitude=addr.longitude,
+                    nearby_landmark=addr.nearby_landmark,
                 )
             )
 
@@ -144,6 +147,7 @@ async def apply_case_update(
             econ = EconomicInfo(
                 applicant_id=applicant_id,
                 housing_types_id=eco.housing_types_id,
+                housing_shelter=eco.housing_shelter,
                 housing_types_rent=eco.housing_types_rent,
                 occupation_type_id=eco.occupation_type_id,
                 occupation=eco.occupation,

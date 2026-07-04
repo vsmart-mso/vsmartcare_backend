@@ -57,6 +57,7 @@ class AddressInCase(BaseModel):
     mobile_phone: str | None = Field(None, max_length=20)
     latitude: str | None = Field(None, max_length=50)
     longitude: str | None = Field(None, max_length=50)
+    nearby_landmark: str | None = Field(None, max_length=500)
 
 
 class DependencyLoadInCase(BaseModel):
@@ -105,6 +106,7 @@ class HouseholdMemberInCase(BaseModel):
 
 class EconomicInfoInCase(BaseModel):
     housing_types_id: int | None = None
+    housing_shelter: str | None = None
     housing_types_rent: Decimal | None = None
     occupation_type_id: int | None = None
     occupation: str | None = Field(None, max_length=255)
@@ -169,6 +171,7 @@ class WelfareApplicantUpdate(BaseModel):
     fax_number: str | None = Field(default=None, max_length=20)
     email_address: EmailStr | None = None
     problem_details: str | None = None
+    family_distress: str | None = None
     bank_name_id: int | None = Field(default=None, ge=1)
     bank_account_no: str | None = Field(default=None, max_length=50)
     bank_account_type_id: int | None = Field(default=None, ge=1)
