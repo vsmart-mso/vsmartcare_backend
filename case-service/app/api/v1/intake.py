@@ -804,7 +804,7 @@ async def update_case_diagnosis(
         row.owner_position = body.owner_position
     if body.owner_organization is not None:
         row.owner_organization = body.owner_organization
-    row.updated_at = datetime.utcnow()
+    row.updated_at = func.now()
 
     await session.commit()
 
