@@ -81,6 +81,7 @@ from ...services.citizen_status_email_policy import (
     CitizenStatusEmailTrigger,
     fetch_latest_status_id,
     fetch_previous_status_id,
+    is_status_advancement,
 )
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
@@ -609,6 +610,12 @@ async def _apply_037_status_if_needed(
     else:
         target_status_id = CURRENT_STATUS_WITHDRAWING
         remarks = "บันทึกผลจ่ายเงิน 037"
+
+    if not is_status_advancement(latest_status_id, target_status_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="status_cannot_go_backward",
+        )
 
     status_row = await _get_row(session, CurrentStatus, target_status_id)
     if status_row is None:
