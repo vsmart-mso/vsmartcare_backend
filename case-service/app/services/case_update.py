@@ -170,38 +170,44 @@ async def apply_case_update(
                 )
 
     if body.household_members is not None:
-        # ใช้ upsert-by-seq แทน delete-all + recreate
-        # เพื่อรักษา household_member.id ของสมาชิกเดิมไว้
-        # (welfare_evidences.household_member_id FK ondelete=CASCADE — ถ้า delete แล้วสร้างใหม่ รูปหาย)
-        new_seqs = {hm.seq for hm in body.household_members}
-
-        # ดึง existing members
+        # จับคู่ด้วย id เดิม (ถ้า client ส่งมา) แทน seq ล้วนๆ
+        # เหตุผล: seq คำนวณจากตำแหน่งในลิสต์ฝั่ง client และเปลี่ยนได้ทุกครั้งที่เพิ่ม/ลบ
+        # สมาชิกกลางลิสต์ — ถ้าจับคู่ด้วย seq เพียงอย่างเดียว การลบคนกลางลิสต์แล้วบันทึก
+        # จะทำให้คนถัดๆ ไปถูก UPDATE ทับด้วยข้อมูลผิดคน และ cascade ลบ welfare_evidences
+        # ของคนที่ seq หลุดจากลิสต์ไปทั้งที่ตัวเขายังอยู่จริง
+        # client เดิมที่ยังไม่ส่ง id มา (เช่น citizen app) จะ fallback เป็น delete-all+recreate
+        # เหมือนพฤติกรรมเดิมทุกประการ
         existing_rows = await session.execute(
-            select(HouseholdMember.id, HouseholdMember.seq)
-            .where(HouseholdMember.applicant_id == applicant_id)
+            select(HouseholdMember.id).where(HouseholdMember.applicant_id == applicant_id)
         )
-        existing_by_seq: dict[int, int] = {row.seq: row.id for row in existing_rows}
+        existing_ids = {row.id for row in existing_rows}
 
-        # ลบเฉพาะ member ที่ไม่อยู่ใน list ใหม่ (seq หายไป)
-        seqs_to_delete = set(existing_by_seq.keys()) - new_seqs
-        if seqs_to_delete:
-            await session.execute(
-                delete(HouseholdMember).where(
-                    HouseholdMember.applicant_id == applicant_id,
-                    HouseholdMember.seq.in_(seqs_to_delete),
+        incoming_ids: set[int] = set()
+        for hm in body.household_members:
+            if hm.id is None:
+                continue
+            if hm.id not in existing_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="household_member_id_not_found",
                 )
+            incoming_ids.add(hm.id)
+
+        # ลบเฉพาะสมาชิกเดิมที่ไม่อยู่ใน list ใหม่ (ถูกลบออกจริง)
+        ids_to_delete = existing_ids - incoming_ids
+        if ids_to_delete:
+            await session.execute(
+                delete(HouseholdMember).where(HouseholdMember.id.in_(ids_to_delete))
             )
 
         for hm in body.household_members:
-            if hm.seq in existing_by_seq:
-                # UPDATE — คง id เดิมไว้ (welfare_evidences ยังชี้ถูก)
+            if hm.id is not None:
+                # UPDATE — คง id เดิมไว้ (welfare_evidences ยังชี้ถูกคน แม้ seq จะเปลี่ยน)
                 await session.execute(
                     sa_update(HouseholdMember)
-                    .where(
-                        HouseholdMember.applicant_id == applicant_id,
-                        HouseholdMember.seq == hm.seq,
-                    )
+                    .where(HouseholdMember.id == hm.id)
                     .values(
+                        seq=hm.seq,
                         national_id=hm.national_id,
                         prefix_id=hm.prefix_id,
                         prefix_other=hm.prefix_other,
@@ -217,7 +223,7 @@ async def apply_case_update(
                     )
                 )
             else:
-                # INSERT — member ใหม่ (seq ยังไม่มีในฐานข้อมูล)
+                # INSERT — สมาชิกใหม่ (ไม่มี id ส่งมา)
                 session.add(
                     HouseholdMember(
                         applicant_id=applicant_id,
