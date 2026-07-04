@@ -1,10 +1,11 @@
-"""Admin API — login + เปิด/ปิดบริการรายจังหวัด (TASK-v-care-12062026-01).
+"""Admin API — login + เปิด/ปิดบริการรายจังหวัด + สร้างเคสสุ่ม (TASK-v-care-12062026-01).
 
 Endpoints:
   POST /v1/admin/auth/login          — username/password → admin JWT
   GET  /v1/admin/provinces           — รายการจังหวัด + สถานะเปิด/ปิด (ต้อง admin JWT)
   PUT  /v1/admin/provinces/bulk      — เปิด/ปิดทุกจังหวัดพร้อมกัน (ต้อง admin JWT)
   PUT  /v1/admin/provinces/{id}      — เปิด/ปิดรายจังหวัด (ต้อง admin JWT)
+  POST /v1/admin/cases/random       — สร้างคำร้องสุ่ม (dev/staging เท่านั้น)
 
 Auth ใช้ admin JWT (HS256, ADMIN_JWT_SECRET) แยกขาดจาก citizen token ของ ThaID.
 สมัคร admin ผ่าน CLI `app.admin_cli` เท่านั้น (ไม่มี endpoint signup).
@@ -26,6 +27,7 @@ from ...core.admin_security import (
     verify_password,
 )
 from ...core.database import get_session
+from ...core.runtime import require_non_production
 from ...models.admin import AdminUser, ProvinceAccessConfig
 from ...models.geo import Province
 from ...schemas.admin import (
@@ -34,7 +36,11 @@ from ...schemas.admin import (
     ProvinceAccessBulkResult,
     ProvinceAccessRead,
     ProvinceAccessUpdate,
+    RandomCaseCreatedRead,
+    RandomCasesCreateBody,
+    RandomCasesCreateResult,
 )
+from ...services.random_case import create_random_cases
 from ...settings import settings
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -228,4 +234,72 @@ async def update_province_access(
         province_name=province.name,
         is_enabled=config.is_enabled,
         updated_at=config.updated_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Random cases (dev/staging)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/cases/random", response_model=RandomCasesCreateResult)
+async def admin_create_random_cases(
+    body: RandomCasesCreateBody,
+    _claims: dict = Depends(require_admin_token),
+    session: AsyncSession = Depends(get_session),
+) -> RandomCasesCreateResult:
+    """สร้างคำร้องสุ่ม (person + applicant + ตารางย่อย) — ใช้ทดสอบเท่านั้น ไม่ทำงานบน production."""
+    try:
+        require_non_production("admin_create_random_cases")
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="disabled_in_production",
+        ) from exc
+
+    if body.province_id is not None:
+        province = await session.get(Province, body.province_id)
+        if province is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found"
+            )
+
+    try:
+        created = await create_random_cases(
+            session,
+            count=body.count,
+            province_id=body.province_id,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith("missing_lookup_data"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail
+            ) from exc
+        if detail == "no_postcode_for_province":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=detail
+            ) from exc
+        if detail == "no_postcode_data":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=detail
+        ) from exc
+
+    return RandomCasesCreateResult(
+        created=len(created),
+        cases=[
+            RandomCaseCreatedRead(
+                applicant_id=c.applicant_id,
+                case_number=c.case_number,
+                persons_id=c.persons_id,
+                cid=c.cid,
+                full_name=c.full_name,
+                province_id=c.province_id,
+                province_name=c.province_name,
+            )
+            for c in created
+        ],
     )

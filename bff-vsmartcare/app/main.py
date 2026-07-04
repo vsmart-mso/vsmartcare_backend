@@ -154,7 +154,7 @@ _TAGS = [
     {"name": "auth", "description": "Login ThaiD"},
     {"name": "intake", "description": "ข้อมูลการรับเรื่อง (intake / payment / KTB) จาก case-service"},
     {"name": "satisfaction", "description": "ผลประเมินความพึงพอใจของผู้ยื่นคำขอ"},
-    {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด"},
+    {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด + สร้างเคสสุ่ม"},
     {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
     {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
@@ -2891,6 +2891,11 @@ class AdminProvinceAccessUpdateBody(BaseModel):
     is_enabled: bool
 
 
+class AdminRandomCasesCreateBody(BaseModel):
+    count: int = Field(1, ge=1, le=50)
+    province_id: int | None = Field(None, ge=1)
+
+
 @router.post(
     "/v1/admin/auth/login",
     tags=["admin"],
@@ -2954,6 +2959,29 @@ async def admin_update_province(
     return await _put(
         f"{base}/v1/admin/provinces/{province_id}",
         json=body.model_dump(),
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/admin/cases/random",
+    tags=["admin"],
+    summary="สร้างคำร้องสุ่ม (dev/staging)",
+    description=(
+        "ส่งต่อ `POST …/v1/admin/cases/random` ใน case-service — "
+        "สร้าง person + คำร้องสุ่ม (ต้องส่ง admin JWT; ปิดบน production)"
+    ),
+    dependencies=_require_bearer_any,
+)
+async def admin_create_random_cases(
+    body: AdminRandomCasesCreateBody,
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/admin/cases/random",
+        json=body.model_dump(exclude_none=True),
+        timeout=120.0,
         headers=_forward_auth_headers(authorization),
     )
 
