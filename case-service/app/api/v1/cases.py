@@ -22,6 +22,10 @@ from ...core.citizen_security import (
     get_owned_applicant,
     require_citizen,
 )
+from ...constants.current_status import (
+    CURRENT_STATUS_EDIT_REQUESTED,
+    CURRENT_STATUS_PENDING_INTAKE,
+)
 from ...core.database import get_session
 from ...models.address import Address
 from ...models.applicant import Applicant
@@ -604,6 +608,70 @@ async def update_welfare_case(
     if reloaded is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="reload_failed")
     return await applicant_to_case_read(reloaded)
+
+
+@router.post(
+    "/{applicant_id}/resubmit",
+    response_model=WelfareRequestStatusRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="ยืนยันคำร้องหลังแก้ไขข้อมูลที่ถูกตีกลับ — reset สถานะกลับเป็น 'รอรับเรื่อง'",
+    description=(
+        "เรียกหลังจาก PATCH /v1/cases/{applicant_id} สำเร็จ เมื่อประชาชนแก้ไขข้อมูลตามที่ "
+        "เจ้าหน้าที่ตีกลับ (สถานะ 'ดำเนินการแก้ไขข้อมูล') เสร็จเรียบร้อยแล้ว — endpoint นี้ใช้แทน "
+        "/v1/case_for_staff/welfare-request-status ซึ่งเป็น endpoint ฝั่งเจ้าหน้าที่เท่านั้น "
+        "(ประชาชนเรียกแล้วจะได้ 401 เสมอ)"
+    ),
+)
+async def resubmit_welfare_case(
+    applicant_id: int,
+    session: AsyncSession = Depends(get_session),
+    claims: CitizenClaims = Depends(require_citizen),
+) -> WelfareRequestStatusRead:
+    await get_owned_applicant(session, applicant_id, claims)
+
+    latest_result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(WelfareRequestStatus.applicant_id == applicant_id)
+        .order_by(WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc())
+        .limit(1)
+        .options(selectinload(WelfareRequestStatus.current_status))
+    )
+    latest = latest_result.scalars().first()
+
+    # Idempotent retry: ถ้า resubmit สำเร็จไปแล้วรอบก่อน (เช่น อัปโหลดรูปหลังจากนี้ล้มเหลว แล้ว user
+    # กด "บันทึก" ซ้ำ) สถานะจะเป็น "รอรับเรื่อง" อยู่แล้ว — ให้ถือว่าสำเร็จ ไม่ต้อง insert ซ้ำหรือ error
+    # (กันไม่ให้ user ติดค้าง 409 ถาวรทั้งที่ก่อนหน้านี้ resubmit ผ่านไปแล้วจริง)
+    if latest is not None and latest.current_status_id == CURRENT_STATUS_PENDING_INTAKE:
+        return WelfareRequestStatusRead.model_validate(latest)
+
+    if latest is None or latest.current_status_id != CURRENT_STATUS_EDIT_REQUESTED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="case_not_awaiting_edit")
+
+    log = WelfareRequestStatus(
+        applicant_id=applicant_id,
+        current_status_id=CURRENT_STATUS_PENDING_INTAKE,
+    )
+    session.add(log)
+    await session.flush()
+
+    await enqueue_case_submitted_email(
+        session,
+        applicant_id=applicant_id,
+        idempotency_key=f"welfare-case-correction-{log.id}",
+        submission_kind="correction",
+    )
+
+    # โหลด log ใหม่พร้อม current_status relationship ก่อน serialize — object ที่เพิ่งสร้างสดๆ
+    # ยังไม่เคย eager-load ความสัมพันธ์นี้ ถ้า model_validate อ่านตรงๆ จะเจอ MissingGreenlet
+    # (AsyncSession lazy-load ไม่ได้นอก await context) ต้อง select ใหม่พร้อม selectinload เสมอ
+    reloaded_result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(WelfareRequestStatus.id == log.id)
+        .options(selectinload(WelfareRequestStatus.current_status))
+    )
+    log = reloaded_result.scalar_one()
+
+    return WelfareRequestStatusRead.model_validate(log)
 
 
 @router.get("/{applicant_id}", response_model=WelfareCaseRead)

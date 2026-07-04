@@ -1726,6 +1726,27 @@ async def update_case(
     )
 
 
+@router.post(
+    "/v1/cases/{applicant_id}/resubmit",
+    tags=["cases"],
+    summary="ยืนยันคำร้องหลังแก้ไขข้อมูลที่ถูกตีกลับ",
+    description=(
+        "ส่งต่อ `POST …/v1/cases/{applicant_id}/resubmit` ใน case-service — "
+        "reset สถานะกลับเป็น 'รอรับเรื่อง' หลังประชาชนแก้ไขข้อมูลที่ถูกตีกลับเสร็จแล้ว"
+    ),
+)
+async def resubmit_case(
+    applicant_id: int,
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/cases/{applicant_id}/resubmit",
+        json={},
+        headers=_forward_auth_headers(authorization),
+    )
+
+
 @router.patch(
     "/v1/cases/{applicant_id}/evidences/{evidence_id}",
     tags=["cases"],
