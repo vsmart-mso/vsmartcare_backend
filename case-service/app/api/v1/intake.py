@@ -550,13 +550,6 @@ async def upsert_intake_ktb(
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
-    audit = applicant.submission_audit
-    if audit is not None and not audit.require_ktb_corporate:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="ktb_not_required",
-        )
-
     handling = await _get_handling_or_404(session, applicant_id)
 
     # ตรวจว่าเลือก ktb_corporate จริง ๆ ก่อนบันทึกหน้า 20

@@ -7,9 +7,10 @@
 
 แหล่งข้อมูลและข้อมูลสำหรับ ``applicant_submission_audit``
 -----------------------------------------------------------
-- ``vcare_main`` (VCARE) — อ่านจากตาราง ``applicant_submission_audit`` ของเคส VCARE ล่าสุด
-  (ถ้ายังไม่มีแถว audit จะ fallback จังหวัดจากที่อยู่ + เลขบัญชีจาก ``applicants``)
-  คืน ``detail.submission_audit`` + ``detail.prior_case`` สำหรับคำนวณ Require KTB
+- ``vcare_main`` (VCARE) — คืน ``detail.prior_case`` (จังหวัด/บัญชี/ref จากเคสล่าสุด)
+  และ ``detail.submission_audit`` แบบเดียวกับ ``vsmart_main``: จากแถว
+  ``applicant_submission_audit`` ถ้ามี หรือสังเคราะห์จาก prior (``existing_case_source=VCARE``)
+  ถ้ายังไม่มีแถว audit จะ fallback จังหวัดจากที่อยู่ + เลขบัญชีจาก ``applicants``
 
 - ``vsmart_main`` (Legacy vSmart) — ไม่มีตาราง audit ใน Legacy แต่ API ``check-cid``
   คืน ``prior_case`` (จังหวัด / เลขบัญชี / informer_id) ซึ่ง map เป็น ``detail.submission_audit``
@@ -86,7 +87,7 @@ from ..models.person import Person
 from ..schemas.check_case import CheckCaseSource, ExistingCaseCheckResult, SourceCheckResult
 from ..schemas.person import validate_thai_cid
 from ..services.ktb_requirement import (
-    attach_submission_audit_to_detail,
+    finalize_detail_submission_audit,
     fetch_vcare_prior_case_detail,
 )
 from ..settings import settings
@@ -413,9 +414,16 @@ async def _check_self_database(session: AsyncSession, cid: str) -> SourceCheckRe
     count = int(applicant_count or 0)
     detail: dict[str, Any] = {"person_id": person_id, "applicant_count": count}
     if count > 0:
-        prior_detail = await fetch_vcare_prior_case_detail(session, person_id)
-        if prior_detail:
-            detail.update(prior_detail)
+        vcare_prior = await fetch_vcare_prior_case_detail(session, person_id)
+        if vcare_prior is not None:
+            prior_case, audit_row = vcare_prior
+            detail["prior_case"] = prior_case
+            finalize_detail_submission_audit(
+                detail,
+                prior_case,
+                source_label="VCARE",
+                audit_row=audit_row,
+            )
     return SourceCheckResult(
         source="vcare_main",
         found=count > 0,
@@ -528,7 +536,7 @@ async def _check_external_source(
         prior,
     )
     if prior is not None and detail is not None:
-        attach_submission_audit_to_detail(detail, prior, source_label="Legacy")
+        finalize_detail_submission_audit(detail, prior, source_label="Legacy")
 
     return SourceCheckResult(
         source=source,

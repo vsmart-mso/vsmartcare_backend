@@ -106,6 +106,7 @@ class CaseHandling(Base):
     vsmart_informer_id: Mapped[int | None] = mapped_column()
     vsmart_social_worker_id: Mapped[int | None] = mapped_column()
     sw_user_sdshv: Mapped[str | None] = mapped_column(String(255))
+    responsible_division_id: Mapped[int | None] = mapped_column()
     type_money_id: Mapped[int | None] = mapped_column(
         ForeignKey("type_money.id"),
         nullable=True,

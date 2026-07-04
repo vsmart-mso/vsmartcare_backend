@@ -110,6 +110,11 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         default_factory=list,
         description="หมายเลขคำร้อง self-submit ทั้งหมดในปีงบเดียวกัน — ทุกแถวในกลุ่มได้รายการเดียวกัน เรียง created_at ASC",
     )
+    responsible_division_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Division.id จาก vSmart (case_handling.responsible_division_id)",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):
@@ -169,6 +174,11 @@ class CaseForStaffFinanceRead(ProcessSlaFields):
     email_address: str | None = Field(None, max_length=255)
     mobile_phone: str | None = Field(None, max_length=20)
     money_amount: Decimal | None = None
+    responsible_division_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Division.id จาก vSmart (case_handling.responsible_division_id)",
+    )
 
 
 class CaseForStaffFinanceListResponse(BaseModel):
@@ -216,6 +226,20 @@ class CaseForStaffApplicantStaffFieldsRead(ProcessSlaFields):
     sw_explorer_sdshv: str | None = Field(None, max_length=255)
     is_emergency: bool = False
     time_count_process: int | None = Field(None, ge=0)
+    updated_at: datetime
+
+
+class CaseForStaffResponsibleDivisionUpdateBody(BaseModel):
+    responsible_division_id: int | None = Field(
+        None,
+        ge=1,
+        description="Division.id จาก vSmart — ส่ง null เพื่อล้างค่า",
+    )
+
+
+class CaseForStaffResponsibleDivisionRead(BaseModel):
+    applicant_id: int
+    responsible_division_id: int | None = None
     updated_at: datetime
 
 

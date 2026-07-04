@@ -23,6 +23,8 @@ from .case_for_staff_schema import (
     CoverDocumentBatchCreateBody,
     CoverDocumentBatchUpdateBody,
     CaseForStaffApplicantStaffFieldsRead,
+    CaseForStaffResponsibleDivisionRead,
+    CaseForStaffResponsibleDivisionUpdateBody,
     StaffCaseSectionsUpdateBody,
     StaffDataEditLogBody,
     CaseForStaffFinanceListResponse,
@@ -1238,6 +1240,25 @@ async def update_case_for_staff_applicant_staff_fields(
         json=payload,
     )
     return CaseForStaffApplicantStaffFieldsRead.model_validate(data)
+
+
+@router.patch(
+    "/v1/case_for_staff/responsible-division",
+    tags=["case_for_staff"],
+    summary="อัปเดตหน่วยงานรับผิดชอบ (case_handling.responsible_division_id)",
+    response_model=CaseForStaffResponsibleDivisionRead,
+)
+async def update_case_for_staff_responsible_division(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: CaseForStaffResponsibleDivisionUpdateBody = ...,
+) -> CaseForStaffResponsibleDivisionRead:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True)
+    data = await _patch(
+        f"{base}/v1/case_for_staff/responsible-division?applicant_id={applicant_id}",
+        json=payload,
+    )
+    return CaseForStaffResponsibleDivisionRead.model_validate(data)
 
 
 @router.patch(
