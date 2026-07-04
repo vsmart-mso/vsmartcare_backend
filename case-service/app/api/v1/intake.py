@@ -17,7 +17,6 @@ Endpoints:
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -65,8 +64,6 @@ router = APIRouter(
     tags=["intake"],
     dependencies=[Depends(require_staff)],
 )
-
-_BANGKOK = ZoneInfo("Asia/Bangkok")
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +449,7 @@ async def upsert_intake_payment(
 
     # อัปเดต intake_completed_at เมื่อบันทึกการจ่ายเงินครั้งแรก
     if handling.intake_completed_at is None:
-        handling.intake_completed_at = datetime.now(_BANGKOK)
+        handling.intake_completed_at = datetime.utcnow()
 
     account_number = (body.account_number or "").strip()
     applicant = await load_applicant_for_audit_refresh(session, applicant_id)
@@ -606,7 +603,7 @@ async def upsert_intake_ktb(
 
     # อัปเดต intake_completed_at ถ้ายังไม่มี
     if handling.intake_completed_at is None:
-        handling.intake_completed_at = datetime.now(_BANGKOK)
+        handling.intake_completed_at = datetime.utcnow()
 
     await session.commit()
     await session.refresh(ktb)
