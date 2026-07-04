@@ -87,7 +87,7 @@ async def ocr_bank_book(
             detail="ไฟล์ว่างเปล่า",
         )
 
-    if image_bytes[:4] == b"\xff\xd8\xff" or image_bytes.startswith(b"\x89PNG") or (
+    if image_bytes.startswith(b"\xff\xd8\xff") or image_bytes.startswith(b"\x89PNG") or (
         image_bytes[:4] == b"RIFF" and len(image_bytes) > 12 and image_bytes[8:12] == b"WEBP"
     ):
         pass
