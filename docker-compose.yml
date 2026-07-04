@@ -43,7 +43,7 @@ services:
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - STATUS_EMAIL_ENABLED=true
       - STATUS_EMAIL_TIMEOUT_SECONDS=5
-      - COOLDOWN_DAYS=30
+      - COOLDOWN_DAYS=0
       - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET:-dev-admin-jwt-secret-change-in-production}
       - STAFF_JWT_SECRET=${STAFF_JWT_SECRET:-dev-staff-jwt-secret-change-in-production}
       - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-}

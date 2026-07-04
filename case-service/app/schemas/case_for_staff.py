@@ -142,6 +142,11 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         default_factory=list,
         description="หมายเลขคำร้อง self-submit ทั้งหมดในปีงบเดียวกัน — ทุกแถวในกลุ่มได้รายการเดียวกัน เรียง created_at ASC",
     )
+    responsible_division_id: int | None = Field(
+        None,
+        ge=1,
+        description="Division.id จาก vSmart (case_handling.responsible_division_id)",
+    )
 
 
 class CaseForStaffListResponse(BaseModel):
@@ -248,6 +253,22 @@ class StaffCaseSectionsUpdate(BaseModel):
     update_by_sdshv: str | None = Field(None, max_length=255)
 
 
+class CaseForStaffResponsibleDivisionUpdate(BaseModel):
+    """อัปเดตหน่วยงานรับผิดชอบบน case_handling — ส่ง null เพื่อล้างค่า."""
+
+    responsible_division_id: int | None = Field(
+        None,
+        ge=1,
+        description="Division.id จาก vSmart — ส่ง null เพื่อล้างค่า",
+    )
+
+
+class CaseForStaffResponsibleDivisionRead(BaseModel):
+    applicant_id: int
+    responsible_division_id: int | None = None
+    updated_at: datetime
+
+
 class CaseForStaffApplicantStaffFieldsUpdate(BaseModel):
     """อัปเดตฟิลด์ฝั่งเจ้าหน้าที่บนตาราง applicants — ส่งเฉพาะฟิลด์ที่ต้องการเปลี่ยน."""
 
@@ -307,6 +328,10 @@ class PorKor1Summary(ProcessSlaFields, KtbSubmissionAuditFields):
             "true เมื่อ current_status_id ∈ {1, 2, 3, 8} — "
             "อนุญาตให้นักสังคมฯ แก้ไขส่วนที่ 2–4 และผลการเยี่ยมบ้าน"
         ),
+    )
+    responsible_division_id: int | None = Field(
+        None,
+        description="หน่วยงานรับผิดชอบ (Division.id จาก vSmart)",
     )
 
 
