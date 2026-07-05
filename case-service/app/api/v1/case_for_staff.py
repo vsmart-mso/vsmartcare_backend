@@ -81,6 +81,7 @@ from ...services.citizen_status_email_policy import (
     CitizenStatusEmailTrigger,
     fetch_latest_status_id,
     fetch_previous_status_id,
+    is_status_advancement,
 )
 from ...services.status_email_notification import (
     enqueue_case_submitted_email,
@@ -130,6 +131,8 @@ from ...schemas.payment import (
 from ...schemas.case_for_staff import (
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffApplicantStaffFieldsUpdate,
+    CaseForStaffResponsibleDivisionRead,
+    CaseForStaffResponsibleDivisionUpdate,
     StaffCaseSectionsUpdate,
     StaffDataEditLogCreate,
     CaseForStaffFinanceListResponse,
@@ -329,6 +332,9 @@ def _build_por_kor_1_detail(case: WelfareCaseRead, orm: Applicant) -> CaseForSta
         sw_explorer_sdshv=orm.sw_explorer_sdshv,
         applicant_created_at=orm.created_at,
         applicant_updated_at=orm.updated_at,
+        responsible_division_id=(
+            orm.case_handling.responsible_division_id if orm.case_handling else None
+        ),
         can_edit_case_sections=(
             latest_status_id in STAFF_CASE_SECTION_EDIT_STATUS_IDS
             if latest_status_id is not None
@@ -610,6 +616,12 @@ async def _apply_037_status_if_needed(
         target_status_id = CURRENT_STATUS_WITHDRAWING
         remarks = "บันทึกผลจ่ายเงิน 037"
 
+    if not is_status_advancement(latest_status_id, target_status_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="status_cannot_go_backward",
+        )
+
     status_row = await _get_row(session, CurrentStatus, target_status_id)
     if status_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
@@ -803,8 +815,10 @@ async def list_cases_for_staff(
             ApplicantSubmissionAudit.submission_province_id.label("submission_province_id"),
             ApplicantSubmissionAudit.submission_province_name.label("submission_province_name"),
             ApplicantSubmissionAudit.is_account_changed.label("is_account_changed"),
+            CaseHandling.responsible_division_id.label("responsible_division_id"),
         )
         .join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
         .outerjoin(
             primary_address_sq,
             and_(
@@ -1042,6 +1056,7 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.email_address.label("email_address"),
             Applicant.mobile_phone.label("mobile_phone"),
             CaseRegulationChoice.money_amount.label("money_amount"),
+            CaseHandling.responsible_division_id.label("responsible_division_id"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
@@ -1873,6 +1888,45 @@ async def update_applicant_staff_fields_for_staff(
         is_emergency=applicant.is_emergency,
         updated_at=applicant.updated_at,
         **_process_sla_fields_from_applicant(applicant),
+    )
+
+
+@router.patch(
+    "/responsible-division",
+    response_model=CaseForStaffResponsibleDivisionRead,
+    summary="อัปเดตหน่วยงานรับผิดชอบ (case_handling.responsible_division_id)",
+    description=(
+        "ใช้ `applicant_id` (query) หา/สร้าง `case_handling` แล้วอัปเดต `responsible_division_id` "
+        "— ส่ง null เพื่อล้างค่า (ไม่บังคับเลือก)"
+    ),
+)
+async def update_responsible_division_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: CaseForStaffResponsibleDivisionUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> CaseForStaffResponsibleDivisionRead:
+    applicant = await session.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
+
+    handling = await session.scalar(
+        select(CaseHandling).where(CaseHandling.applicant_id == applicant_id)
+    )
+    if handling is None:
+        handling = CaseHandling(applicant_id=applicant_id)
+        session.add(handling)
+        await session.flush()
+
+    if "responsible_division_id" in body.model_fields_set:
+        handling.responsible_division_id = body.responsible_division_id
+    handling.updated_at = datetime.now()
+    await session.commit()
+    await session.refresh(handling)
+
+    return CaseForStaffResponsibleDivisionRead(
+        applicant_id=applicant_id,
+        responsible_division_id=handling.responsible_division_id,
+        updated_at=handling.updated_at,
     )
 
 

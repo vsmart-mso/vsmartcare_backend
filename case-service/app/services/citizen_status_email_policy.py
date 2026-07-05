@@ -144,6 +144,18 @@ def should_notify_citizen_status_change(
     return True
 
 
+def is_status_advancement(current_status_id: int | None, target_status_id: int) -> bool:
+    """คืน True เมื่อ target_status_id เดินหน้าในลำดับ workflow (rank สูงขึ้น).
+
+    คืน False เมื่อ target เท่าเดิมหรือถอยหลัง — ใช้ guard ก่อนบันทึก status log.
+    """
+    if current_status_id is None:
+        return True
+    current_rank = _WORKFLOW_RANK.get(current_status_id, 0)
+    target_rank = _WORKFLOW_RANK.get(target_status_id, 0)
+    return target_rank > current_rank
+
+
 def resolve_public_status_label(
     *,
     current_status_id: int,

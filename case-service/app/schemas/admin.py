@@ -36,3 +36,29 @@ class ProvinceAccessBulkResult(BaseModel):
 
     updated: int = Field(..., description="จำนวนจังหวัดที่ถูกตั้งค่า")
     is_enabled: bool
+
+
+class RandomCasesCreateBody(BaseModel):
+    """สร้างคำร้องสุ่ม (dev/staging) — person + applicant + ตารางย่อย."""
+
+    count: int = Field(1, ge=1, le=50, description="จำนวนเคสที่ต้องการสร้าง")
+    province_id: int | None = Field(
+        None,
+        ge=1,
+        description="จำกัดจังหวัด (ว่าง = สุ่มทุกจังหวัด)",
+    )
+
+
+class RandomCaseCreatedRead(BaseModel):
+    applicant_id: int
+    case_number: str | None
+    persons_id: int
+    cid: str
+    full_name: str
+    province_id: int | None = None
+    province_name: str | None = None
+
+
+class RandomCasesCreateResult(BaseModel):
+    created: int
+    cases: list[RandomCaseCreatedRead]

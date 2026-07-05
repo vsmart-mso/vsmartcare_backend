@@ -221,6 +221,24 @@ def submission_audit_snapshot_from_legacy_prior(prior: dict[str, Any]) -> dict[s
     }
 
 
+def submission_audit_snapshot_from_vcare_prior(prior: dict[str, Any]) -> dict[str, Any]:
+    """Map VCARE prior_case → ฟิลด์เดียวกับ applicant_submission_audit (สังเคราะห์)."""
+    ref_id = prior.get("ref_id", prior.get("applicant_id"))
+    province_id = prior.get("province_id")
+    province_name = prior.get("province_name")
+    return {
+        "existing_case_source": "VCARE",
+        "existing_case_ref_id": ref_id,
+        "existing_case_province_id": province_id,
+        "existing_case_province_name": province_name,
+        "submission_province_id": province_id,
+        "submission_province_name": province_name,
+        "is_account_changed": None,
+        "require_ktb_corporate": None,
+        "require_ktb_reason": None,
+    }
+
+
 def attach_submission_audit_to_detail(
     detail: dict[str, Any],
     prior: dict[str, Any],
@@ -229,7 +247,24 @@ def attach_submission_audit_to_detail(
 ) -> None:
     if source_label == "Legacy":
         detail["submission_audit"] = submission_audit_snapshot_from_legacy_prior(prior)
+    elif source_label == "VCARE":
+        detail["submission_audit"] = submission_audit_snapshot_from_vcare_prior(prior)
     detail["has_submission_audit"] = True
+
+
+def finalize_detail_submission_audit(
+    detail: dict[str, Any],
+    prior: dict[str, Any],
+    *,
+    source_label: str,
+    audit_row: ApplicantSubmissionAudit | None = None,
+) -> None:
+    """ใส่ submission_audit ใน detail — จากแถว DB หรือสังเคราะห์จาก prior_case."""
+    if audit_row is not None:
+        detail["submission_audit"] = submission_audit_snapshot_from_row(audit_row)
+        detail["has_submission_audit"] = True
+    else:
+        attach_submission_audit_to_detail(detail, prior, source_label=source_label)
 
 
 async def resolve_province_by_name(
@@ -388,6 +423,18 @@ async def refresh_applicant_submission_audit(
 
     if vcare is not None and vcare.ref_id == applicant.id:
         vcare = None
+
+    # check_existing_case_by_cid คืนเคสล่าสุดของ CID (มักเป็นเคสปัจจุบัน) — หาเคสอ้างอิงจริง
+    if vcare is None and person.id is not None:
+        fallback = await fetch_vcare_prior_case_detail(
+            session,
+            person.id,
+            exclude_applicant_id=applicant.id,
+        )
+        if fallback is not None:
+            prior_case, _audit = fallback
+            vcare = prior_ref_from_vcare_case(prior_case)
+
     if legacy is not None:
         legacy = await resolve_vcare_province_id(session, legacy)
     if welfare is not None:
@@ -436,15 +483,47 @@ async def load_applicant_for_audit_refresh(
     return await session.scalar(stmt)
 
 
+def prior_ref_from_vcare_case(prior_case: dict[str, Any]) -> PriorCaseRef:
+    ref_id = prior_case.get("ref_id", prior_case.get("applicant_id"))
+    if ref_id is not None:
+        try:
+            ref_id = int(ref_id)
+        except (TypeError, ValueError):
+            ref_id = None
+    province_id = prior_case.get("province_id")
+    if province_id is not None:
+        try:
+            province_id = int(province_id)
+        except (TypeError, ValueError):
+            province_id = None
+    return PriorCaseRef(
+        source="VCARE",
+        ref_id=ref_id,
+        province_id=province_id,
+        province_name=prior_case.get("province_name"),
+        bank_account_no=prior_case.get("bank_account_no"),
+    )
+
+
 async def fetch_vcare_prior_case_detail(
     session: AsyncSession,
     person_id: int,
-) -> dict[str, Any] | None:
-    """ข้อมูลเคส VCARE ล่าสุด — อ่าน applicant_submission_audit ถ้ามี."""
+    *,
+    exclude_applicant_id: int | None = None,
+) -> tuple[dict[str, Any], ApplicantSubmissionAudit | None] | None:
+    """ข้อมูล prior_case จากเคส VCARE ล่าสุด (คู่กับ audit row ถ้ามี).
+
+    ``exclude_applicant_id`` — ข้ามเคสปัจจุบันเมื่อ refresh audit หลังบันทึกหน้า 13
+    เพื่อให้ได้เคสอ้างอิงจริง (เช่น รายเดิม #13) แทนเคสที่กำลังยื่น (#14).
+
+    คืน ``(prior_case, audit_row)`` — ไม่ใส่ ``submission_audit`` ใน dict;
+    ให้ ``finalize_detail_submission_audit`` จัดการแทน
+    """
+    stmt = select(Applicant).where(Applicant.persons_id == person_id)
+    if exclude_applicant_id is not None:
+        stmt = stmt.where(Applicant.id != exclude_applicant_id)
     stmt = (
-        select(Applicant)
-        .where(Applicant.persons_id == person_id)
-        .order_by(Applicant.id.desc())
+        stmt.order_by(Applicant.id.desc())
         .limit(1)
         .options(
             selectinload(Applicant.submission_audit),
@@ -462,8 +541,8 @@ async def fetch_vcare_prior_case_detail(
 
     audit = applicant.submission_audit
     if audit is not None:
-        province_id = audit.submission_province_id
-        province_name = audit.submission_province_name
+        province_id = audit.existing_case_province_id or audit.submission_province_id
+        province_name = audit.existing_case_province_name or audit.submission_province_name
     else:
         province = resolve_submission_province_from_address_rows(list(applicant.addresses))
         province_id = province.province_id
@@ -476,10 +555,4 @@ async def fetch_vcare_prior_case_detail(
         "province_name": province_name,
         "bank_account_no": applicant.bank_account_no,
     }
-    detail: dict[str, Any] = {
-        "prior_case": prior_case,
-        "has_submission_audit": audit is not None,
-    }
-    if audit is not None:
-        detail["submission_audit"] = submission_audit_snapshot_from_row(audit)
-    return detail
+    return prior_case, audit

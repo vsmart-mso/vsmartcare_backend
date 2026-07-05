@@ -550,13 +550,6 @@ async def upsert_intake_ktb(
     if applicant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
 
-    audit = applicant.submission_audit
-    if audit is not None and not audit.require_ktb_corporate:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="ktb_not_required",
-        )
-
     handling = await _get_handling_or_404(session, applicant_id)
 
     # ตรวจว่าเลือก ktb_corporate จริง ๆ ก่อนบันทึกหน้า 20
@@ -804,12 +797,13 @@ async def update_case_diagnosis(
         row.owner_position = body.owner_position
     if body.owner_organization is not None:
         row.owner_organization = body.owner_organization
-    row.updated_at = datetime.utcnow()
 
     await session.commit()
 
     # expire_on_commit=False — ต้อง refresh ไม่งั้น edit_histories เป็นชุดเก่าใน identity map
-    await session.refresh(row, attribute_names=["edit_histories"])
+    # (updated_at ต้องรวมด้วย เพราะตั้งผ่าน onupdate=func.now() — ค้างเป็น SQL
+    # expression ที่ยังไม่ resolve ถ้าไม่ระบุ ทำให้ pydantic อ่านค่าแบบ sync ไม่ได้)
+    await session.refresh(row, attribute_names=["edit_histories", "updated_at"])
     return _diagnosis_read(row, body.actor_user_id)
 
 
