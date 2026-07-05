@@ -145,6 +145,29 @@ class WelfarePaymentUpdate(BaseModel):
     )
 
 
+class WelfarePaymentPartial(BaseModel):
+    """ฟิลด์ฝั่ง 037 หรือ 038 สำหรับบันทึกคู่ในครั้งเดียว (ไม่ส่ง is_037_or_038)."""
+
+    payment_number: str | None = Field(None, max_length=255)
+    payment_038_reason: str | None = Field(None, max_length=255)
+    transaction_date: date | None = None
+    effective_date: date | None = None
+
+
+class WelfarePaymentBatchUpdate(BaseModel):
+    """บันทึก 037 และ 038 ใน transaction เดียว — ใช้ upload_batch_id ร่วมกัน."""
+
+    upload_batch_id: UUID = Field(..., description="UUID ร่วมกันต่อการบันทึกครั้งเดียวใน modal")
+    user_sdshv: str | None = Field(None, max_length=255)
+    payment_037: WelfarePaymentPartial
+    payment_038: WelfarePaymentPartial
+
+
+class WelfarePaymentBatchRead(BaseModel):
+    payment_037: WelfarePaymentRead
+    payment_038: WelfarePaymentRead
+
+
 class FilePaymentBase(BaseModel):
     welfare_dda_ref_id: int
     welfare_payment_id: int | None = Field(
