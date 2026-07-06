@@ -71,7 +71,6 @@ from ...services.file_payment_upload import (
 from ...services.payment_round_metrics import (
     applicant_payment_metrics,
     load_payments_by_applicant_ids,
-    round_has_038_in_dda,
 )
 from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
@@ -99,6 +98,8 @@ from ...services.welfare_payment_flow import (
     apply_fields_on_active_dda,
     apply_payment_update_by_id,
     file_payment_owned_by_applicant,
+    is_payment_round_status_correction,
+    resolve_payment_round_target_status,
 )
 from ...settings import resolved_upload_root, settings
 from ...schemas.address import AddressRead
@@ -127,6 +128,8 @@ from ...schemas.payment import (
     WelfarePaymentInitialRead,
     WelfarePaymentRead,
     WelfarePaymentUpdate,
+    WelfarePaymentBatchUpdate,
+    WelfarePaymentBatchRead,
 )
 from ...schemas.case_for_staff import (
     CaseForStaffApplicantStaffFieldsRead,
@@ -584,39 +587,41 @@ def _welfare_payment_update_indicates_038(updates: dict) -> bool:
     return updates.get("is_037_or_038") is True
 
 
-async def _apply_037_status_if_needed(
+async def _apply_payment_status_if_needed(
     session: AsyncSession,
     applicant_id: int,
     payment: WelfarePayment,
     updates: dict,
 ) -> tuple[WelfareRequestStatus | None, CurrentStatus | None]:
-    """ตั้งสถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมี 038 ในรอบเดียวกัน."""
-    if payment.is_037_or_038 is not False:
+    """ตั้งสถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมีทั้ง 037 และ 038 ในรอบเดียวกัน."""
+    if payment.is_037_or_038 is None:
         return None, None
 
     latest_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
-    if latest_status_id in PAYMENT_EDIT_PRESERVE_STATUS_IDS:
-        return None, None
 
     batch_id = updates.get("upload_batch_id")
     if batch_id is None:
         batch_id = payment.upload_batch_id
 
-    has_038 = await round_has_038_in_dda(
+    target_status_id = await resolve_payment_round_target_status(
         session,
         applicant_id,
         payment.dda_ref_id,
         payment_id=payment.id,
         upload_batch_id=batch_id,
     )
-    if has_038:
-        target_status_id = CURRENT_STATUS_WITHDRAWING_APPROVED
-        remarks = "บันทึกผลจ่ายเงิน 037/038"
-    else:
-        target_status_id = CURRENT_STATUS_WITHDRAWING
-        remarks = "บันทึกผลจ่ายเงิน 037"
+    if target_status_id is None:
+        return None, None
 
-    if not is_status_advancement(latest_status_id, target_status_id):
+    is_correction = is_payment_round_status_correction(latest_status_id, target_status_id)
+
+    if latest_status_id in PAYMENT_EDIT_PRESERVE_STATUS_IDS and not is_correction:
+        return None, None
+
+    if latest_status_id == target_status_id:
+        return None, None
+
+    if not is_status_advancement(latest_status_id, target_status_id) and not is_correction:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="status_cannot_go_backward",
@@ -625,6 +630,12 @@ async def _apply_037_status_if_needed(
     status_row = await _get_row(session, CurrentStatus, target_status_id)
     if status_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+
+    remarks = (
+        "บันทึกผลจ่ายเงิน 037/038"
+        if target_status_id == CURRENT_STATUS_WITHDRAWING_APPROVED
+        else "บันทึกผลจ่ายเงิน 037"
+    )
 
     status_log = WelfareRequestStatus(
         applicant_id=applicant_id,
@@ -1273,7 +1284,7 @@ async def update_welfare_payment_for_staff(
     """บันทึก 037/038 ตามกฎรอบ DDA — คืนแถว welfare_payment ที่ถูกสร้างหรือแก้ (ใช้ id อัปโหลด PDF).
 
     038 ครั้งแรก: PATCH แถว is_037_or_038=null จาก bundle; ครั้งถัดไป: INSERT แถวใหม่
-    037: สถานะ 10 เมื่อรอบ 037-only; สถานะ 3 เมื่อมี 038 ในรอบเดียวกัน
+    037-only → สถานะ 10; 037+038 ในรอบเดียวกัน → สถานะ 3
     """
     updates = body.model_dump(exclude_unset=True)
     if not updates:
@@ -1288,8 +1299,8 @@ async def update_welfare_payment_for_staff(
 
     status_log: WelfareRequestStatus | None = None
     status_row: CurrentStatus | None = None
-    if _welfare_payment_update_indicates_037(updates):
-        status_log, status_row = await _apply_037_status_if_needed(
+    if _welfare_payment_update_indicates_037(updates) or _welfare_payment_update_indicates_038(updates):
+        status_log, status_row = await _apply_payment_status_if_needed(
             session,
             applicant_id,
             payment,
@@ -1309,6 +1320,59 @@ async def update_welfare_payment_for_staff(
         )
     await session.refresh(payment)
     return WelfarePaymentRead.model_validate(payment)
+
+
+@router.patch("/welfare-payment/batch", response_model=WelfarePaymentBatchRead)
+async def update_welfare_payment_batch_for_staff(
+    applicant_id: int = Query(..., ge=1, description="id จากตาราง applicants"),
+    body: WelfarePaymentBatchUpdate = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> WelfarePaymentBatchRead:
+    """บันทึก 037 และ 038 ใน transaction เดียว — สถานะ 3 เมื่อครบทั้งคู่ในรอบ."""
+    batch_id = body.upload_batch_id
+    user_sdshv = body.user_sdshv
+
+    updates_038 = body.payment_038.model_dump(exclude_unset=True)
+    updates_038["is_037_or_038"] = True
+    updates_038["upload_batch_id"] = batch_id
+    if user_sdshv is not None:
+        updates_038["user_sdshv"] = user_sdshv
+
+    payment_038 = await apply_038_update(session, applicant_id, updates_038)
+
+    updates_037 = body.payment_037.model_dump(exclude_unset=True)
+    updates_037["is_037_or_038"] = False
+    updates_037["upload_batch_id"] = batch_id
+    if user_sdshv is not None:
+        updates_037["user_sdshv"] = user_sdshv
+
+    payment_037 = await apply_037_update(session, applicant_id, updates_037)
+
+    status_updates = {"upload_batch_id": batch_id, "user_sdshv": user_sdshv}
+    status_log, status_row = await _apply_payment_status_if_needed(
+        session,
+        applicant_id,
+        payment_037,
+        status_updates,
+    )
+
+    await session.commit()
+    if status_log is not None and status_log.current_status_id == CURRENT_STATUS_WITHDRAWING:
+        await enqueue_status_email(
+            session,
+            applicant_id=applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            current_status_color=status_row.color if status_row else None,
+            remarks=status_log.remarks,
+            trigger=CitizenStatusEmailTrigger.PAYMENT_037_RECORDED,
+        )
+    await session.refresh(payment_037)
+    await session.refresh(payment_038)
+    return WelfarePaymentBatchRead(
+        payment_037=WelfarePaymentRead.model_validate(payment_037),
+        payment_038=WelfarePaymentRead.model_validate(payment_038),
+    )
 
 
 @router.patch(

@@ -223,6 +223,27 @@ async def round_has_038_in_dda(
     return round_has_038(matched)
 
 
+async def round_has_037_in_dda(
+    session: AsyncSession,
+    applicant_id: int,
+    dda_ref_id: int,
+    *,
+    payment_id: int | None = None,
+    upload_batch_id: UUID | None = None,
+) -> bool:
+    """มี 037 ในรอบเดียวกับแถว 038 ที่กำลังบันทึกหรือไม่."""
+    rows = await load_payments_for_dda(session, applicant_id, dda_ref_id)
+    rounds = group_payment_rounds(payment_rows_for_rounds(rows))
+    matched = _find_round(
+        rounds,
+        payment_id=payment_id,
+        upload_batch_id=upload_batch_id,
+    )
+    if matched is None:
+        return False
+    return round_has_037(matched)
+
+
 async def is_dda_closed_for_038(
     session: AsyncSession,
     applicant_id: int,

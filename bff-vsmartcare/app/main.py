@@ -615,6 +615,20 @@ class WelfarePaymentUpdateBody(BaseModel):
     )
 
 
+class WelfarePaymentPartialBody(BaseModel):
+    payment_number: Optional[str] = Field(None, max_length=255)
+    payment_038_reason: Optional[str] = Field(None, max_length=255)
+    transaction_date: Optional[date] = None
+    effective_date: Optional[date] = None
+
+
+class WelfarePaymentBatchUpdateBody(BaseModel):
+    upload_batch_id: UUID
+    user_sdshv: Optional[str] = Field(None, max_length=255)
+    payment_037: WelfarePaymentPartialBody
+    payment_038: WelfarePaymentPartialBody
+
+
 class WelfareReviewCommentCreateBody(BaseModel):
     review_field_id: int = Field(..., ge=1)
     reason: str = Field(..., min_length=1)
@@ -1004,7 +1018,7 @@ async def list_cases_for_staff_finance_with_dda_ref(
     description=(
         "ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment?applicant_id=…` — 038 ครั้งแรก PATCH แถว null, "
         "038 ครั้งถัดไป INSERT แถวใหม่; 037 ครั้งเดียวต่อรอบ DDA; คืน id สำหรับอัปโหลด PDF; "
-        "ถ้า is_037_or_038=false (037) case-service จะบันทึก welfare_request_status เป็น current_status_id=10"
+        "037-only → current_status_id=10; 037+038 ในรอบเดียวกัน → current_status_id=3"
     ),
 )
 async def update_welfare_payment_for_staff(
@@ -1015,6 +1029,28 @@ async def update_welfare_payment_for_staff(
     payload = body.model_dump(exclude_unset=True, mode="json")
     return await _patch(
         f"{base}/v1/case_for_staff/welfare-payment?applicant_id={applicant_id}",
+        json=payload,
+    )
+
+
+@router.patch(
+    "/v1/case_for_staff/welfare-payment/batch",
+    tags=["case_for_staff"],
+    summary="บันทึก welfare_payment 037+038 ในครั้งเดียว",
+    description=(
+        "ส่งต่อ `PATCH …/v1/case_for_staff/welfare-payment/batch?applicant_id=…` — "
+        "บันทึก 037 และ 038 ใน transaction เดียวด้วย upload_batch_id ร่วมกัน; "
+        "สถานะคำร้องเป็น current_status_id=3 (อยู่ระหว่างการเบิก)"
+    ),
+)
+async def update_welfare_payment_batch_for_staff(
+    applicant_id: int = Query(..., ge=1),
+    body: WelfarePaymentBatchUpdateBody = Body(...),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_unset=True, mode="json")
+    return await _patch(
+        f"{base}/v1/case_for_staff/welfare-payment/batch?applicant_id={applicant_id}",
         json=payload,
     )
 

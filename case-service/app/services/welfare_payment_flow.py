@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..constants.current_status import (
+    CURRENT_STATUS_WITHDRAWING,
+    CURRENT_STATUS_WITHDRAWING_APPROVED,
+)
 from ..models.payment import FilePayment, WelfarePayment
 from .payment_round_metrics import (
     _find_round,
@@ -13,12 +19,49 @@ from .payment_round_metrics import (
     is_dda_closed_for_038,
     load_payments_for_dda,
     payment_rows_for_rounds,
+    round_has_037,
+    round_has_038,
     rows_in_round,
 )
 
 PAYMENT_CYCLE_CLOSED = "payment_cycle_closed"
 ATTACHMENT_PDF_037_ID = 9
 ATTACHMENT_PDF_038_ID = 10
+
+
+def is_payment_round_status_correction(current_status_id: int | None, target_status_id: int) -> bool:
+    """อนุญาต 10→3 เมื่อรอบครบทั้ง 037+038 (ไม่นับเป็น workflow rollback ทั่วไป)."""
+    return (
+        current_status_id == CURRENT_STATUS_WITHDRAWING
+        and target_status_id == CURRENT_STATUS_WITHDRAWING_APPROVED
+    )
+
+
+async def resolve_payment_round_target_status(
+    session: AsyncSession,
+    applicant_id: int,
+    dda_ref_id: int,
+    *,
+    payment_id: int | None = None,
+    upload_batch_id: UUID | None = None,
+) -> int | None:
+    """คืน 3 (037+038), 10 (037-only), หรือ None (038-only — รอ 037)."""
+    rows = await load_payments_for_dda(session, applicant_id, dda_ref_id)
+    rounds = group_payment_rounds(payment_rows_for_rounds(rows))
+    matched = _find_round(
+        rounds,
+        payment_id=payment_id,
+        upload_batch_id=upload_batch_id,
+    )
+    if matched is None:
+        return None
+    has_037 = round_has_037(matched)
+    has_038 = round_has_038(matched)
+    if has_037 and has_038:
+        return CURRENT_STATUS_WITHDRAWING_APPROVED
+    if has_037:
+        return CURRENT_STATUS_WITHDRAWING
+    return None
 
 
 async def resolve_active_dda_ref_id(session: AsyncSession, applicant_id: int) -> int:
