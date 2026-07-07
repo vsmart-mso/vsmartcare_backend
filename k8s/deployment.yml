@@ -20,6 +20,7 @@ spec:
       containers:
         - name: vcare-bff
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-bff-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
@@ -55,6 +56,7 @@ spec:
       containers:
         - name: vcare-case-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-case-service-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
@@ -101,6 +103,7 @@ spec:
       containers:
         - name: vcare-notification-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-notification-service-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
@@ -136,6 +139,7 @@ spec:
       containers:
         - name: vcare-ocr-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-ocr-service-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
@@ -171,6 +175,7 @@ spec:
       containers:
         - name: vcare-thaid-auth-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-thaid-auth-service-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
@@ -206,6 +211,7 @@ spec:
       containers:
         - name: vcare-dashboard-service
           image: registry-vs.m-society.go.th/kitsune-cop/vcare-backend:vcare-dashboard-service-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
