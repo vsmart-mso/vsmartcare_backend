@@ -47,6 +47,12 @@ class Person(Base):
         nullable=True,
         index=True,
     )
+    province_id: Mapped[int | None] = mapped_column(
+        ForeignKey("province.id"),
+        nullable=True,
+        index=True,
+        comment="จังหวัดที่ resolve จากที่อยู่ ThaiD ตอน login (TASK-v-care-12062026-01) — ใช้เป็น submit gate",
+    )
     gender: Mapped[str | None] = mapped_column(String(50))
     adr_moo: Mapped[str | None] = mapped_column(String(50))
     adr_house_num: Mapped[str | None] = mapped_column(String(100))

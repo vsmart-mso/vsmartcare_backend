@@ -88,6 +88,25 @@ def get_mock_provinces_from_seed() -> set[str]:
     return provinces
 
 
+def find_mock_address_by_province(province_name: str) -> _AddressTemplate | None:
+    """หาที่อยู่ตัวอย่างจาก seed ที่ตรงกับชื่อจังหวัด — ใช้ตอนเลือกจังหวัดสำหรับทดสอบ province gate
+    (TASK-v-care-12062026-01) เทียบชื่อแบบ exact match กับฟิลด์ `province` ใน seed
+    """
+    name = (province_name or "").strip()
+    if not name:
+        return None
+    for row in load_mock_seed().get("addresses") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("province") or "").strip() != name:
+            continue
+        address = str(row.get("address") or "").strip()
+        postcode = str(row.get("address_postcode") or "").strip()
+        if address and postcode:
+            return {"address": address, "address_postcode": postcode}
+    return None
+
+
 def _cid_prefix() -> str:
     raw = str(load_mock_seed().get("cid_prefix") or "99").strip()
     digits = re.sub(r"\D", "", raw)
@@ -291,8 +310,12 @@ def _address_from_fixture_index(index: int) -> _AddressTemplate:
     return addresses[index]
 
 
-def generate_fixed_mock_profile() -> Dict[str, str]:
-    """โปรไฟล์คงที่จาก ocr_fixture — สุ่มเฉพาะ pid (checksum ถูก)."""
+def generate_fixed_mock_profile(address_override: _AddressTemplate | None = None) -> Dict[str, str]:
+    """โปรไฟล์คงที่จาก ocr_fixture — สุ่มเฉพาะ pid (checksum ถูก)
+
+    address_override: ใช้แทนที่อยู่ default จาก ocr_fixture — สำหรับเลือกจังหวัดเองตอนทดสอบ
+    province gate (TASK-v-care-12062026-01) ผ่าน `mock_province` ใน LoginStartBody
+    """
     fixture = get_ocr_fixture()
     gender = str(fixture.get("gender") or "M").strip() or "M"
     title_th = str(fixture.get("title_th") or "").strip() or random.choice(_titles(gender))
@@ -301,8 +324,11 @@ def generate_fixed_mock_profile() -> Dict[str, str]:
     if not given_name or not family_name:
         raise ValueError("mock_profile_seed.json: ocr_fixture given_name and family_name required")
 
-    address_index = int(fixture.get("address_index", 0))
-    addr_tpl = _address_from_fixture_index(address_index)
+    if address_override is not None:
+        addr_tpl = address_override
+    else:
+        address_index = int(fixture.get("address_index", 0))
+        addr_tpl = _address_from_fixture_index(address_index)
 
     birthdate_raw = str(fixture.get("birthdate") or "").strip()
     if birthdate_raw:
