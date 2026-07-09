@@ -2636,6 +2636,13 @@ class ThaidLoginBody(BaseModel):
         default=None,
         description="ฐาน URL ที่เบราว์เซอร์เรียก BFF ได้ เช่น http://localhost:8000 — ใช้ประกอบลิงก์ mock ThaiD",
     )
+    mock_province: Optional[str] = Field(
+        default=None,
+        description=(
+            "เฉพาะ mock OIDC (dev) — เลือกที่อยู่จำลองตามชื่อจังหวัดเพื่อทดสอบ province gate "
+            "(TASK-v-care-12062026-01) ส่งต่อไป thaid-auth-service ตรง ๆ"
+        ),
+    )
 
 
 @router.post(
@@ -2704,6 +2711,7 @@ async def post_staff_digest(body: StaffDigestRequest) -> StaffDigestDispatchResu
 async def thaid_login_redirect(
     post_login_redirect: Optional[str] = None,
     browser_oauth_base: Optional[str] = None,
+    mock_province: Optional[str] = None,
 ):
     """
     รับ query params แล้วโยงต่อ GET /v1/auth/thaid/login ของ thaid-auth-service
@@ -2721,6 +2729,8 @@ async def thaid_login_redirect(
         params["post_login_redirect"] = post_login_redirect
     if browser_oauth_base:
         params["browser_oauth_base"] = browser_oauth_base
+    if mock_province:
+        params["mock_province"] = mock_province
 
     url = f"{base}/v1/auth/thaid/login"
     if params:
@@ -2872,6 +2882,20 @@ async def thaid_login_status(state: str):
 
     enc = quote(state, safe="")
     return await _get(f"{settings.thaid_auth_service_url}/v1/auth/thaid/status?state={enc}")
+
+
+@router.get(
+    "/v1/auth/thaid/mock/provinces",
+    tags=["auth"],
+    summary="รายชื่อจังหวัด mock สำหรับทดสอบ province gate (dev เท่านั้น)",
+    description=(
+        "ส่งต่อไปยัง thaid-auth-service `GET /v1/auth/thaid/mock/provinces` — "
+        "404 เมื่อ thaid-auth-service ไม่ได้อยู่โหมด mock OIDC (TASK-v-care-12062026-01)"
+    ),
+)
+async def thaid_mock_provinces():
+    """รายชื่อจังหวัดที่มีที่อยู่ตัวอย่างใน mock_profile_seed.json — ใช้ทำ dropdown เลือกจังหวัดฝั่ง FE."""
+    return await _get(f"{settings.thaid_auth_service_url}/v1/auth/thaid/mock/provinces")
 
 
 @router.get(
