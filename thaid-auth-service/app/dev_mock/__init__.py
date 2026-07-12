@@ -3,6 +3,7 @@
 from .profile import (
     describe_birthdate_scenario,
     estimate_age_years,
+    find_mock_address_by_province,
     generate_fixed_mock_profile,
     generate_mock_profile,
     generate_mock_thai_cid,
@@ -20,6 +21,7 @@ from .profile import (
 __all__ = [
     "describe_birthdate_scenario",
     "estimate_age_years",
+    "find_mock_address_by_province",
     "generate_fixed_mock_profile",
     "generate_mock_profile",
     "generate_mock_thai_cid",

@@ -18,12 +18,15 @@ from . import db
 from .db import configure_database, shutdown_database
 from .person_persist import (
     _normalize_cid,
-    get_province_access_status,
+    get_province_access_status_by_id,
     persist_new_person_if_absent,
+    resolve_province_id_from_address_standalone,
 )
 from .dev_mock.profile import (
+    find_mock_address_by_province,
     generate_fixed_mock_profile,
     generate_mock_profile,
+    get_mock_provinces_from_seed,
     mock_profile_preview_fields,
     strip_internal_profile_keys,
 )
@@ -139,6 +142,15 @@ class LoginStartBody(BaseModel):
             "— ใช้ประกอบลิงก์ mock/continue แทน hostname ภายใน Docker (thaid-auth-service)"
         ),
     )
+    mock_province: Optional[str] = Field(
+        default=None,
+        description=(
+            "เฉพาะ mock OIDC (dev) — เลือกที่อยู่จำลองตามชื่อจังหวัดแทนค่า default จาก ocr_fixture "
+            "เพื่อทดสอบ province gate (TASK-v-care-12062026-01) เช่น 'กรุงเทพมหานคร' "
+            "ต้องตรงกับฟิลด์ province ใน mock_profile_seed.json เป๊ะ (ดูรายชื่อได้จาก "
+            "GET /v1/auth/thaid/mock/provinces) — ไม่ตรง/ไม่ระบุ → ใช้ที่อยู่ default ตามปกติ"
+        ),
+    )
 
 
 class MockProfilePreview(BaseModel):
@@ -177,6 +189,7 @@ _sessions: Dict[str, Dict[str, str]] = {}
 def _register_state(
     post_login_redirect: Optional[str],
     browser_oauth_base: Optional[str] = None,
+    mock_province: Optional[str] = None,
 ) -> str:
     state = str(uuid4())
     rec: Dict[str, Any] = {
@@ -185,10 +198,16 @@ def _register_state(
         "browser_oauth_base": (browser_oauth_base or "").strip() or None,
     }
     if _use_mock_oidc():
-        mode = (settings.thaid_mock_profile_mode or "fixed").strip().lower()
-        rec["mock_profile"] = (
-            generate_mock_profile() if mode == "random" else generate_fixed_mock_profile()
-        )
+        # เลือกที่อยู่ตามจังหวัดที่ระบุ (TASK-v-care-12062026-01) — ใช้ทดสอบ province gate
+        # ด้วยที่อยู่จริงตามรูปแบบ ThaiD แทนที่อยู่ default จาก ocr_fixture
+        addr_override = find_mock_address_by_province(mock_province) if mock_province else None
+        if addr_override is not None:
+            rec["mock_profile"] = generate_fixed_mock_profile(address_override=addr_override)
+        else:
+            mode = (settings.thaid_mock_profile_mode or "fixed").strip().lower()
+            rec["mock_profile"] = (
+                generate_mock_profile() if mode == "random" else generate_fixed_mock_profile()
+            )
     _states[state] = rec
     return state
 
@@ -252,13 +271,23 @@ def mock_thaid_continue(request: Request, state: str):
     return RedirectResponse(url=loc, status_code=302)
 
 
+@app.get("/v1/auth/thaid/mock/provinces")
+def list_mock_provinces():
+    """รายชื่อจังหวัดที่มีที่อยู่ตัวอย่างใน mock_profile_seed.json — ใช้ทำ dropdown เลือกจังหวัด
+    ตอนทดสอบ province gate (TASK-v-care-12062026-01) ผ่าน `mock_province` (mock OIDC เท่านั้น)
+    """
+    if not _use_mock_oidc():
+        raise HTTPException(status_code=404, detail="mock_only")
+    return {"provinces": sorted(get_mock_provinces_from_seed())}
+
+
 @app.post("/v1/auth/thaid/login", response_model=LoginStartResponse)
 async def start_login_post(request: Request, body: LoginStartBody = LoginStartBody()):
     """
     เริ่ม OAuth ThaiD: คืน `authorization_url` + `state` ให้หน้าเว็บเปิด/redirect ต่อ
     (รูปแบบ SPA / mobile in-app browser).
     """
-    state = _register_state(body.post_login_redirect, body.browser_oauth_base)
+    state = _register_state(body.post_login_redirect, body.browser_oauth_base, body.mock_province)
     if _use_mock_oidc():
         authorization_url = _mock_continue_url(request, state)
         return LoginStartResponse(
@@ -292,6 +321,7 @@ async def start_login_get(
     request: Request,
     post_login_redirect: Optional[str] = None,
     browser_oauth_base: Optional[str] = None,
+    mock_province: Optional[str] = None,
 ):
     """
     เบราว์เซอร์กดลิงก์ตรง: redirect 302 ไปหน้า authorize ของ ThaiD ทันที
@@ -300,6 +330,7 @@ async def start_login_get(
     body = LoginStartBody(
         post_login_redirect=post_login_redirect,
         browser_oauth_base=browser_oauth_base,
+        mock_province=mock_province,
     )
     out = await start_login_post(request, body)
     return RedirectResponse(url=out.authorization_url, status_code=302)
@@ -408,23 +439,29 @@ async def _persist_person_safe(profile: Dict[str, str]) -> None:
 class ProvinceNotEnabledError(Exception):
     """จังหวัดของผู้ใช้ยังไม่เปิดให้บริการ (TASK-v-care-12062026-01)."""
 
-    def __init__(self, province: str) -> None:
-        self.province = province
-        super().__init__(province)
+    def __init__(self, province_id: Optional[int]) -> None:
+        self.province_id = province_id
+        super().__init__(str(province_id))
 
 
 async def _check_province_access_or_raise(profile: Dict[str, str]) -> None:
-    """ตรวจสิทธิ์จังหวัดจากที่อยู่ ThaiD — ปิด → raise ProvinceNotEnabledError.
+    """ตรวจสิทธิ์จังหวัดจากที่อยู่ ThaiD (TASK-v-care-12062026-01) — ปิด → raise ProvinceNotEnabledError.
 
-    address ว่าง / parse จังหวัดไม่ได้ (เช่น mock) → ผ่าน (ไม่ block dev).
+    ใช้ resolve_province_id_from_address_standalone เดียวกับที่ persist_new_person_if_absent ใช้เก็บ
+    persons.province_id เพื่อให้ gate ตอน login กับ gate ตอน submit (case-service::
+    is_province_enabled_by_person_id) อ่านค่าจังหวัดที่คำนวณจากวิธีเดียวกันเป๊ะ ไม่มีทาง drift กันอีก
+    (เดิมสองฝั่งพาร์สที่อยู่คนละแบบ ทำให้ user บางจังหวัด เช่น กรุงเทพฯ/ชลบุรี(เมืองพัทยา)/นราธิวาส
+    login ผ่านแต่โดนบล็อกตอน submit)
+
+    address ว่าง / resolve จังหวัดไม่ได้ (เช่น mock) → ผ่าน (fail-open, ไม่ block dev).
     """
-    parts = ThaID.parse_thai_address_geo(profile.get("address") or "")
-    province = (parts.get("province") or "").strip()
-    if not province:
+    address = (profile.get("address") or "").strip()
+    if not address:
         return
-    if not await get_province_access_status(province):
-        logger.info("province_access_denied: province=%r", province)
-        raise ProvinceNotEnabledError(province)
+    province_id = await resolve_province_id_from_address_standalone(address)
+    if not await get_province_access_status_by_id(province_id):
+        logger.info("province_access_denied: province_id=%r", province_id)
+        raise ProvinceNotEnabledError(province_id)
 
 
 _THAID_PROVINCE_BLOCKED_HTML = """<!DOCTYPE html>
