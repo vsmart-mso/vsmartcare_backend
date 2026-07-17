@@ -86,6 +86,11 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
     time_count_process: int | None = Field(None, ge=0)
     province_id: int
     province_name: str = Field(..., min_length=1, max_length=255)
+    current_address_province_id: int | None = Field(
+        None,
+        description="จังหวัดที่อยู่ปัจจุบันของเคส ใช้ตัดสิน DWF visibility",
+    )
+    current_address_province_name: str | None = Field(None, max_length=255)
     district_id: int
     district_name: str = Field(..., min_length=1, max_length=255)
     subdistrict_id: int
@@ -146,6 +151,10 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         None,
         ge=1,
         description="Division.id จาก vSmart (case_handling.responsible_division_id)",
+    )
+    responsible_division_name: str | None = Field(
+        None,
+        description="ชื่อหน่วยงานรับผิดชอบจาก drpod_dwf.json สำหรับแสดงผลเท่านั้น",
     )
 
 
