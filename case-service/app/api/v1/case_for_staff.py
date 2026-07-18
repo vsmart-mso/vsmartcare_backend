@@ -810,10 +810,25 @@ async def list_cases_for_staff(
                 else_=False,
             ).label("has_return_edit_resubmitted"),
             case(
-                (active_pmj_reject_sq.c.applicant_id.is_not(None), True),
+                (
+                    and_(
+                        active_pmj_reject_sq.c.applicant_id.is_not(None),
+                        ~is_approved,
+                    ),
+                    True,
+                ),
                 else_=False,
             ).label("is_pmj_rejected"),
-            active_pmj_reject_sq.c.pmj_reject_reason.label("pmj_reject_reason"),
+            case(
+                (
+                    and_(
+                        active_pmj_reject_sq.c.applicant_id.is_not(None),
+                        ~is_approved,
+                    ),
+                    active_pmj_reject_sq.c.pmj_reject_reason,
+                ),
+                else_=None,
+            ).label("pmj_reject_reason"),
             ApplicantSubmissionAudit.require_ktb_corporate.label("require_ktb_corporate"),
             ApplicantSubmissionAudit.require_ktb_reason.label("require_ktb_reason"),
             ApplicantSubmissionAudit.existing_case_source.label("existing_case_source"),
