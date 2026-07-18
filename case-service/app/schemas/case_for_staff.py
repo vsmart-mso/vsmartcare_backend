@@ -123,11 +123,17 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
     )
     is_pmj_rejected: bool = Field(
         False,
-        description="true เมื่อ applicant มี active PMJ reject (approve_status=false และ reject_resolved_at ยังว่าง)",
+        description=(
+            "true เมื่อมี active PMJ reject (approve_status=false และ reject_resolved_at ยังว่าง) "
+            "และยังไม่มีแถว approve_status=true"
+        ),
     )
     pmj_reject_reason: str | None = Field(
         None,
-        description="เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก active PMJ reject",
+        description=(
+            "เหตุผลล่าสุดที่ พมจ. ไม่อนุมัติ จาก active PMJ reject "
+            "(null เมื่อไม่มี active reject หรือมีอนุมัติแล้ว)"
+        ),
     )
     prior_self_submit_case_numbers: list[str] = Field(
         default_factory=list,
