@@ -106,6 +106,10 @@ async def record_approve_case_with_status(
     )
     session.add(status_log)
     await session.flush()
+    await resolve_active_pmj_rejects_for_applicant(
+        session,
+        applicant_id=applicant_id,
+    )
     return row, status_log, current_status
 
 
