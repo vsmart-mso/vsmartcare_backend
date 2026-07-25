@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+CitizenConfirmationType = Literal["unchanged_ok", "edited"]
 
 
 class ReviewFieldRead(BaseModel):
@@ -56,3 +60,16 @@ class WelfareEditRequestCommentRead(BaseModel):
     label: str
     step: int
     reason: str
+
+
+class FieldConfirmationItem(BaseModel):
+    """การยืนยันต่อฟิลด์จากประชาชนตอน resubmit (TASK_211)."""
+
+    review_field_id: int = Field(..., ge=1)
+    confirmation_type: CitizenConfirmationType
+
+
+class WelfareCaseResubmitBody(BaseModel):
+    """Body ของ POST /v1/cases/{id}/resubmit เมื่อสถานะเป็น 8."""
+
+    field_confirmations: list[FieldConfirmationItem] = Field(..., min_length=1)

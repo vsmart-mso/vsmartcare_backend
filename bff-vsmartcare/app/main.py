@@ -1827,19 +1827,46 @@ async def update_case(
     summary="ยืนยันคำร้องหลังแก้ไขข้อมูลที่ถูกตีกลับ",
     description=(
         "ส่งต่อ `POST …/v1/cases/{applicant_id}/resubmit` ใน case-service — "
-        "reset สถานะกลับเป็น 'รอรับเรื่อง' หลังประชาชนแก้ไขข้อมูลที่ถูกตีกลับเสร็จแล้ว"
+        "รับ `field_confirmations` จากประชาชน (TASK_211) แล้ว reset สถานะกลับเป็น 'รอรับเรื่อง'"
     ),
 )
 async def resubmit_case(
     applicant_id: int,
+    request: Request,
     authorization: str = Depends(require_citizen_bearer),
 ) -> Any:
+    # Forward body ตามที่ FE ส่ง — ว่างได้เมื่อ idempotent retry (status เป็น 1 แล้ว)
+    raw = await request.body()
+    body: Dict[str, Any] = {}
+    if raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                body = parsed
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="invalid_json_body") from exc
+
     base = settings.case_service_url.rstrip("/")
-    return await _post(
-        f"{base}/v1/cases/{applicant_id}/resubmit",
-        json={},
-        headers=_forward_auth_headers(authorization),
-    )
+    # ส่ง body ที่มี field_confirmations; ถ้าว่างให้ POST โดยไม่บังคับ schema ที่ BFF
+    if body:
+        return await _post(
+            f"{base}/v1/cases/{applicant_id}/resubmit",
+            json=body,
+            headers=_forward_auth_headers(authorization),
+        )
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            f"{base}/v1/cases/{applicant_id}/resubmit",
+            headers=merge_forward_headers(_forward_auth_headers(authorization)),
+        )
+        if r.status_code >= 400:
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=_http_error_detail_from_response(r),
+            )
+        return r.json()
+
 
 
 @router.patch(
