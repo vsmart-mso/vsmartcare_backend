@@ -92,6 +92,7 @@ class TestComputeKtbRequirement(unittest.TestCase):
             "province_id": 65,
             "province_name": "พิษณุโลก",
             "bank_account_no": "8570826060",
+            "payment_method_id": 4,
         })
         result = compute_ktb_requirement(
             is_existing_case=True,
@@ -102,6 +103,131 @@ class TestComputeKtbRequirement(unittest.TestCase):
         self.assertFalse(result["require_ktb_corporate"])
         self.assertEqual(result["require_ktb_reason"], "NONE")
         self.assertEqual(result["existing_case_ref_id"], 13)
+
+    def test_current_cash_same_province_skips_account_compare(self) -> None:
+        """เงินสดจังหวัดเดิม — ไม่เทียบบัญชี ไม่บังคับ KTB."""
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "8570826060",
+            "payment_method_id": 4,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(65, "พิษณุโลก"),
+            submission_bank_account_no="",
+            submission_payment_method_id=1,
+        )
+        self.assertFalse(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "NONE")
+        self.assertFalse(result["is_account_changed"])
+
+    def test_current_cash_province_changed_requires_as_new_case(self) -> None:
+        """เงินสดเปลี่ยนจังหวัด → รายใหม่ บังคับ KTB (ไม่เทียบบัญชี)."""
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "8570826060",
+            "payment_method_id": 4,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(99, "อื่น"),
+            submission_bank_account_no="999",
+            submission_payment_method_id=1,
+        )
+        self.assertTrue(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "NEW_CASE")
+        self.assertFalse(result["is_account_changed"])
+
+    def test_prior_cash_same_province_no_account_compare(self) -> None:
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "",
+            "payment_method_id": 1,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(65, "พิษณุโลก"),
+            submission_bank_account_no="999",
+        )
+        self.assertFalse(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "NONE")
+
+    def test_prior_cash_province_changed_requires(self) -> None:
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "",
+            "payment_method_id": 1,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(99, "อื่น"),
+            submission_bank_account_no="999",
+        )
+        self.assertTrue(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "PROVINCE_CHANGED")
+
+    def test_prior_transfer_empty_submission_account_requires(self) -> None:
+        """เคสเดิมโอนมีบัญชี แต่เคสใหม่ยังไม่กรอก — ต้องเทียบ จึงบังคับจนกว่าจะกรอก."""
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "8570826060",
+            "payment_method_id": 4,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(65, "พิษณุโลก"),
+            submission_bank_account_no="",
+        )
+        self.assertTrue(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "ACCOUNT_CHANGED")
+
+    def test_prior_transfer_inferred_from_account_compares(self) -> None:
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "8570826060",
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(65, "พิษณุโลก"),
+            submission_bank_account_no="8570826060",
+        )
+        self.assertFalse(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "NONE")
+
+    def test_different_accounts_same_province_requires(self) -> None:
+        prior = prior_ref_from_vcare_case({
+            "ref_id": 13,
+            "province_id": 65,
+            "province_name": "พิษณุโลก",
+            "bank_account_no": "1111111111",
+            "payment_method_id": 4,
+        })
+        result = compute_ktb_requirement(
+            is_existing_case=True,
+            prior=prior,
+            submission=ProvinceRef(65, "พิษณุโลก"),
+            submission_bank_account_no="2222222222",
+        )
+        self.assertTrue(result["require_ktb_corporate"])
+        self.assertEqual(result["require_ktb_reason"], "ACCOUNT_CHANGED")
 
 
 class TestFetchVcarePriorCaseDetail(unittest.IsolatedAsyncioTestCase):

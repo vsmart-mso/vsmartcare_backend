@@ -33,7 +33,7 @@ from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyC
 from ...models.economic import HouseholdMember
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
-from ...models.intake import CaseHandling, CaseRegulationChoice
+from ...models.intake import CaseHandling, CasePayment, CaseRegulationChoice
 from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from ...models.welfare import WelfareEvidence
@@ -43,6 +43,7 @@ from ...services.process_sla import (
     maybe_freeze_process_sla_for_status,
     process_sla_fields_dict,
 )
+from ...constants.attachment_types import CASH_DISBURSEMENT_PROOF_TYPE_IDS
 from ...constants.current_status import (
     CURRENT_STATUS_EDIT_REQUESTED,
     CURRENT_STATUS_PENDING_INTAKE,
@@ -53,7 +54,14 @@ from ...constants.current_status import (
     PAYMENT_EDIT_PRESERVE_STATUS_IDS,
     STAFF_CASE_SECTION_EDIT_STATUS_IDS,
 )
+from ...constants.payment_method import is_cash_or_cheque
 from ...services.case_update import apply_case_update
+from ...services.cash_disbursement import (
+    assert_cash_payment_037_038_update_allowed,
+    cash_disbursement_target_status,
+    load_cash_proof_files_for_dda,
+    normalize_payment_number,
+)
 from ...services.staff_edit_audit import (
     EVENT_TYPE_SECTION_EDIT,
     EVENT_TYPE_SURVEY_EDIT,
@@ -816,6 +824,115 @@ def _merge_payment_metrics_into_rows(
     return merged
 
 
+def _merge_cash_disbursement_flags_into_rows(
+    rows: list[dict],
+    *,
+    cash_metrics_by_applicant: dict[int, dict],
+) -> list[dict]:
+    """เติม flags เงินสด — Django ต้องไม่ใช้ count_037 เป็น incomplete ของเคสเงินสด."""
+    for data in rows:
+        applicant_id = data.get("applicant_id")
+        method_id = data.get("payment_method_id")
+        metrics = cash_metrics_by_applicant.get(int(applicant_id), {}) if applicant_id is not None else {}
+        is_cash = bool(metrics.get("is_cash_payment")) or is_cash_or_cheque(method_id)
+        data["payment_method_id"] = metrics.get("payment_method_id", method_id)
+        data["is_cash_payment"] = is_cash
+        data["count_cash_proof"] = int(metrics.get("count_cash_proof") or 0)
+        data["has_disbursement_proof"] = bool(metrics.get("has_disbursement_proof"))
+        data["disbursement_payment_number"] = metrics.get("disbursement_payment_number")
+        data["is_cash_disbursement_complete"] = bool(metrics.get("is_cash_disbursement_complete"))
+        if not is_cash:
+            data.setdefault("count_cash_proof", 0)
+            data.setdefault("has_disbursement_proof", False)
+            data.setdefault("disbursement_payment_number", None)
+            data.setdefault("is_cash_disbursement_complete", False)
+    return rows
+
+
+async def _load_cash_metrics_by_applicant_ids(
+    session: AsyncSession,
+    applicant_ids: list[int],
+    payment_method_by_applicant: dict[int, int | None],
+) -> dict[int, dict]:
+    from ...services.cash_disbursement import cash_disbursement_metrics_for_applicant
+
+    result: dict[int, dict] = {}
+    for applicant_id in applicant_ids:
+        result[applicant_id] = await cash_disbursement_metrics_for_applicant(
+            session,
+            applicant_id,
+            payment_method_id=payment_method_by_applicant.get(applicant_id),
+        )
+    return result
+
+
+async def _apply_cash_disbursement_status_if_needed(
+    session: AsyncSession,
+    applicant_id: int,
+    payment: WelfarePayment,
+    *,
+    user_sdshv: str | None = None,
+) -> tuple[WelfareRequestStatus | None, CurrentStatus | None]:
+    """เงินสด/เช็ค: สถานะ 10 เมื่อมีเลขที่ขอเบิก + หลักฐานอย่างน้อย 1 ไฟล์."""
+    method_id = await session.scalar(
+        select(CasePayment.payment_method_id)
+        .join(CaseHandling, CaseHandling.id == CasePayment.case_handling_id)
+        .where(CaseHandling.applicant_id == applicant_id)
+        .limit(1),
+    )
+    if not is_cash_or_cheque(method_id):
+        return None, None
+
+    proof_rows = await load_cash_proof_files_for_dda(session, applicant_id, payment.dda_ref_id)
+    payment_number = normalize_payment_number(payment.payment_number)
+    if payment_number is None:
+        payment_number = normalize_payment_number(
+            await session.scalar(
+                select(WelfarePayment.payment_number)
+                .where(
+                    WelfarePayment.applicant_id == applicant_id,
+                    WelfarePayment.dda_ref_id == payment.dda_ref_id,
+                    WelfarePayment.payment_number.is_not(None),
+                )
+                .order_by(WelfarePayment.id.desc())
+                .limit(1),
+            )
+        )
+    target_status_id = cash_disbursement_target_status(
+        payment_number=payment_number,
+        file_rows=proof_rows,
+    )
+    if target_status_id is None:
+        return None, None
+
+    latest_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
+    if latest_status_id in PAYMENT_EDIT_PRESERVE_STATUS_IDS:
+        return None, None
+    if latest_status_id == target_status_id:
+        return None, None
+    if not is_status_advancement(latest_status_id, target_status_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="status_cannot_go_backward",
+        )
+
+    status_row = await _get_row(session, CurrentStatus, target_status_id)
+    if status_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+
+    status_log = WelfareRequestStatus(
+        applicant_id=applicant_id,
+        current_status_id=target_status_id,
+        remarks="บันทึกเลขที่ขอเบิกและหลักฐานเบิกจ่ายเงินสด",
+        update_by_sdshv=user_sdshv,
+    )
+    session.add(status_log)
+    applicant = await session.get(Applicant, applicant_id)
+    if applicant is not None:
+        maybe_freeze_process_sla_for_status(applicant, target_status_id)
+    return status_log, status_row
+
+
 def _applicant_have_dda_ref_exists():
     """มีแถว welfare_payment ที่ผูก welfare_dda_ref สำหรับ applicant นี้หรือไม่."""
     return (
@@ -1375,10 +1492,15 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.mobile_phone.label("mobile_phone"),
             CaseRegulationChoice.money_amount.label("money_amount"),
             CaseHandling.responsible_division_id.label("responsible_division_id"),
+            CasePayment.payment_method_id.label("payment_method_id"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
         .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+        .outerjoin(
+            CasePayment,
+            CasePayment.case_handling_id == CaseHandling.id,
+        )
         .outerjoin(
             CaseRegulationChoice,
             CaseRegulationChoice.case_handling_id == CaseHandling.id,
@@ -1486,6 +1608,18 @@ async def _list_cases_for_staff_finance_impl(
     applicant_ids = [row["applicant_id"] for row in rows]
     payments_by_applicant = await load_payments_by_applicant_ids(session, applicant_ids)
     enriched_rows = _merge_payment_metrics_into_rows(rows, payments_by_applicant)
+    payment_method_by_applicant = {
+        int(row["applicant_id"]): row.get("payment_method_id") for row in enriched_rows
+    }
+    cash_metrics = await _load_cash_metrics_by_applicant_ids(
+        session,
+        applicant_ids,
+        payment_method_by_applicant,
+    )
+    enriched_rows = _merge_cash_disbursement_flags_into_rows(
+        enriched_rows,
+        cash_metrics_by_applicant=cash_metrics,
+    )
     return CaseForStaffFinanceListResponse(
         province_id=province.id,
         province_name=province.name,
@@ -1630,6 +1764,8 @@ async def update_welfare_payment_for_staff(
     if not updates:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
 
+    await assert_cash_payment_037_038_update_allowed(session, applicant_id, updates)
+
     if _welfare_payment_update_indicates_037(updates):
         payment = await apply_037_update(session, applicant_id, updates)
     elif _welfare_payment_update_indicates_038(updates):
@@ -1645,6 +1781,13 @@ async def update_welfare_payment_for_staff(
             applicant_id,
             payment,
             updates,
+        )
+    else:
+        status_log, status_row = await _apply_cash_disbursement_status_if_needed(
+            session,
+            applicant_id,
+            payment,
+            user_sdshv=updates.get("user_sdshv"),
         )
 
     await session.commit()
@@ -1669,6 +1812,11 @@ async def update_welfare_payment_batch_for_staff(
     session: AsyncSession = Depends(get_session),
 ) -> WelfarePaymentBatchRead:
     """บันทึก 037 และ 038 ใน transaction เดียว — สถานะ 3 เมื่อครบทั้งคู่ในรอบ."""
+    await assert_cash_payment_037_038_update_allowed(
+        session,
+        applicant_id,
+        {"is_037_or_038": False},
+    )
     batch_id = body.upload_batch_id
     user_sdshv = body.user_sdshv
 
@@ -1784,6 +1932,14 @@ async def upload_file_payment_pdf(
             applicant_id=applicant_id,
             file_payment_id=row.id,
         )
+    if attachment_type_id in CASH_DISBURSEMENT_PROOF_TYPE_IDS and row.welfare_payment_id is not None:
+        payment = await session.get(WelfarePayment, row.welfare_payment_id)
+        if payment is not None:
+            await _apply_cash_disbursement_status_if_needed(
+                session,
+                applicant_id,
+                payment,
+            )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
         view_path=(

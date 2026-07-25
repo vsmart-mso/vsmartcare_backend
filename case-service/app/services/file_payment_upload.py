@@ -10,8 +10,14 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..constants.attachment_types import (
+    ATTACHMENT_TYPE_PDF_037,
+    ATTACHMENT_TYPE_PDF_038,
+    PAYMENT_FILE_ATTACHMENT_TYPE_IDS,
+)
 from ..models.lookup import AttachmentType
 from ..models.payment import FilePayment, WelfareDdaRef, WelfarePayment
+from ..services.cash_disbursement import assert_transfer_payment_file_allowed
 from ..services.welfare_payment_flow import (
     file_payment_owned_by_applicant,
     resolve_payment_row_for_attachment,
@@ -24,9 +30,9 @@ ALLOWED_PAYMENT_PDF_TYPES: dict[str, str] = {
     "application/x-pdf": ".pdf",
 }
 
-ATTACHMENT_PDF_037_ID = 9
-ATTACHMENT_PDF_038_ID = 10
-ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS = frozenset({ATTACHMENT_PDF_037_ID, ATTACHMENT_PDF_038_ID})
+ATTACHMENT_PDF_037_ID = ATTACHMENT_TYPE_PDF_037
+ATTACHMENT_PDF_038_ID = ATTACHMENT_TYPE_PDF_038
+ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS = PAYMENT_FILE_ATTACHMENT_TYPE_IDS
 
 
 async def validate_welfare_dda_ref_exists(session: AsyncSession, welfare_dda_ref_id: int) -> WelfareDdaRef:
@@ -152,8 +158,9 @@ async def replace_file_payment_pdf(
     if attachment_type_id not in ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="attachment_type_must_be_pdf_037_or_038",
+            detail="attachment_type_must_be_payment_file",
         )
+    await assert_transfer_payment_file_allowed(session, applicant_id, attachment_type_id)
 
     if welfare_payment_id is not None:
         payment = await resolve_welfare_payment_for_upload(
@@ -240,8 +247,9 @@ async def save_file_payment_pdf(
     if attachment_type_id not in ALLOWED_PAYMENT_ATTACHMENT_TYPE_IDS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="attachment_type_must_be_pdf_037_or_038",
+            detail="attachment_type_must_be_payment_file",
         )
+    await assert_transfer_payment_file_allowed(session, applicant_id, attachment_type_id)
 
     blob, ext = await _read_validated_pdf_blob(file)
 
