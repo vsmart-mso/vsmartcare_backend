@@ -2094,11 +2094,17 @@ def _case_lookup_url(path_under_v1: str) -> str:
 async def bff_list_regulations(
     citizen: Optional[str] = Query(None),
     budget_year: Optional[int] = Query(None),
+    fiscal_start: Optional[date] = Query(None),
+    fiscal_end: Optional[date] = Query(None),
 ):
     base = settings.case_service_url.rstrip("/")
     params = {}
     if citizen is not None:
         params["citizen"] = citizen
+    if fiscal_start is not None:
+        params["fiscal_start"] = fiscal_start.isoformat()
+    if fiscal_end is not None:
+        params["fiscal_end"] = fiscal_end.isoformat()
     if budget_year is not None:
         params["budget_year"] = budget_year
     query_string = urlencode(params)
