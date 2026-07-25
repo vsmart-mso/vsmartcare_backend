@@ -58,6 +58,10 @@ from ...services.ktb_requirement import (
     load_applicant_for_audit_refresh,
     refresh_applicant_submission_audit,
 )
+from ...constants.payment_method import (
+    clear_bank_fields_in_payload,
+    payment_hides_bank,
+)
 
 router = APIRouter(
     prefix="/v1/intake",
@@ -439,6 +443,10 @@ async def upsert_intake_payment(
     )
 
     fields = body.model_dump()
+    hide_bank = payment_hides_bank(body.payment_method_id, method_code=pm.code)
+    if hide_bank:
+        clear_bank_fields_in_payload(fields)
+
     if payment is None:
         payment = CasePayment(case_handling_id=handling.id, **fields)
         session.add(payment)
@@ -451,16 +459,22 @@ async def upsert_intake_payment(
     if handling.intake_completed_at is None:
         handling.intake_completed_at = datetime.utcnow()
 
-    account_number = (body.account_number or "").strip()
+    account_number = (fields.get("account_number") or "").strip()
     applicant = await load_applicant_for_audit_refresh(session, applicant_id)
     if applicant is not None:
-        if account_number:
-            applicant.bank_account_no = account_number
-        bank_for_audit = account_number or applicant.bank_account_no
+        if hide_bank:
+            applicant.bank_account_no = None
+            bank_for_audit = ""
+        else:
+            if account_number:
+                applicant.bank_account_no = account_number
+            bank_for_audit = account_number or applicant.bank_account_no
         await refresh_applicant_submission_audit(
             session,
             applicant,
             bank_account_no=bank_for_audit,
+            payment_method_id=body.payment_method_id,
+            payment_method_code=pm.code,
         )
 
     await session.commit()

@@ -15,6 +15,7 @@ from ..models.applicant import Applicant
 from ..models.applicant_submission_audit import ApplicantSubmissionAudit
 from ..models.address import Address
 from ..models.geo import District, Province, SubDistrict, SubDistrictPostcode
+from ..models.intake import CaseHandling
 from ..models.lookup import AddressType
 from ..schemas.case_welfare import AddressInCase
 from ..schemas.check_case import CheckCaseSource, ExistingCaseCheckResult
@@ -41,6 +42,24 @@ class PriorCaseRef:
     province_id: int | None
     province_name: str | None
     bank_account_no: str | None
+    payment_method_id: int | None = None
+
+
+def prior_was_bank_transfer(prior: PriorCaseRef | None) -> bool:
+    """เคสเดิมที่เบิกจ่ายแล้วเป็นโอนเงินหรือไม่ — ใช้ตัดสินว่าต้องเทียบบัญชี/จังหวัด."""
+    if prior is None:
+        return False
+    from ..constants.payment_method import (
+        is_cash_or_cheque,
+        normalize_payment_method_id,
+        payment_hides_bank,
+    )
+
+    mid = normalize_payment_method_id(prior.payment_method_id)
+    if mid is not None:
+        return not payment_hides_bank(mid) and not is_cash_or_cheque(mid)
+    # ไม่รู้ method — มีเลขบัญชีถือว่าเป็นเคสโอน
+    return bool(normalize_account_no(prior.bank_account_no))
 
 
 def normalize_account_no(raw: str | None) -> str:
@@ -72,14 +91,39 @@ def pick_prior_case(
     return None
 
 
+def _is_province_changed(prior: PriorCaseRef | None, submission: ProvinceRef) -> bool:
+    """รายเดิมแต่หาเคสอ้างอิงไม่ได้ → ถือว่าเปลี่ยนจังหวัด (บังคับเอกสารใหม่)."""
+    if prior is None:
+        return True
+    prior_province_id = prior.province_id
+    submission_province_id = submission.province_id
+    if prior_province_id is not None and submission_province_id is not None:
+        return prior_province_id != submission_province_id
+    prior_name = normalize_province_name(prior.province_name)
+    submission_name = normalize_province_name(submission.province_name)
+    if prior_name and submission_name:
+        return prior_name != submission_name
+    return False
+
+
 def compute_ktb_requirement(
     *,
     is_existing_case: bool,
     prior: PriorCaseRef | None,
     submission: ProvinceRef,
     submission_bank_account_no: str | None,
+    submission_payment_method_id: int | None = None,
+    submission_method_code: str | None = None,
 ) -> dict[str, Any]:
-    """คืน dict สำหรับ ApplicantSubmissionAudit + ฟิลด์ audit."""
+    """คืน dict สำหรับ ApplicantSubmissionAudit + ฟิลด์ audit.
+
+    - เงินสด/เช็ค/PromptPay (เคสปัจจุบัน): เทียบจังหวัดเท่านั้น
+      เปลี่ยนจังหวัด → บังคับ KTB (NEW_CASE / รายใหม่); ไม่เทียบเลขบัญชี
+    - เคสเดิมไม่ใช่โอน: เทียบจังหวัดเท่านั้น (ไม่มีบัญชีให้เทียบ)
+    - เคสเดิมเป็นโอน + ปัจจุบันโอน: เทียบจังหวัด + เลขบัญชี
+    """
+    from ..constants.payment_method import payment_hides_bank
+
     base: dict[str, Any] = {
         "existing_case_source": prior.source if prior else None,
         "existing_case_ref_id": prior.ref_id if prior else None,
@@ -97,15 +141,53 @@ def compute_ktb_requirement(
             "require_ktb_reason": "NEW_CASE",
         }
 
-    prior_province_id = prior.province_id if prior else None
-    submission_province_id = submission.province_id
-    province_changed = prior_province_id != submission_province_id
-    if prior_province_id is None or submission_province_id is None:
-        province_changed = prior_province_id != submission_province_id
+    province_changed = _is_province_changed(prior, submission)
 
+    # เคสปัจจุบันเงินสด/เช็ค/PromptPay — เทียบจังหวัดเท่านั้น ไม่เทียบบัญชี
+    if payment_hides_bank(
+        submission_payment_method_id,
+        method_code=submission_method_code,
+    ):
+        if province_changed:
+            return {
+                **base,
+                "is_account_changed": False,
+                "require_ktb_corporate": True,
+                "require_ktb_reason": "NEW_CASE",
+            }
+        return {
+            **base,
+            "is_account_changed": False,
+            "require_ktb_corporate": False,
+            "require_ktb_reason": "NONE",
+        }
+
+    # เคสเดิมไม่ใช่โอน — ไม่มีบัญชีให้เทียบ; เทียบจังหวัดอย่างเดียว
+    if prior is not None and not prior_was_bank_transfer(prior):
+        if province_changed:
+            return {
+                **base,
+                "is_account_changed": False,
+                "require_ktb_corporate": True,
+                "require_ktb_reason": "PROVINCE_CHANGED",
+            }
+        return {
+            **base,
+            "is_account_changed": False,
+            "require_ktb_corporate": False,
+            "require_ktb_reason": "NONE",
+        }
+
+    # เคสเดิมเป็นโอน (หรือหา prior ไม่ได้) — เทียบจังหวัด + บัญชี
     prior_account = normalize_account_no(prior.bank_account_no if prior else None)
     submission_account = normalize_account_no(submission_bank_account_no)
-    account_changed = prior_account != submission_account
+    if prior_account and submission_account:
+        account_changed = prior_account != submission_account
+    elif prior_account and not submission_account:
+        # เคสเดิมโอนมีบัญชี แต่เคสใหม่ยังไม่กรอก — บังคับจนกว่าจะกรอกและตรง
+        account_changed = True
+    else:
+        account_changed = False
 
     if province_changed:
         return {
@@ -149,12 +231,19 @@ def _prior_from_detail(source: CheckCaseSource, detail: dict[str, Any] | None) -
             ref_id = int(ref_id)
         except (TypeError, ValueError):
             ref_id = None
+    payment_method_id = prior.get("payment_method_id")
+    if payment_method_id is not None:
+        try:
+            payment_method_id = int(payment_method_id)
+        except (TypeError, ValueError):
+            payment_method_id = None
     return PriorCaseRef(
         source=_SOURCE_LABEL[source],
         ref_id=ref_id,
         province_id=province_id,
         province_name=prior.get("province_name"),
         bank_account_no=prior.get("bank_account_no"),
+        payment_method_id=payment_method_id,
     )
 
 
@@ -409,6 +498,8 @@ async def refresh_applicant_submission_audit(
     applicant: Applicant,
     *,
     bank_account_no: str | None,
+    payment_method_id: int | None = None,
+    payment_method_code: str | None = None,
 ) -> dict[str, Any]:
     """คำนวณ audit ใหม่จากเลขบัญชีล่าสุด (เช่น หลังบันทึกหน้า 13)."""
     from ..api.check_case import check_existing_case_by_cid
@@ -446,6 +537,8 @@ async def refresh_applicant_submission_audit(
         prior=prior,
         submission=submission,
         submission_bank_account_no=bank_account_no,
+        submission_payment_method_id=payment_method_id,
+        submission_method_code=payment_method_code,
     )
     fields["existing_case_detected_sources"] = extract_existing_case_detected_sources(
         existing_check,
@@ -496,12 +589,19 @@ def prior_ref_from_vcare_case(prior_case: dict[str, Any]) -> PriorCaseRef:
             province_id = int(province_id)
         except (TypeError, ValueError):
             province_id = None
+    payment_method_id = prior_case.get("payment_method_id")
+    if payment_method_id is not None:
+        try:
+            payment_method_id = int(payment_method_id)
+        except (TypeError, ValueError):
+            payment_method_id = None
     return PriorCaseRef(
         source="VCARE",
         ref_id=ref_id,
         province_id=province_id,
         province_name=prior_case.get("province_name"),
         bank_account_no=prior_case.get("bank_account_no"),
+        payment_method_id=payment_method_id,
     )
 
 
@@ -527,6 +627,7 @@ async def fetch_vcare_prior_case_detail(
         .limit(1)
         .options(
             selectinload(Applicant.submission_audit),
+            selectinload(Applicant.case_handling).selectinload(CaseHandling.payment),
             selectinload(Applicant.addresses).selectinload(Address.address_type),
             selectinload(Applicant.addresses)
             .selectinload(Address.sub_district_postcode)
@@ -548,11 +649,18 @@ async def fetch_vcare_prior_case_detail(
         province_id = province.province_id
         province_name = province.province_name
 
+    payment_method_id = None
+    handling = getattr(applicant, "case_handling", None)
+    payment = getattr(handling, "payment", None) if handling is not None else None
+    if payment is not None:
+        payment_method_id = payment.payment_method_id
+
     prior_case = {
         "applicant_id": applicant.id,
         "ref_id": applicant.id,
         "province_id": province_id,
         "province_name": province_name,
         "bank_account_no": applicant.bank_account_no,
+        "payment_method_id": payment_method_id,
     }
     return prior_case, audit

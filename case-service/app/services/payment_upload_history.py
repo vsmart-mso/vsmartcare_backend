@@ -31,14 +31,31 @@ from .payment_round_metrics import (
     rows_in_round,
 )
 
-ATTACHMENT_PDF_037_ID = 9
-ATTACHMENT_PDF_038_ID = 10
+from ..constants.attachment_types import (
+    ATTACHMENT_TYPE_CHECK_EVIDENCE,
+    ATTACHMENT_TYPE_PDF_037,
+    ATTACHMENT_TYPE_PDF_038,
+    ATTACHMENT_TYPE_PROOF_PAYMENT,
+    ATTACHMENT_TYPE_PROOF_RECEIVING,
+)
+
+ATTACHMENT_PDF_037_ID = ATTACHMENT_TYPE_PDF_037
+ATTACHMENT_PDF_038_ID = ATTACHMENT_TYPE_PDF_038
 
 FILE_LABEL_BY_ATTACHMENT_ID: dict[int, str] = {
     ATTACHMENT_PDF_037_ID: "cft037",
     ATTACHMENT_PDF_038_ID: "cft038",
+    ATTACHMENT_TYPE_PROOF_RECEIVING: "proof_receiving",
+    ATTACHMENT_TYPE_PROOF_PAYMENT: "proof_payment",
+    ATTACHMENT_TYPE_CHECK_EVIDENCE: "check_evidence",
 }
-
+FILE_LABEL_SORT_ORDER: dict[str, int] = {
+    "cft037": 0,
+    "cft038": 1,
+    "proof_receiving": 2,
+    "proof_payment": 3,
+    "check_evidence": 4,
+}
 HistoryPaymentGroup = PaymentRound
 
 
@@ -53,8 +70,19 @@ def _normalize_payment_number(value: str | None) -> str | None:
     return stripped or None
 
 
+def _is_cash_history_payment(row: WelfarePayment) -> bool:
+    """แถวเงินสด/เช็ค — is_037_or_038 เป็น null และมีเลขที่ขอเบิกแล้ว."""
+    return row.is_037_or_038 is None and bool(_normalize_payment_number(row.payment_number))
+
+
 def _history_payment_rows(all_payments: list[WelfarePayment]) -> list[WelfarePayment]:
-    return payment_rows_for_rounds(all_payments)
+    """รวมแถว 037/038 และแถวเงินสดที่มีเลขที่ขอเบิก (ไม่รวม open-cycle null ว่าง)."""
+    typed = payment_rows_for_rounds(all_payments)
+    seen = {row.id for row in typed}
+    cash_rows = [
+        row for row in all_payments if row.id not in seen and _is_cash_history_payment(row)
+    ]
+    return sorted([*typed, *cash_rows], key=lambda row: row.id)
 
 
 def _rows_in_group(group: HistoryPaymentGroup) -> list[WelfarePayment]:
@@ -180,7 +208,10 @@ def _build_round_file_items(
             ),
         )
 
-    labels = sorted(labels, key=lambda label: (label != "cft037", label))
+    labels = sorted(
+        labels,
+        key=lambda label: (FILE_LABEL_SORT_ORDER.get(label, 99), label),
+    )
     return labels, file_items
 
 
@@ -243,6 +274,14 @@ def _round_from_group(
     if payment_id_cft038 is None and len(rows) == 1 and anchor.is_037_or_038 is True:
         payment_id_cft038 = _normalize_payment_number(anchor.payment_number)
 
+    reference_number = None
+    if payment_id_cft037 is None and payment_id_cft038 is None:
+        for row in rows:
+            if row.is_037_or_038 is None:
+                reference_number = _normalize_payment_number(row.payment_number)
+                if reference_number:
+                    break
+
     reason = row_038.payment_038_reason if row_038 is not None else None
     if reason is None and anchor.is_037_or_038 is True:
         reason = anchor.payment_038_reason
@@ -256,6 +295,7 @@ def _round_from_group(
         welfare_payment_id_038=row_038.id if row_038 is not None else None,
         payment_id_cft037=payment_id_cft037,
         payment_id_cft038=payment_id_cft038,
+        reference_number=reference_number,
         files=labels,
         file_items=file_items,
         reason=reason,
