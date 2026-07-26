@@ -16,7 +16,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -150,13 +150,27 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
     summary="รายการระเบียบสำหรับ dropdown หน้า 11",
     description=(
         "ดึงระเบียบที่ activate=true เรียงตาม sort_order — "
-        "ถ้าส่ง citizen (CID) + budget_year จะคำนวณ count_used และ disabled ด้วย"
+        "ถ้าส่ง citizen (CID) + budget_year จะคำนวณ count_used และ disabled ด้วย "
+        "(นับตามปีปฏิทิน ม.ค.-ธ.ค. ของปี budget_year) — หรือส่ง citizen + fiscal_start "
+        "+ fiscal_end แทน budget_year เพื่อนับตามช่วงวันที่กำหนดเอง เช่น ปีงบประมาณไทย "
+        "ต.ค.-ก.ย. (fiscal_start/fiscal_end มีผลก่อน budget_year ถ้าส่งมาทั้งคู่)"
     ),
 )
 async def list_regulations(
     citizen: str | None = Query(None, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     budget_year: int | None = Query(
-        None, description="ปีงบประมาณไทย (พ.ศ.) เช่น 2568 — ใช้นับ count_used"
+        None, description="ปีงบประมาณไทย (พ.ศ.) เช่น 2568 — ใช้นับ count_used แบบปีปฏิทิน (ม.ค.-ธ.ค.)"
+    ),
+    fiscal_start: date | None = Query(
+        None,
+        description=(
+            "วันที่เริ่มช่วงนับ count_used (inclusive) — ใช้แทน budget_year เมื่อ"
+            "ต้องการนับตามช่วงวันที่กำหนดเอง เช่น ปีงบประมาณไทย ต.ค.-ก.ย. "
+            "ต้องส่งคู่กับ fiscal_end"
+        ),
+    ),
+    fiscal_end: date | None = Query(
+        None, description="วันที่สิ้นสุดช่วงนับ count_used (exclusive) — ใช้คู่กับ fiscal_start"
     ),
     session: AsyncSession = Depends(get_session),
 ) -> list[RegulationDropdownItem]:
@@ -171,10 +185,25 @@ async def list_regulations(
 
     regs = list((await session.execute(stmt)).scalars().all())
 
-    # คำนวณ count_used ต่อ regulation สำหรับบุคคลนี้ในปีงบประมาณที่กำหนด
+    # คำนวณ count_used ต่อ regulation สำหรับบุคคลนี้ในช่วงเวลาที่กำหนด
+    # - ส่ง fiscal_start + fiscal_end มา → นับตามช่วงวันที่นั้นตรงๆ (รองรับปีงบประมาณ
+    #   ไทย ต.ค.-ก.ย. หรือช่วงใดก็ได้ที่ผู้เรียกกำหนดเอง)
+    # - ไม่ส่ง fiscal_start/fiscal_end แต่ส่ง budget_year มา → นับตามปีปฏิทิน (ม.ค.-ธ.ค.)
+    #   ของปีนั้น (พฤติกรรมเดิม ก่อนเพิ่ม fiscal_start/fiscal_end)
     usage_map: dict[int, int] = {}
-    if citizen and budget_year:
+    date_conditions: tuple | None = None
+    if citizen and fiscal_start and fiscal_end:
+        date_conditions = (
+            CaseHandling.intake_completed_at >= fiscal_start,
+            CaseHandling.intake_completed_at < fiscal_end,
+        )
+    elif citizen and budget_year:
         gregorian_year = budget_year - 543
+        date_conditions = (
+            func.extract("year", CaseHandling.intake_completed_at) == gregorian_year,
+        )
+
+    if date_conditions:
         reg_ids = [r.id for r in regs]
 
         count_sq = (
@@ -188,7 +217,7 @@ async def list_regulations(
             .where(
                 Person.cid == citizen,
                 CaseRegulationChoice.regulation_id.in_(reg_ids),
-                func.extract("year", CaseHandling.intake_completed_at) == gregorian_year,
+                *date_conditions,
             )
             .group_by(CaseRegulationChoice.regulation_id)
         )
