@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -57,6 +57,17 @@ class WelfareReviewComment(Base):
     created_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now(),
+    )
+    # TASK_211: ยืนยันจากประชาชนตอน resubmit (null จนกว่าจะส่งกลับสำเร็จ)
+    citizen_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+    citizen_confirmation_type: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        default=None,
     )
 
     welfare_request_status: Mapped["WelfareRequestStatus"] = relationship(

@@ -675,6 +675,8 @@ class MoreMsoUpsertBody(BaseModel):
 def _case_for_staff_finance_query_pairs(
     *,
     province_id: int,
+    province_ids: Optional[list[str]],
+    dwf_scope: bool,
     case_number: Optional[str],
     current_status: Optional[str],
     current_status_id: Optional[list[int]],
@@ -692,6 +694,11 @@ def _case_for_staff_finance_query_pairs(
     type_money_id: Optional[list[int]],
 ) -> list[tuple[str, Any]]:
     pairs: list[tuple[str, Any]] = [("province_id", province_id)]
+    if province_ids:
+        for pid in province_ids:
+            pairs.append(("province_ids", pid))
+    if dwf_scope:
+        pairs.append(("dwf_scope", "true"))
     if case_number is not None:
         pairs.append(("case_number", case_number))
     if current_status is not None:
@@ -845,8 +852,11 @@ async def get_submission_eligibility(
 )
 async def list_cases_for_staff(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    province_ids: Optional[list[str]] = Query(None, description="DWF scope narrowing only"),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: Optional[str] = Query(None, description="ค้นหาจากเลข case"),
     current_status: Optional[str] = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: Optional[list[int]] = Query(None, description="Filter by current_status_id"),
     firstname: Optional[str] = Query(None, description="ค้นหาจากชื่อ"),
     lastname: Optional[str] = Query(None, description="ค้นหาจากนามสกุล"),
     cid: Optional[str] = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
@@ -861,24 +871,44 @@ async def list_cases_for_staff(
     type_money_id: Optional[int] = Query(None, description="กรองตาม type_money_category.id"),
 ) -> CaseForStaffListResponse:
     base = settings.case_service_url.rstrip("/")
-    params = {
-        "province_id": province_id,
-        "case_number": case_number,
-        "current_status": current_status,
-        "firstname": firstname,
-        "lastname": lastname,
-        "cid": cid,
-        "datetime_create": datetime_create.isoformat() if datetime_create is not None else None,
-        "province_name": province_name,
-        "district_id": district_id,
-        "district_name": district_name,
-        "subdistrict_id": subdistrict_id,
-        "subdistrict_name": subdistrict_name,
-        "subdistrict_postcode_id": subdistrict_postcode_id,
-        "postcode": postcode,
-        "type_money_id": type_money_id,
-    }
-    query_string = urlencode({k: v for k, v in params.items() if v is not None})
+    pairs: list[tuple[str, Any]] = [("province_id", province_id)]
+    if province_ids:
+        for pid in province_ids:
+            pairs.append(("province_ids", pid))
+    if dwf_scope:
+        pairs.append(("dwf_scope", "true"))
+    if case_number is not None:
+        pairs.append(("case_number", case_number))
+    if current_status is not None:
+        pairs.append(("current_status", current_status))
+    if current_status_id:
+        for cs in current_status_id:
+            pairs.append(("current_status_id", cs))
+    if firstname is not None:
+        pairs.append(("firstname", firstname))
+    if lastname is not None:
+        pairs.append(("lastname", lastname))
+    if cid is not None:
+        pairs.append(("cid", cid))
+    if datetime_create is not None:
+        pairs.append(("datetime_create", datetime_create.isoformat()))
+    if province_name is not None:
+        pairs.append(("province_name", province_name))
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if district_name is not None:
+        pairs.append(("district_name", district_name))
+    if subdistrict_id is not None:
+        pairs.append(("subdistrict_id", subdistrict_id))
+    if subdistrict_name is not None:
+        pairs.append(("subdistrict_name", subdistrict_name))
+    if subdistrict_postcode_id is not None:
+        pairs.append(("subdistrict_postcode_id", subdistrict_postcode_id))
+    if postcode is not None:
+        pairs.append(("postcode", postcode))
+    if type_money_id is not None:
+        pairs.append(("type_money_id", type_money_id))
+    query_string = urlencode(pairs)
     data = await _get(f"{base}/v1/case_for_staff?{query_string}")
     return CaseForStaffListResponse.model_validate(
         {
@@ -901,6 +931,8 @@ async def list_cases_for_staff(
 )
 async def list_cases_for_staff_finance(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    province_ids: Optional[list[str]] = Query(None, description="DWF scope narrowing only"),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: Optional[str] = Query(None, description="ค้นหาจากเลข case"),
     current_status: Optional[str] = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
     current_status_id: Optional[list[int]] = Query(
@@ -926,6 +958,8 @@ async def list_cases_for_staff_finance(
     base = settings.case_service_url.rstrip("/")
     pairs = _case_for_staff_finance_query_pairs(
         province_id=province_id,
+        province_ids=province_ids,
+        dwf_scope=dwf_scope,
         case_number=case_number,
         current_status=current_status,
         current_status_id=current_status_id,
@@ -966,6 +1000,8 @@ async def list_cases_for_staff_finance(
 )
 async def list_cases_for_staff_finance_with_dda_ref(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    province_ids: Optional[list[str]] = Query(None, description="DWF scope narrowing only"),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: Optional[str] = Query(None),
     current_status: Optional[str] = Query(None),
     current_status_id: Optional[list[int]] = Query(None),
@@ -985,6 +1021,8 @@ async def list_cases_for_staff_finance_with_dda_ref(
     base = settings.case_service_url.rstrip("/")
     pairs = _case_for_staff_finance_query_pairs(
         province_id=province_id,
+        province_ids=province_ids,
+        dwf_scope=dwf_scope,
         case_number=case_number,
         current_status=current_status,
         current_status_id=current_status_id,
@@ -1789,19 +1827,46 @@ async def update_case(
     summary="ยืนยันคำร้องหลังแก้ไขข้อมูลที่ถูกตีกลับ",
     description=(
         "ส่งต่อ `POST …/v1/cases/{applicant_id}/resubmit` ใน case-service — "
-        "reset สถานะกลับเป็น 'รอรับเรื่อง' หลังประชาชนแก้ไขข้อมูลที่ถูกตีกลับเสร็จแล้ว"
+        "รับ `field_confirmations` จากประชาชน (TASK_211) แล้ว reset สถานะกลับเป็น 'รอรับเรื่อง'"
     ),
 )
 async def resubmit_case(
     applicant_id: int,
+    request: Request,
     authorization: str = Depends(require_citizen_bearer),
 ) -> Any:
+    # Forward body ตามที่ FE ส่ง — ว่างได้เมื่อ idempotent retry (status เป็น 1 แล้ว)
+    raw = await request.body()
+    body: Dict[str, Any] = {}
+    if raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                body = parsed
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="invalid_json_body") from exc
+
     base = settings.case_service_url.rstrip("/")
-    return await _post(
-        f"{base}/v1/cases/{applicant_id}/resubmit",
-        json={},
-        headers=_forward_auth_headers(authorization),
-    )
+    # ส่ง body ที่มี field_confirmations; ถ้าว่างให้ POST โดยไม่บังคับ schema ที่ BFF
+    if body:
+        return await _post(
+            f"{base}/v1/cases/{applicant_id}/resubmit",
+            json=body,
+            headers=_forward_auth_headers(authorization),
+        )
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            f"{base}/v1/cases/{applicant_id}/resubmit",
+            headers=merge_forward_headers(_forward_auth_headers(authorization)),
+        )
+        if r.status_code >= 400:
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=_http_error_detail_from_response(r),
+            )
+        return r.json()
+
 
 
 @router.patch(
@@ -2029,11 +2094,17 @@ def _case_lookup_url(path_under_v1: str) -> str:
 async def bff_list_regulations(
     citizen: Optional[str] = Query(None),
     budget_year: Optional[int] = Query(None),
+    fiscal_start: Optional[date] = Query(None),
+    fiscal_end: Optional[date] = Query(None),
 ):
     base = settings.case_service_url.rstrip("/")
     params = {}
     if citizen is not None:
         params["citizen"] = citizen
+    if fiscal_start is not None:
+        params["fiscal_start"] = fiscal_start.isoformat()
+    if fiscal_end is not None:
+        params["fiscal_end"] = fiscal_end.isoformat()
     if budget_year is not None:
         params["budget_year"] = budget_year
     query_string = urlencode(params)
@@ -3357,4 +3428,3 @@ async def staff_login(body: StaffLoginProxyBody) -> Dict[str, Any]:
 
 
 app.include_router(router, prefix=_api_prefix)
-

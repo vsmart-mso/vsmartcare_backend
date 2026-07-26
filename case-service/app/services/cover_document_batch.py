@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -143,6 +143,8 @@ async def list_cover_document_batches(
     *,
     province_id: int | None = None,
     pending: bool = False,
+    sor_kor_province_ids: tuple[int, ...] | None = None,
+    sor_kor_type_money_id: int = 6,
 ) -> list[CoverDocumentBatch]:
     stmt = (
         select(CoverDocumentBatch)
@@ -150,7 +152,25 @@ async def list_cover_document_batches(
         .order_by(CoverDocumentBatch.created_at.desc(), CoverDocumentBatch.id.desc())
     )
     if province_id is not None:
-        stmt = stmt.where(CoverDocumentBatch.province_id == province_id)
+        if sor_kor_province_ids:
+            # Keep non-Sor Kor batches province-local while expanding only Sor Kor batches.
+            stmt = stmt.where(
+                or_(
+                    and_(
+                        CoverDocumentBatch.type_money_id == sor_kor_type_money_id,
+                        CoverDocumentBatch.province_id.in_(sor_kor_province_ids),
+                    ),
+                    and_(
+                        or_(
+                            CoverDocumentBatch.type_money_id.is_(None),
+                            CoverDocumentBatch.type_money_id != sor_kor_type_money_id,
+                        ),
+                        CoverDocumentBatch.province_id == province_id,
+                    ),
+                )
+            )
+        else:
+            stmt = stmt.where(CoverDocumentBatch.province_id == province_id)
     batches = (await session.scalars(stmt)).all()
     if not pending:
         return list(batches)

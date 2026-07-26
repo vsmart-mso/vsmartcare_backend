@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -33,7 +33,7 @@ from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyC
 from ...models.economic import HouseholdMember
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
-from ...models.intake import CaseHandling, CaseRegulationChoice
+from ...models.intake import CaseHandling, CasePayment, CaseRegulationChoice
 from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from ...models.welfare import WelfareEvidence
@@ -43,16 +43,25 @@ from ...services.process_sla import (
     maybe_freeze_process_sla_for_status,
     process_sla_fields_dict,
 )
+from ...constants.attachment_types import CASH_DISBURSEMENT_PROOF_TYPE_IDS
 from ...constants.current_status import (
     CURRENT_STATUS_EDIT_REQUESTED,
     CURRENT_STATUS_PENDING_INTAKE,
+    CURRENT_STATUS_RECEIVED,
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
     CURRENT_STATUS_MSO_FORWARDED,
     PAYMENT_EDIT_PRESERVE_STATUS_IDS,
     STAFF_CASE_SECTION_EDIT_STATUS_IDS,
 )
+from ...constants.payment_method import is_cash_or_cheque
 from ...services.case_update import apply_case_update
+from ...services.cash_disbursement import (
+    assert_cash_payment_037_038_update_allowed,
+    cash_disbursement_target_status,
+    load_cash_proof_files_for_dda,
+    normalize_payment_number,
+)
 from ...services.staff_edit_audit import (
     EVENT_TYPE_SECTION_EDIT,
     EVENT_TYPE_SURVEY_EDIT,
@@ -76,6 +85,15 @@ from ...services.payment_upload_history import build_payment_upload_history
 from ...services.staff_digest_summary import fetch_staff_digest_summary
 from ...services.self_submit_fiscal_siblings import load_fiscal_year_self_submit_enrichment
 from ...services.ktb_audit_read import enrich_case_for_staff_ktb_defaults, ktb_audit_api_fields
+from ...services.dwf_scope import (
+    SOR_KOR_TYPE_MONEY_ID,
+    allowed_sor_kor_province_ids,
+    division_name_for_id,
+    group_for_province,
+    is_dwf_mother_province,
+    visible_cover_document_batch_province_ids,
+    visible_finance_sor_kor_province_ids,
+)
 from ...services.citizen_status_email_policy import (
     CitizenStatusEmailTrigger,
     fetch_latest_status_id,
@@ -193,7 +211,7 @@ from ...schemas.welfare import (
 )
 
 
-from ...core.staff_security import require_staff
+from ...core.staff_security import StaffClaims, require_staff
 
 router = APIRouter(
     prefix="/v1/case_for_staff",
@@ -535,6 +553,257 @@ def _clean_text_filter(value: str | None) -> str | None:
     return value or None
 
 
+def _parse_int_query_values(values: list[str] | None) -> list[int] | None:
+    if not values:
+        return None
+    parsed: list[int] = []
+    for value in values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if not part.isdigit():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="invalid_integer_query_value",
+                )
+            parsed.append(int(part))
+    return parsed or None
+
+
+def _actor_province_id(staff: StaffClaims, province_id: int) -> int:
+    return province_id if staff.is_internal else staff.province_id
+
+
+def _validated_requested_dwf_province_ids(
+    actor_province_id: int,
+    requested_province_ids: list[int] | None,
+) -> tuple[int, ...]:
+    allowed = allowed_sor_kor_province_ids(actor_province_id)
+    if not requested_province_ids:
+        return allowed
+    requested = tuple(dict.fromkeys(requested_province_ids))
+    invalid = [pid for pid in requested if pid not in allowed]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="province_ids_outside_dwf_scope",
+        )
+    return requested
+
+
+def _case_location_visibility_condition(
+    *,
+    province_id: int,
+    staff: StaffClaims,
+    dwf_scope: bool,
+    requested_province_ids: list[int] | None,
+    type_money_ids: set[int] | None,
+    province_column,
+    type_money_column,
+):
+    actor_province_id = _actor_province_id(staff, province_id)
+    auto_expand_sor_kor = (
+        type_money_ids == {SOR_KOR_TYPE_MONEY_ID}
+        and is_dwf_mother_province(actor_province_id)
+    )
+    if not dwf_scope:
+        if auto_expand_sor_kor:
+            # Sor Kor list visibility expands automatically for configured mother provinces.
+            sor_kor_province_ids = _validated_requested_dwf_province_ids(
+                actor_province_id,
+                requested_province_ids,
+            )
+            return province_column.in_(sor_kor_province_ids)
+        if requested_province_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="province_ids_requires_dwf_scope",
+            )
+        return province_column == province_id
+
+    group = group_for_province(actor_province_id)
+    if group is None:
+        if requested_province_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="province_ids_outside_dwf_scope",
+            )
+        return province_column == province_id
+
+    sor_kor_province_ids = _validated_requested_dwf_province_ids(
+        actor_province_id,
+        requested_province_ids,
+    )
+    if type_money_ids is not None and SOR_KOR_TYPE_MONEY_ID not in type_money_ids:
+        return province_column == province_id
+    if type_money_ids == {SOR_KOR_TYPE_MONEY_ID}:
+        return province_column.in_(sor_kor_province_ids)
+    return or_(
+        and_(
+            type_money_column == SOR_KOR_TYPE_MONEY_ID,
+            province_column.in_(sor_kor_province_ids),
+        ),
+        and_(
+            or_(
+                type_money_column.is_(None),
+                type_money_column != SOR_KOR_TYPE_MONEY_ID,
+            ),
+            province_column == province_id,
+        ),
+    )
+
+
+def _finance_location_visibility_condition(
+    *,
+    province_id: int,
+    staff: StaffClaims,
+    dwf_scope: bool,
+    requested_province_ids: list[int] | None,
+    type_money_ids: set[int] | None,
+    province_column,
+    type_money_column,
+):
+    actor_province_id = _actor_province_id(staff, province_id)
+    if is_dwf_mother_province(actor_province_id):
+        province_ids = _validated_requested_dwf_province_ids(
+            actor_province_id,
+            requested_province_ids,
+        )
+        return province_column.in_(province_ids)
+
+    finance_sor_kor_province_ids = visible_finance_sor_kor_province_ids(actor_province_id)
+    if not finance_sor_kor_province_ids and SOR_KOR_TYPE_MONEY_ID in (
+        type_money_ids or {SOR_KOR_TYPE_MONEY_ID}
+    ):
+        # DWF child provinces have no Sor Kor finance visibility, even for their own province.
+        if type_money_ids == {SOR_KOR_TYPE_MONEY_ID}:
+            return false()
+        return and_(
+            province_column == province_id,
+            or_(
+                type_money_column.is_(None),
+                type_money_column != SOR_KOR_TYPE_MONEY_ID,
+            ),
+        )
+
+    return _case_location_visibility_condition(
+        province_id=province_id,
+        staff=staff,
+        dwf_scope=dwf_scope,
+        requested_province_ids=requested_province_ids,
+        type_money_ids=type_money_ids,
+        province_column=province_column,
+        type_money_column=type_money_column,
+    )
+
+
+async def _applicant_current_address_province_id(
+    session: AsyncSession,
+    applicant_id: int,
+) -> int | None:
+    primary_address_sq = (
+        select(
+            Address.applicant_id.label("applicant_id"),
+            Address.sub_district_postcode_id.label("sub_district_postcode_id"),
+            func.row_number()
+            .over(
+                partition_by=Address.applicant_id,
+                order_by=[Address.id.asc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    location_subdistrict_postcode_id = func.coalesce(
+        primary_address_sq.c.sub_district_postcode_id,
+        Person.sub_district_postcode_id,
+    )
+    return await session.scalar(
+        select(District.province_id)
+        .select_from(Applicant)
+        .join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(
+            primary_address_sq,
+            and_(
+                primary_address_sq.c.applicant_id == Applicant.id,
+                primary_address_sq.c.rn == 1,
+            ),
+        )
+        .join(SubDistrictPostcode, SubDistrictPostcode.id == location_subdistrict_postcode_id)
+        .join(SubDistrict, SubDistrict.id == SubDistrictPostcode.sub_district_id)
+        .join(District, District.id == SubDistrict.district_id)
+        .where(Applicant.id == applicant_id)
+        .limit(1)
+    )
+
+
+async def _assert_dwf_status_change_allowed(
+    session: AsyncSession,
+    *,
+    staff: StaffClaims,
+    applicant: Applicant,
+    target_status_id: int,
+) -> None:
+    if staff.is_internal:
+        return
+    if target_status_id != CURRENT_STATUS_RECEIVED:
+        return
+    if applicant.type_money_category_id != SOR_KOR_TYPE_MONEY_ID:
+        return
+
+    actor_province_id = staff.province_id
+    group = group_for_province(actor_province_id)
+    if group is None:
+        return
+
+    current_address_province_id = await _applicant_current_address_province_id(
+        session,
+        applicant.id,
+    )
+    if current_address_province_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="applicant_current_address_province_not_found",
+        )
+
+    if not is_dwf_mother_province(actor_province_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="dwf_child_cannot_accept_sor_kor_status_2",
+        )
+
+    if current_address_province_id not in allowed_sor_kor_province_ids(actor_province_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="applicant_outside_dwf_scope",
+        )
+
+
+def _cover_document_batch_is_visible_to_staff(
+    batch,
+    staff: StaffClaims,
+) -> bool:
+    if staff.is_internal:
+        return True
+    # Cover-document actions keep the PMJ workflow rule: Sor Kor mother provinces can act for children.
+    return batch.province_id in visible_cover_document_batch_province_ids(
+        staff.province_id,
+        batch.type_money_id,
+    )
+
+
+def _assert_cover_document_batch_visible_to_staff(
+    batch,
+    staff: StaffClaims,
+) -> None:
+    if not _cover_document_batch_is_visible_to_staff(batch, staff):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="cover_document_batch_outside_scope",
+        )
+
+
 def _merge_payment_metrics_into_rows(
     rows: list,
     payments_by_applicant: dict[int, list[WelfarePayment]],
@@ -542,12 +811,126 @@ def _merge_payment_metrics_into_rows(
     merged: list[dict] = []
     for row in rows:
         data = dict(row)
+        data["current_address_province_id"] = data.get("province_id")
+        data["current_address_province_name"] = data.get("province_name")
+        data["responsible_division_name"] = division_name_for_id(
+            data.get("responsible_division_id")  # type: ignore[arg-type]
+        )
         metrics = applicant_payment_metrics(
             payments_by_applicant.get(data["applicant_id"], []),
         )
         data.update(metrics)
         merged.append(data)
     return merged
+
+
+def _merge_cash_disbursement_flags_into_rows(
+    rows: list[dict],
+    *,
+    cash_metrics_by_applicant: dict[int, dict],
+) -> list[dict]:
+    """เติม flags เงินสด — Django ต้องไม่ใช้ count_037 เป็น incomplete ของเคสเงินสด."""
+    for data in rows:
+        applicant_id = data.get("applicant_id")
+        method_id = data.get("payment_method_id")
+        metrics = cash_metrics_by_applicant.get(int(applicant_id), {}) if applicant_id is not None else {}
+        is_cash = bool(metrics.get("is_cash_payment")) or is_cash_or_cheque(method_id)
+        data["payment_method_id"] = metrics.get("payment_method_id", method_id)
+        data["is_cash_payment"] = is_cash
+        data["count_cash_proof"] = int(metrics.get("count_cash_proof") or 0)
+        data["has_disbursement_proof"] = bool(metrics.get("has_disbursement_proof"))
+        data["disbursement_payment_number"] = metrics.get("disbursement_payment_number")
+        data["is_cash_disbursement_complete"] = bool(metrics.get("is_cash_disbursement_complete"))
+        if not is_cash:
+            data.setdefault("count_cash_proof", 0)
+            data.setdefault("has_disbursement_proof", False)
+            data.setdefault("disbursement_payment_number", None)
+            data.setdefault("is_cash_disbursement_complete", False)
+    return rows
+
+
+async def _load_cash_metrics_by_applicant_ids(
+    session: AsyncSession,
+    applicant_ids: list[int],
+    payment_method_by_applicant: dict[int, int | None],
+) -> dict[int, dict]:
+    from ...services.cash_disbursement import cash_disbursement_metrics_for_applicant
+
+    result: dict[int, dict] = {}
+    for applicant_id in applicant_ids:
+        result[applicant_id] = await cash_disbursement_metrics_for_applicant(
+            session,
+            applicant_id,
+            payment_method_id=payment_method_by_applicant.get(applicant_id),
+        )
+    return result
+
+
+async def _apply_cash_disbursement_status_if_needed(
+    session: AsyncSession,
+    applicant_id: int,
+    payment: WelfarePayment,
+    *,
+    user_sdshv: str | None = None,
+) -> tuple[WelfareRequestStatus | None, CurrentStatus | None]:
+    """เงินสด/เช็ค: สถานะ 10 เมื่อมีเลขที่ขอเบิก + หลักฐานอย่างน้อย 1 ไฟล์."""
+    method_id = await session.scalar(
+        select(CasePayment.payment_method_id)
+        .join(CaseHandling, CaseHandling.id == CasePayment.case_handling_id)
+        .where(CaseHandling.applicant_id == applicant_id)
+        .limit(1),
+    )
+    if not is_cash_or_cheque(method_id):
+        return None, None
+
+    proof_rows = await load_cash_proof_files_for_dda(session, applicant_id, payment.dda_ref_id)
+    payment_number = normalize_payment_number(payment.payment_number)
+    if payment_number is None:
+        payment_number = normalize_payment_number(
+            await session.scalar(
+                select(WelfarePayment.payment_number)
+                .where(
+                    WelfarePayment.applicant_id == applicant_id,
+                    WelfarePayment.dda_ref_id == payment.dda_ref_id,
+                    WelfarePayment.payment_number.is_not(None),
+                )
+                .order_by(WelfarePayment.id.desc())
+                .limit(1),
+            )
+        )
+    target_status_id = cash_disbursement_target_status(
+        payment_number=payment_number,
+        file_rows=proof_rows,
+    )
+    if target_status_id is None:
+        return None, None
+
+    latest_status_id = await fetch_latest_status_id(session, applicant_id=applicant_id)
+    if latest_status_id in PAYMENT_EDIT_PRESERVE_STATUS_IDS:
+        return None, None
+    if latest_status_id == target_status_id:
+        return None, None
+    if not is_status_advancement(latest_status_id, target_status_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="status_cannot_go_backward",
+        )
+
+    status_row = await _get_row(session, CurrentStatus, target_status_id)
+    if status_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+
+    status_log = WelfareRequestStatus(
+        applicant_id=applicant_id,
+        current_status_id=target_status_id,
+        remarks="บันทึกเลขที่ขอเบิกและหลักฐานเบิกจ่ายเงินสด",
+        update_by_sdshv=user_sdshv,
+    )
+    session.add(status_log)
+    applicant = await session.get(Applicant, applicant_id)
+    if applicant is not None:
+        maybe_freeze_process_sla_for_status(applicant, target_status_id)
+    return status_log, status_row
 
 
 def _applicant_have_dda_ref_exists():
@@ -654,8 +1037,17 @@ async def _apply_payment_status_if_needed(
 @router.get("", response_model=CaseForStaffListResponse)
 async def list_cases_for_staff(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    province_ids: list[str] | None = Query(
+        None,
+        description="DWF scope narrowing only; values must belong to the DWF group resolved from province_id/staff",
+    ),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
     current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: list[int] | None = Query(
+        None,
+        description="Filter by current_status_id; supports repeated query values",
+    ),
     firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
     lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
     cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
@@ -669,6 +1061,7 @@ async def list_cases_for_staff(
     postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
     type_money_id: int | None = Query(None, description="กรองตาม type_money_category.id (applicants.type_money_category_id)"),
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CaseForStaffListResponse:
     province = await session.scalar(select(Province).where(Province.id == province_id))
     if province is None:
@@ -890,7 +1283,17 @@ async def list_cases_for_staff(
             ApplicantSubmissionAudit.applicant_id == Applicant.id,
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
-        .where(Province.id == province_id)
+        .where(
+            _case_location_visibility_condition(
+                province_id=province_id,
+                staff=staff,
+                dwf_scope=dwf_scope,
+                requested_province_ids=_parse_int_query_values(province_ids),
+                type_money_ids={type_money_id} if type_money_id is not None else None,
+                province_column=Province.id,
+                type_money_column=Applicant.type_money_category_id,
+            )
+        )
         .order_by(Applicant.created_at.desc(), Applicant.id.desc())
     )
 
@@ -902,6 +1305,8 @@ async def list_cases_for_staff(
         stmt = stmt.where(Applicant.case_number.ilike(f"%{cleaned_case_number}%"))
     if cleaned_current_status := _clean_text_filter(current_status):
         stmt = stmt.where(latest_status_sq.c.current_status.ilike(f"%{cleaned_current_status}%"))
+    if current_status_id:
+        stmt = stmt.where(latest_status_sq.c.current_status_id.in_(current_status_id))
     if cleaned_firstname := _clean_text_filter(firstname):
         stmt = stmt.where(Person.first_name.ilike(f"%{cleaned_firstname}%"))
     if cleaned_lastname := _clean_text_filter(lastname):
@@ -965,6 +1370,8 @@ async def list_cases_for_staff(
 async def _list_cases_for_staff_finance_impl(
     session: AsyncSession,
     province_id: int,
+    province_ids: list[str] | None,
+    dwf_scope: bool,
     case_number: str | None,
     current_status: str | None,
     current_status_id: list[int] | None,
@@ -982,6 +1389,8 @@ async def _list_cases_for_staff_finance_impl(
     type_money_id: list[int] | None,
     *,
     require_welfare_payment_with_dda: bool,
+    staff: StaffClaims,
+    auto_expand_mother_province: bool = False,
 ) -> CaseForStaffFinanceListResponse:
     province = await session.scalar(select(Province).where(Province.id == province_id))
     if province is None:
@@ -1083,10 +1492,15 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.mobile_phone.label("mobile_phone"),
             CaseRegulationChoice.money_amount.label("money_amount"),
             CaseHandling.responsible_division_id.label("responsible_division_id"),
+            CasePayment.payment_method_id.label("payment_method_id"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
         .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+        .outerjoin(
+            CasePayment,
+            CasePayment.case_handling_id == CaseHandling.id,
+        )
         .outerjoin(
             CaseRegulationChoice,
             CaseRegulationChoice.case_handling_id == CaseHandling.id,
@@ -1121,7 +1535,21 @@ async def _list_cases_for_staff_finance_impl(
                 latest_dda_sq.c.rn == 1,
             ),
         )
-        .where(Province.id == province_id)
+        .where(
+            (
+                _finance_location_visibility_condition
+                if auto_expand_mother_province
+                else _case_location_visibility_condition
+            )(
+                province_id=province_id,
+                staff=staff,
+                dwf_scope=dwf_scope,
+                requested_province_ids=_parse_int_query_values(province_ids),
+                type_money_ids=set(type_money_id) if type_money_id else None,
+                province_column=Province.id,
+                type_money_column=Applicant.type_money_category_id,
+            )
+        )
         .where(approved_exists)
         .order_by(Applicant.created_at.desc(), Applicant.id.desc())
     )
@@ -1180,6 +1608,18 @@ async def _list_cases_for_staff_finance_impl(
     applicant_ids = [row["applicant_id"] for row in rows]
     payments_by_applicant = await load_payments_by_applicant_ids(session, applicant_ids)
     enriched_rows = _merge_payment_metrics_into_rows(rows, payments_by_applicant)
+    payment_method_by_applicant = {
+        int(row["applicant_id"]): row.get("payment_method_id") for row in enriched_rows
+    }
+    cash_metrics = await _load_cash_metrics_by_applicant_ids(
+        session,
+        applicant_ids,
+        payment_method_by_applicant,
+    )
+    enriched_rows = _merge_cash_disbursement_flags_into_rows(
+        enriched_rows,
+        cash_metrics_by_applicant=cash_metrics,
+    )
     return CaseForStaffFinanceListResponse(
         province_id=province.id,
         province_name=province.name,
@@ -1192,6 +1632,11 @@ async def _list_cases_for_staff_finance_impl(
 @router.get("/finance", response_model=CaseForStaffFinanceListResponse)
 async def list_cases_for_staff_finance(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา (บังคับ)"),
+    province_ids: list[str] | None = Query(
+        None,
+        description="DWF scope narrowing only; values must belong to the DWF group resolved from province_id/staff",
+    ),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
     current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
     current_status_id: list[int] | None = Query(
@@ -1214,11 +1659,14 @@ async def list_cases_for_staff_finance(
         description="กรองตาม type_money_category.id ได้หลายค่า (เช่น ?type_money_id=1&type_money_id=2)",
     ),
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CaseForStaffFinanceListResponse:
     """รายการสำหรับตารางการเงิน — เฉพาะเคสที่ approve_case.approve_status = true."""
     return await _list_cases_for_staff_finance_impl(
         session,
         province_id,
+        province_ids,
+        dwf_scope,
         case_number,
         current_status,
         current_status_id,
@@ -1235,12 +1683,19 @@ async def list_cases_for_staff_finance(
         postcode,
         type_money_id,
         require_welfare_payment_with_dda=False,
+        staff=staff,
+        auto_expand_mother_province=True,
     )
 
 
 @router.get("/finance/with-dda-ref", response_model=CaseForStaffFinanceListResponse)
 async def list_cases_for_staff_finance_with_dda_ref(
     province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา (บังคับ)"),
+    province_ids: list[str] | None = Query(
+        None,
+        description="DWF scope narrowing only; values must belong to the DWF group resolved from province_id/staff",
+    ),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
     case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
     current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
     current_status_id: list[int] | None = Query(
@@ -1263,6 +1718,7 @@ async def list_cases_for_staff_finance_with_dda_ref(
         description="กรองตาม type_money_category.id ได้หลายค่า",
     ),
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CaseForStaffFinanceListResponse:
     """เหมือน /finance แต่ดึงเฉพาะ applicant ที่มี welfare_payment ผูก welfare_dda_ref แล้ว.
 
@@ -1271,6 +1727,8 @@ async def list_cases_for_staff_finance_with_dda_ref(
     return await _list_cases_for_staff_finance_impl(
         session,
         province_id,
+        province_ids,
+        dwf_scope,
         case_number,
         current_status,
         current_status_id,
@@ -1287,6 +1745,7 @@ async def list_cases_for_staff_finance_with_dda_ref(
         postcode,
         type_money_id,
         require_welfare_payment_with_dda=True,
+        staff=staff,
     )
 
 
@@ -1305,6 +1764,8 @@ async def update_welfare_payment_for_staff(
     if not updates:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_fields_to_update")
 
+    await assert_cash_payment_037_038_update_allowed(session, applicant_id, updates)
+
     if _welfare_payment_update_indicates_037(updates):
         payment = await apply_037_update(session, applicant_id, updates)
     elif _welfare_payment_update_indicates_038(updates):
@@ -1320,6 +1781,13 @@ async def update_welfare_payment_for_staff(
             applicant_id,
             payment,
             updates,
+        )
+    else:
+        status_log, status_row = await _apply_cash_disbursement_status_if_needed(
+            session,
+            applicant_id,
+            payment,
+            user_sdshv=updates.get("user_sdshv"),
         )
 
     await session.commit()
@@ -1344,6 +1812,11 @@ async def update_welfare_payment_batch_for_staff(
     session: AsyncSession = Depends(get_session),
 ) -> WelfarePaymentBatchRead:
     """บันทึก 037 และ 038 ใน transaction เดียว — สถานะ 3 เมื่อครบทั้งคู่ในรอบ."""
+    await assert_cash_payment_037_038_update_allowed(
+        session,
+        applicant_id,
+        {"is_037_or_038": False},
+    )
     batch_id = body.upload_batch_id
     user_sdshv = body.user_sdshv
 
@@ -1459,6 +1932,14 @@ async def upload_file_payment_pdf(
             applicant_id=applicant_id,
             file_payment_id=row.id,
         )
+    if attachment_type_id in CASH_DISBURSEMENT_PROOF_TYPE_IDS and row.welfare_payment_id is not None:
+        payment = await session.get(WelfarePayment, row.welfare_payment_id)
+        if payment is not None:
+            await _apply_cash_disbursement_status_if_needed(
+                session,
+                applicant_id,
+                payment,
+            )
     return FilePaymentUploadRead(
         **FilePaymentRead.model_validate(row).model_dump(),
         view_path=(
@@ -2022,6 +2503,7 @@ async def update_responsible_division_for_staff(
 async def create_welfare_request_status_for_staff(
     body: CaseForStaffWelfareRequestStatusCreate,
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> WelfareRequestStatusRead:
     applicant = await session.get(Applicant, body.applicant_id)
     if applicant is None:
@@ -2029,6 +2511,12 @@ async def create_welfare_request_status_for_staff(
     current_status = await _get_row(session, CurrentStatus, body.current_status_id)
     if current_status is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="current_status_not_found")
+    await _assert_dwf_status_change_allowed(
+        session,
+        staff=staff,
+        applicant=applicant,
+        target_status_id=body.current_status_id,
+    )
 
     log = WelfareRequestStatus(
         applicant_id=body.applicant_id,
@@ -2805,7 +3293,10 @@ async def patch_cover_document_batch_for_staff(
     batch_id: int,
     body: CoverDocumentBatchUpdate,
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CoverDocumentBatchRead:
+    existing = await get_cover_document_batch(session, batch_id)
+    _assert_cover_document_batch_visible_to_staff(existing, staff)
     batch = await update_cover_document_batch(
         session,
         batch_id,
@@ -2824,8 +3315,10 @@ async def patch_cover_document_batch_for_staff(
 async def get_cover_document_batch_for_staff(
     batch_id: int,
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CoverDocumentBatchRead:
     batch = await get_cover_document_batch(session, batch_id)
+    _assert_cover_document_batch_visible_to_staff(batch, staff)
     return CoverDocumentBatchRead.model_validate(batch_to_read(batch))
 
 
@@ -2838,13 +3331,18 @@ async def list_cover_document_batches_for_staff(
     province_id: int | None = Query(None, ge=1),
     pending: bool = Query(False),
     session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
 ) -> CoverDocumentBatchListResponse:
+    sor_kor_province_ids: tuple[int, ...] | None = None
+    if province_id is not None and not staff.is_internal:
+        sor_kor_province_ids = allowed_sor_kor_province_ids(staff.province_id)
     batches = await list_cover_document_batches(
         session,
         province_id=province_id,
         pending=pending,
+        sor_kor_province_ids=sor_kor_province_ids,
+        sor_kor_type_money_id=SOR_KOR_TYPE_MONEY_ID,
     )
     return CoverDocumentBatchListResponse(
         items=[CoverDocumentBatchRead.model_validate(batch_to_read(batch)) for batch in batches]
     )
-

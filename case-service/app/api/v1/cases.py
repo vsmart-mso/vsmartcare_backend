@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -75,8 +75,12 @@ from ...core.file_validation import assert_image_magic_bytes
 from ...services.welfare_evidence import validate_welfare_evidence_upload
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead
-from ...schemas.review import WelfareEditRequestCommentRead
+from ...schemas.review import WelfareCaseResubmitBody, WelfareEditRequestCommentRead
 from ...schemas.status_log import WelfareRequestStatusRead
+from ...services.field_confirmations import (
+    apply_field_confirmations,
+    validate_field_confirmations,
+)
 from ...schemas.welfare import (
     WelfareEvidenceRead,
     WelfareHistoryDetailRead,
@@ -616,14 +620,16 @@ async def update_welfare_case(
     status_code=status.HTTP_201_CREATED,
     summary="ยืนยันคำร้องหลังแก้ไขข้อมูลที่ถูกตีกลับ — reset สถานะกลับเป็น 'รอรับเรื่อง'",
     description=(
-        "เรียกหลังจาก PATCH /v1/cases/{applicant_id} สำเร็จ เมื่อประชาชนแก้ไขข้อมูลตามที่ "
-        "เจ้าหน้าที่ตีกลับ (สถานะ 'ดำเนินการแก้ไขข้อมูล') เสร็จเรียบร้อยแล้ว — endpoint นี้ใช้แทน "
-        "/v1/case_for_staff/welfare-request-status ซึ่งเป็น endpoint ฝั่งเจ้าหน้าที่เท่านั้น "
-        "(ประชาชนเรียกแล้วจะได้ 401 เสมอ)"
+        "เรียกหลังจาก PATCH /v1/cases/{applicant_id} สำเร็จ เมื่อประชาชนตรวจสอบ/ยืนยัน "
+        "ฟิลด์ที่เจ้าหน้าที่ตีกลับ (สถานะ 'ดำเนินการแก้ไขข้อมูล') เสร็จเรียบร้อยแล้ว — "
+        "ต้องส่ง field_confirmations ครบทุกฟิลด์ที่ถูกสั่งแก้ (TASK_211). "
+        "endpoint นี้ใช้แทน /v1/case_for_staff/welfare-request-status ซึ่งเป็น endpoint "
+        "ฝั่งเจ้าหน้าที่เท่านั้น (ประชาชนเรียกแล้วจะได้ 401 เสมอ)"
     ),
 )
 async def resubmit_welfare_case(
     applicant_id: int,
+    body: WelfareCaseResubmitBody | None = Body(default=None),
     session: AsyncSession = Depends(get_session),
     claims: CitizenClaims = Depends(require_citizen),
 ) -> WelfareRequestStatusRead:
@@ -646,6 +652,30 @@ async def resubmit_welfare_case(
 
     if latest is None or latest.current_status_id != CURRENT_STATUS_EDIT_REQUESTED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="case_not_awaiting_edit")
+
+    # โหลด review comments ของรอบ status-8 นี้เพื่อตรวจ + บันทึก confirmation (TASK_211)
+    status8_result = await session.execute(
+        select(WelfareRequestStatus)
+        .where(WelfareRequestStatus.id == latest.id)
+        .options(
+            selectinload(WelfareRequestStatus.review_comments).selectinload(
+                WelfareReviewComment.review_field
+            )
+        ),
+    )
+    status8 = status8_result.scalar_one()
+    comments = list(status8.review_comments)
+
+    confirmations = body.field_confirmations if body is not None else None
+    confirm_error = validate_field_confirmations(comments, confirmations)
+    if confirm_error is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=confirm_error,
+        )
+
+    if confirmations:
+        apply_field_confirmations(comments, confirmations)
 
     log = WelfareRequestStatus(
         applicant_id=applicant_id,

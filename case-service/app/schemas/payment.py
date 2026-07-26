@@ -242,9 +242,13 @@ class PaymentUploadHistoryRound(BaseModel):
         None,
         description="Payment ID / เลขอ้างอิง CFT 038 (payment_number จากแถว 038)",
     )
+    reference_number: str | None = Field(
+        None,
+        description="เลขอ้างอิงเงินสด/เช็ค (payment_number เมื่อ is_037_or_038 เป็น null)",
+    )
     files: list[str] = Field(
         default_factory=list,
-        description='ป้ายไฟล์ที่อัปโหลดในรอบนี้ เช่น ["cft037", "cft038"]',
+        description='ป้ายไฟล์ที่อัปโหลดในรอบนี้ เช่น ["cft037", "cft038", "proof_receiving"]',
     )
     file_items: list[PaymentUploadFileItem] = Field(
         default_factory=list,

@@ -86,6 +86,11 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
     time_count_process: int | None = Field(None, ge=0)
     province_id: int
     province_name: str = Field(..., min_length=1, max_length=255)
+    current_address_province_id: int | None = Field(
+        None,
+        description="จังหวัดที่อยู่ปัจจุบันของเคส ใช้ตัดสิน DWF visibility",
+    )
+    current_address_province_name: str | None = Field(None, max_length=255)
     district_id: int
     district_name: str = Field(..., min_length=1, max_length=255)
     subdistrict_id: int
@@ -152,6 +157,10 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         None,
         ge=1,
         description="Division.id จาก vSmart (case_handling.responsible_division_id)",
+    )
+    responsible_division_name: str | None = Field(
+        None,
+        description="ชื่อหน่วยงานรับผิดชอบจาก drpod_dwf.json สำหรับแสดงผลเท่านั้น",
     )
 
 
@@ -220,6 +229,33 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
         description="case_regulation_choice.money_amount (ผ่าน case_handling)",
     )
     dda_ref: str | None = Field(None, max_length=255, description="dda_ref ล่าสุดจาก welfare_dda_ref (ผ่าน welfare_payment)")
+    payment_method_id: int | None = Field(
+        None,
+        ge=1,
+        description="case_payment.payment_method_id — วิธีจ่ายตอนรับเรื่อง",
+    )
+    is_cash_payment: bool = Field(
+        False,
+        description="true เมื่อวิธีจ่ายเป็นเงินสดหรือเช็ค (ไม่ใช้เส้น 037/038)",
+    )
+    count_cash_proof: int = Field(
+        0,
+        ge=0,
+        description="จำนวนไฟล์หลักฐานเบิกจ่ายเงินสด (attachment 13/14/15)",
+    )
+    has_disbursement_proof: bool = Field(
+        False,
+        description="true เมื่อมีหลักฐานเบิกจ่ายเงินสดอย่างน้อย 1 ไฟล์",
+    )
+    disbursement_payment_number: str | None = Field(
+        None,
+        max_length=255,
+        description="เลขที่ขอเบิกล่าสุดจาก welfare_payment.payment_number (เคสเงินสด)",
+    )
+    is_cash_disbursement_complete: bool = Field(
+        False,
+        description="true เมื่อเงินสดครบเลขที่ขอเบิก + หลักฐานอย่างน้อย 1 ไฟล์",
+    )
 
 
 class CaseForStaffFinanceListResponse(BaseModel):

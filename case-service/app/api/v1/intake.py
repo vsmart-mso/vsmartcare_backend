@@ -16,7 +16,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -36,8 +36,9 @@ from ...models.intake import (
     CaseRegulationChoice,
     PaymentMethod,
 )
-from ...models.lookup import BankName
+from ...models.lookup import BankName, CurrentStatus
 from ...models.person import Person
+from ...models.status_log import WelfareRequestStatus
 from ...schemas.intake import (
     CaseDiagnosisCreate,
     CaseDiagnosisEditHistoryRead,
@@ -57,6 +58,10 @@ from ...schemas.intake import (
 from ...services.ktb_requirement import (
     load_applicant_for_audit_refresh,
     refresh_applicant_submission_audit,
+)
+from ...constants.payment_method import (
+    clear_bank_fields_in_payload,
+    payment_hides_bank,
 )
 
 router = APIRouter(
@@ -146,13 +151,30 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
     summary="รายการระเบียบสำหรับ dropdown หน้า 11",
     description=(
         "ดึงระเบียบที่ activate=true เรียงตาม sort_order — "
-        "ถ้าส่ง citizen (CID) + budget_year จะคำนวณ count_used และ disabled ด้วย"
+        "ถ้าส่ง citizen (CID) + budget_year จะคำนวณ count_used และ disabled ด้วย "
+        "(นับตามปีปฏิทิน ม.ค.-ธ.ค. ของปี budget_year) — หรือส่ง citizen + fiscal_start "
+        "+ fiscal_end แทน budget_year เพื่อนับตามช่วงวันที่กำหนดเอง เช่น ปีงบประมาณไทย "
+        "ต.ค.-ก.ย. (fiscal_start/fiscal_end มีผลก่อน budget_year ถ้าส่งมาทั้งคู่) — "
+        "count_used นับเฉพาะเคสที่สถานะล่าสุดเป็น 'ช่วยเหลือแล้ว' หรือ 'ส่งต่อข้อมูล"
+        "เรียบร้อยแล้ว' เท่านั้น (เทียบเท่า status_form 7/14 ฝั่ง VSmart) เคสที่ยังไม่"
+        "อนุมัติหรือถูกปฏิเสธไปแล้วจะไม่ถูกนับ"
     ),
 )
 async def list_regulations(
     citizen: str | None = Query(None, max_length=13, description="เลขบัตรประชาชน 13 หลัก"),
     budget_year: int | None = Query(
-        None, description="ปีงบประมาณไทย (พ.ศ.) เช่น 2568 — ใช้นับ count_used"
+        None, description="ปีงบประมาณไทย (พ.ศ.) เช่น 2568 — ใช้นับ count_used แบบปีปฏิทิน (ม.ค.-ธ.ค.)"
+    ),
+    fiscal_start: date | None = Query(
+        None,
+        description=(
+            "วันที่เริ่มช่วงนับ count_used (inclusive) — ใช้แทน budget_year เมื่อ"
+            "ต้องการนับตามช่วงวันที่กำหนดเอง เช่น ปีงบประมาณไทย ต.ค.-ก.ย. "
+            "ต้องส่งคู่กับ fiscal_end"
+        ),
+    ),
+    fiscal_end: date | None = Query(
+        None, description="วันที่สิ้นสุดช่วงนับ count_used (exclusive) — ใช้คู่กับ fiscal_start"
     ),
     session: AsyncSession = Depends(get_session),
 ) -> list[RegulationDropdownItem]:
@@ -167,11 +189,49 @@ async def list_regulations(
 
     regs = list((await session.execute(stmt)).scalars().all())
 
-    # คำนวณ count_used ต่อ regulation สำหรับบุคคลนี้ในปีงบประมาณที่กำหนด
+    # คำนวณ count_used ต่อ regulation สำหรับบุคคลนี้ในช่วงเวลาที่กำหนด
+    # - ส่ง fiscal_start + fiscal_end มา → นับตามช่วงวันที่นั้นตรงๆ (รองรับปีงบประมาณ
+    #   ไทย ต.ค.-ก.ย. หรือช่วงใดก็ได้ที่ผู้เรียกกำหนดเอง)
+    # - ไม่ส่ง fiscal_start/fiscal_end แต่ส่ง budget_year มา → นับตามปีปฏิทิน (ม.ค.-ธ.ค.)
+    #   ของปีนั้น (พฤติกรรมเดิม ก่อนเพิ่ม fiscal_start/fiscal_end)
     usage_map: dict[int, int] = {}
-    if citizen and budget_year:
+    date_conditions: tuple | None = None
+    if citizen and fiscal_start and fiscal_end:
+        date_conditions = (
+            CaseHandling.intake_completed_at >= fiscal_start,
+            CaseHandling.intake_completed_at < fiscal_end,
+        )
+    elif citizen and budget_year:
         gregorian_year = budget_year - 543
+        date_conditions = (
+            func.extract("year", CaseHandling.intake_completed_at) == gregorian_year,
+        )
+
+    if date_conditions:
         reg_ids = [r.id for r in regs]
+
+        # นับเฉพาะเคสที่ "เสร็จสิ้นแล้วจริง" เทียบเท่า status_form ฝั่ง VSmart
+        # 7 (ช่วยเหลือแล้ว) / 14 (ส่งต่อข้อมูลเรียบร้อยแล้ว) — current_status.vsmart_id
+        # sync กับ status_form ฝั่ง VSmart อยู่แล้ว (เหมือน announcement_regulations.id
+        # และ type_money_category.id) จึงเทียบผ่าน vsmart_id แทนเทียบ id ของ CARE ตรงๆ
+        # เพื่อไม่ผูกกับลำดับ id ภายในของ current_status
+        done_vsmart_status_ids = (7, 14)
+        done_status_ids_sq = select(CurrentStatus.id).where(
+            CurrentStatus.vsmart_id.in_(done_vsmart_status_ids)
+        )
+
+        # welfare_request_status เป็นตาราง log การเปลี่ยนสถานะ (หลายแถวต่อ applicant)
+        # ต้องหาสถานะ "ล่าสุด" ต่อ applicant ก่อน (แถวที่ id มากที่สุด) แล้วค่อยเช็คว่า
+        # สถานะล่าสุดนั้นอยู่ในกลุ่ม "เสร็จสิ้นแล้ว" หรือไม่ — ไม่ใช่เช็คว่าเคย "ผ่าน"
+        # สถานะนั้นตอนไหนก็ได้ (ถ้าเคสถูกปฏิเสธไปแล้วภายหลัง ไม่ควรนับ)
+        latest_status_sq = (
+            select(
+                WelfareRequestStatus.applicant_id,
+                func.max(WelfareRequestStatus.id).label("latest_id"),
+            )
+            .group_by(WelfareRequestStatus.applicant_id)
+            .subquery()
+        )
 
         count_sq = (
             select(
@@ -181,10 +241,19 @@ async def list_regulations(
             .join(CaseHandling, CaseHandling.id == CaseRegulationChoice.case_handling_id)
             .join(Applicant, Applicant.id == CaseHandling.applicant_id)
             .join(Person, Person.id == Applicant.persons_id)
+            .join(
+                latest_status_sq,
+                latest_status_sq.c.applicant_id == Applicant.id,
+            )
+            .join(
+                WelfareRequestStatus,
+                WelfareRequestStatus.id == latest_status_sq.c.latest_id,
+            )
             .where(
                 Person.cid == citizen,
                 CaseRegulationChoice.regulation_id.in_(reg_ids),
-                func.extract("year", CaseHandling.intake_completed_at) == gregorian_year,
+                WelfareRequestStatus.current_status_id.in_(done_status_ids_sq),
+                *date_conditions,
             )
             .group_by(CaseRegulationChoice.regulation_id)
         )
@@ -439,6 +508,10 @@ async def upsert_intake_payment(
     )
 
     fields = body.model_dump()
+    hide_bank = payment_hides_bank(body.payment_method_id, method_code=pm.code)
+    if hide_bank:
+        clear_bank_fields_in_payload(fields)
+
     if payment is None:
         payment = CasePayment(case_handling_id=handling.id, **fields)
         session.add(payment)
@@ -451,16 +524,22 @@ async def upsert_intake_payment(
     if handling.intake_completed_at is None:
         handling.intake_completed_at = datetime.utcnow()
 
-    account_number = (body.account_number or "").strip()
+    account_number = (fields.get("account_number") or "").strip()
     applicant = await load_applicant_for_audit_refresh(session, applicant_id)
     if applicant is not None:
-        if account_number:
-            applicant.bank_account_no = account_number
-        bank_for_audit = account_number or applicant.bank_account_no
+        if hide_bank:
+            applicant.bank_account_no = None
+            bank_for_audit = ""
+        else:
+            if account_number:
+                applicant.bank_account_no = account_number
+            bank_for_audit = account_number or applicant.bank_account_no
         await refresh_applicant_submission_audit(
             session,
             applicant,
             bank_account_no=bank_for_audit,
+            payment_method_id=body.payment_method_id,
+            payment_method_code=pm.code,
         )
 
     await session.commit()

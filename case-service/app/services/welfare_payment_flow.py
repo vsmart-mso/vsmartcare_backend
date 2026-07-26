@@ -12,6 +12,11 @@ from ..constants.current_status import (
     CURRENT_STATUS_WITHDRAWING,
     CURRENT_STATUS_WITHDRAWING_APPROVED,
 )
+from ..constants.attachment_types import (
+    ATTACHMENT_TYPE_PDF_037,
+    ATTACHMENT_TYPE_PDF_038,
+    CASH_DISBURSEMENT_PROOF_TYPE_IDS,
+)
 from ..models.payment import FilePayment, WelfarePayment
 from .payment_round_metrics import (
     _find_round,
@@ -25,8 +30,8 @@ from .payment_round_metrics import (
 )
 
 PAYMENT_CYCLE_CLOSED = "payment_cycle_closed"
-ATTACHMENT_PDF_037_ID = 9
-ATTACHMENT_PDF_038_ID = 10
+ATTACHMENT_PDF_037_ID = ATTACHMENT_TYPE_PDF_037
+ATTACHMENT_PDF_038_ID = ATTACHMENT_TYPE_PDF_038
 
 
 def is_payment_round_status_correction(current_status_id: int | None, target_status_id: int) -> bool:
@@ -75,6 +80,43 @@ async def resolve_active_dda_ref_id(session: AsyncSession, applicant_id: int) ->
     if dda_ref_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="welfare_payment_not_found")
     return dda_ref_id
+
+
+async def ensure_cash_disbursement_payment_row(
+    session: AsyncSession,
+    applicant_id: int,
+) -> WelfarePayment:
+    """
+    เคสเงินสด/เช็คอาจยังไม่มี DDA (ไม่ผ่าน IPay) — สร้าง welfare_dda_ref + welfare_payment
+    แบบ placeholder เพื่อบันทึกเลขที่ขอเบิกและหลักฐานได้
+    """
+    from ..models.payment import WelfareDdaRef
+
+    existing = await session.scalar(
+        select(WelfarePayment)
+        .where(WelfarePayment.applicant_id == applicant_id)
+        .order_by(WelfarePayment.id.desc())
+        .limit(1),
+    )
+    if existing is not None:
+        return existing
+
+    dda_row = WelfareDdaRef(
+        dda_ref=f"CASH-{applicant_id}",
+        user_sdshv="cash_disbursement",
+    )
+    session.add(dda_row)
+    await session.flush()
+
+    payment = WelfarePayment(
+        applicant_id=applicant_id,
+        dda_ref_id=dda_row.id,
+        is_037_or_038=None,
+    )
+    session.add(payment)
+    await session.flush()
+    await session.refresh(payment)
+    return payment
 
 
 def _raise_cycle_closed() -> None:
@@ -350,6 +392,9 @@ def _payment_matches_attachment(payment: WelfarePayment, attachment_type_id: int
         return payment.is_037_or_038 is False
     if attachment_type_id == ATTACHMENT_PDF_038_ID:
         return payment.is_037_or_038 is not False
+    if attachment_type_id in CASH_DISBURSEMENT_PROOF_TYPE_IDS:
+        # หลักฐานเงินสดผูกแถวเปิด/ล่าสุดได้ — ไม่บังคับธง 037/038
+        return True
     return True
 
 
@@ -359,6 +404,31 @@ def _type_flag_for_attachment(attachment_type_id: int) -> bool | None:
     if attachment_type_id == ATTACHMENT_PDF_038_ID:
         return True
     return None
+
+
+async def get_or_create_cash_disbursement_row_for_upload(
+    session: AsyncSession,
+    applicant_id: int,
+    dda_ref_id: int,
+) -> WelfarePayment:
+    """แถว welfare_payment สำหรับหลักฐานเงินสด — ใช้แถวเปิด หรือแถวล่าสุด (ไม่ตั้ง is_037_or_038)."""
+    open_row = await get_open_payment_row(session, applicant_id, dda_ref_id)
+    if open_row is not None:
+        return open_row
+
+    latest = await _latest_payment_for_dda(session, applicant_id, dda_ref_id)
+    if latest is not None:
+        return latest
+
+    payment = WelfarePayment(
+        applicant_id=applicant_id,
+        dda_ref_id=dda_ref_id,
+        is_037_or_038=None,
+    )
+    session.add(payment)
+    await session.flush()
+    await session.refresh(payment)
+    return payment
 
 
 async def resolve_payment_row_for_attachment(
@@ -412,6 +482,15 @@ async def apply_fields_on_active_dda(
     updates: dict,
 ) -> WelfarePayment:
     """อัปเดตฟิลด์อื่นโดยไม่เปลี่ยนประเภท 037/038 — ใช้แถวล่าสุดใน DDA ปัจจุบัน."""
+    from ..constants.payment_method import is_cash_or_cheque
+    from .cash_disbursement import get_case_payment_method_id
+
+    method_id = await get_case_payment_method_id(session, applicant_id)
+    if is_cash_or_cheque(method_id):
+        target = await ensure_cash_disbursement_payment_row(session, applicant_id)
+        _apply_fields(target, updates)
+        return target
+
     dda_ref_id = await resolve_active_dda_ref_id(session, applicant_id)
     if await is_dda_closed_for_038(session, applicant_id, dda_ref_id):
         _raise_cycle_closed()
@@ -484,6 +563,11 @@ async def resolve_welfare_payment_for_upload(
                 return existing
             _raise_cycle_closed()
         return await get_or_create_037_row_for_upload(session, applicant_id, dda_ref_id)
+
+    if attachment_type_id in CASH_DISBURSEMENT_PROOF_TYPE_IDS:
+        # เงินสดไม่ปิดรอบด้วย 037 — สร้างแถว placeholder ได้ถ้ายังไม่มี DDA
+        payment = await ensure_cash_disbursement_payment_row(session, applicant_id)
+        return payment
 
     active_dda_ref_id = await assert_payment_cycle_open(session, applicant_id)
 
