@@ -36,8 +36,9 @@ from ...models.intake import (
     CaseRegulationChoice,
     PaymentMethod,
 )
-from ...models.lookup import BankName
+from ...models.lookup import BankName, CurrentStatus
 from ...models.person import Person
+from ...models.status_log import WelfareRequestStatus
 from ...schemas.intake import (
     CaseDiagnosisCreate,
     CaseDiagnosisEditHistoryRead,
@@ -153,7 +154,10 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
         "ถ้าส่ง citizen (CID) + budget_year จะคำนวณ count_used และ disabled ด้วย "
         "(นับตามปีปฏิทิน ม.ค.-ธ.ค. ของปี budget_year) — หรือส่ง citizen + fiscal_start "
         "+ fiscal_end แทน budget_year เพื่อนับตามช่วงวันที่กำหนดเอง เช่น ปีงบประมาณไทย "
-        "ต.ค.-ก.ย. (fiscal_start/fiscal_end มีผลก่อน budget_year ถ้าส่งมาทั้งคู่)"
+        "ต.ค.-ก.ย. (fiscal_start/fiscal_end มีผลก่อน budget_year ถ้าส่งมาทั้งคู่) — "
+        "count_used นับเฉพาะเคสที่สถานะล่าสุดเป็น 'ช่วยเหลือแล้ว' หรือ 'ส่งต่อข้อมูล"
+        "เรียบร้อยแล้ว' เท่านั้น (เทียบเท่า status_form 7/14 ฝั่ง VSmart) เคสที่ยังไม่"
+        "อนุมัติหรือถูกปฏิเสธไปแล้วจะไม่ถูกนับ"
     ),
 )
 async def list_regulations(
@@ -206,6 +210,29 @@ async def list_regulations(
     if date_conditions:
         reg_ids = [r.id for r in regs]
 
+        # นับเฉพาะเคสที่ "เสร็จสิ้นแล้วจริง" เทียบเท่า status_form ฝั่ง VSmart
+        # 7 (ช่วยเหลือแล้ว) / 14 (ส่งต่อข้อมูลเรียบร้อยแล้ว) — current_status.vsmart_id
+        # sync กับ status_form ฝั่ง VSmart อยู่แล้ว (เหมือน announcement_regulations.id
+        # และ type_money_category.id) จึงเทียบผ่าน vsmart_id แทนเทียบ id ของ CARE ตรงๆ
+        # เพื่อไม่ผูกกับลำดับ id ภายในของ current_status
+        done_vsmart_status_ids = (7, 14)
+        done_status_ids_sq = select(CurrentStatus.id).where(
+            CurrentStatus.vsmart_id.in_(done_vsmart_status_ids)
+        )
+
+        # welfare_request_status เป็นตาราง log การเปลี่ยนสถานะ (หลายแถวต่อ applicant)
+        # ต้องหาสถานะ "ล่าสุด" ต่อ applicant ก่อน (แถวที่ id มากที่สุด) แล้วค่อยเช็คว่า
+        # สถานะล่าสุดนั้นอยู่ในกลุ่ม "เสร็จสิ้นแล้ว" หรือไม่ — ไม่ใช่เช็คว่าเคย "ผ่าน"
+        # สถานะนั้นตอนไหนก็ได้ (ถ้าเคสถูกปฏิเสธไปแล้วภายหลัง ไม่ควรนับ)
+        latest_status_sq = (
+            select(
+                WelfareRequestStatus.applicant_id,
+                func.max(WelfareRequestStatus.id).label("latest_id"),
+            )
+            .group_by(WelfareRequestStatus.applicant_id)
+            .subquery()
+        )
+
         count_sq = (
             select(
                 CaseRegulationChoice.regulation_id.label("reg_id"),
@@ -214,9 +241,18 @@ async def list_regulations(
             .join(CaseHandling, CaseHandling.id == CaseRegulationChoice.case_handling_id)
             .join(Applicant, Applicant.id == CaseHandling.applicant_id)
             .join(Person, Person.id == Applicant.persons_id)
+            .join(
+                latest_status_sq,
+                latest_status_sq.c.applicant_id == Applicant.id,
+            )
+            .join(
+                WelfareRequestStatus,
+                WelfareRequestStatus.id == latest_status_sq.c.latest_id,
+            )
             .where(
                 Person.cid == citizen,
                 CaseRegulationChoice.regulation_id.in_(reg_ids),
+                WelfareRequestStatus.current_status_id.in_(done_status_ids_sq),
                 *date_conditions,
             )
             .group_by(CaseRegulationChoice.regulation_id)
