@@ -6,7 +6,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+from ..utils.datetime_th import to_bangkok
 
 from .case_data_edit_log import CaseDataEditLogRead
 from .process_sla import ProcessSlaFields
@@ -162,6 +164,11 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         None,
         description="ชื่อหน่วยงานรับผิดชอบจาก drpod_dwf.json สำหรับแสดงผลเท่านั้น",
     )
+
+    # ส่งออกเป็นเวลาไทย (aware, offset +07:00) — ค่าใน DB เป็น UTC naive จาก func.now()
+    @field_serializer("datetime_create")
+    def _serialize_datetime_create(self, value: datetime) -> str:
+        return to_bangkok(value).isoformat()
 
 
 class CaseForStaffListResponse(BaseModel):
