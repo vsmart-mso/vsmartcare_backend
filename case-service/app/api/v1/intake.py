@@ -26,8 +26,12 @@ from sqlalchemy.orm import selectinload
 
 from ...core.database import get_session
 from ...core.staff_security import require_staff
+from ...models.address import Address
 from ...models.applicant import Applicant
+from ...models.dependency import DependencyLoad
 from ...models.diagnosis import CaseDiagnosis, CaseDiagnosisEditHistory
+from ...models.economic import EconomicIncomeSource, EconomicInfo
+from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.intake import (
     AnnouncementRegulation,
     CaseHandling,
@@ -51,6 +55,13 @@ from ...schemas.intake import (
     CasePaymentRead,
     CasePaymentUpsert,
     IntakeHandlingUpsert,
+    LatestHelpedCaseAddress,
+    LatestHelpedCaseDependency,
+    LatestHelpedCaseFamilyOccupation,
+    LatestHelpedCaseHousing,
+    LatestHelpedCaseIncomeSource,
+    LatestHelpedCasePerson,
+    LatestHelpedCaseResponse,
     PaymentMethodRead,
     RegulationDropdownItem,
     RegulationRead,
@@ -140,6 +151,198 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
     )
 
 
+# VSmart status_form 7 (ช่วยเหลือแล้ว) / 14 (ส่งต่อข้อมูลเรียบร้อยแล้ว)
+_DONE_VSMART_STATUS_IDS = (7, 14)
+
+
+def _geo_code_or_id(entity: object | None) -> str | None:
+    """คืน Province/District/SubDistrict.code เป็น string — ว่าง fallback เป็น str(id)."""
+    if entity is None:
+        return None
+    code = getattr(entity, "code", None)
+    if code is not None and str(code).strip():
+        return str(code).strip()
+    eid = getattr(entity, "id", None)
+    return str(eid) if eid is not None else None
+
+
+def _map_helped_case_address(addr: Address) -> LatestHelpedCaseAddress:
+    """map Address ORM → LatestHelpedCaseAddress (geo เป็น code)."""
+    sdp = addr.sub_district_postcode
+    sub: SubDistrict | None = sdp.sub_district if sdp is not None else None
+    dist: District | None = sub.district if sub is not None else None
+    prov = dist.province if dist is not None else None
+    postcode = None
+    if sdp is not None and sdp.postcode is not None:
+        postcode = sdp.postcode.name
+    return LatestHelpedCaseAddress(
+        house_no=addr.house_number,
+        moo=addr.house_moo,
+        village=addr.house_name,
+        lane=addr.sub_lane,
+        alley=addr.alley,
+        road=addr.road,
+        province=_geo_code_or_id(prov),
+        district=_geo_code_or_id(dist),
+        sub_district=_geo_code_or_id(sub),
+        province_name=prov.name if prov is not None else None,
+        district_name=dist.name if dist is not None else None,
+        sub_district_name=sub.name if sub is not None else None,
+        postcode=postcode,
+    )
+
+
+def _split_helped_case_addresses(
+    addresses: list[Address],
+) -> tuple[LatestHelpedCaseAddress, LatestHelpedCaseAddress]:
+    """แยกที่อยู่ตามชื่อ address_type: มี 'ทะเบียน' / มี 'ปัจจุบัน' — ว่างได้ {}."""
+    registered = LatestHelpedCaseAddress()
+    present = LatestHelpedCaseAddress()
+    for addr in addresses:
+        type_name = addr.address_type.name if addr.address_type else ""
+        mapped = _map_helped_case_address(addr)
+        if "ทะเบียน" in (type_name or ""):
+            registered = mapped
+        elif "ปัจจุบัน" in (type_name or ""):
+            present = mapped
+    return registered, present
+
+
+def _primary_economic_info(applicant: Applicant) -> EconomicInfo | None:
+    """economic_infos แถวแรก (id น้อยสุด) — โดยปกติมี 1 แถวต่อเคส."""
+    infos = list(applicant.economic_infos or [])
+    if not infos:
+        return None
+    return sorted(infos, key=lambda e: e.id)[0]
+
+
+def _map_income_sources(eco: EconomicInfo | None) -> list[LatestHelpedCaseIncomeSource]:
+    if eco is None:
+        return []
+    items: list[LatestHelpedCaseIncomeSource] = []
+    for src in sorted(
+        eco.income_sources or [],
+        key=lambda s: s.income_source_type_id,
+    ):
+        st = src.income_source_type
+        items.append(
+            LatestHelpedCaseIncomeSource(
+                id=src.income_source_type_id,
+                name=st.name if st is not None else None,
+                other_details=src.other_details,
+            )
+        )
+    return items
+
+
+def _map_dependencies(applicant: Applicant) -> list[LatestHelpedCaseDependency]:
+    items: list[LatestHelpedCaseDependency] = []
+    for dep in sorted(
+        applicant.dependency_loads or [],
+        key=lambda d: d.dependency_type_id,
+    ):
+        dt = dep.dependency_type
+        items.append(
+            LatestHelpedCaseDependency(
+                id=dep.dependency_type_id,
+                name=dt.name if dt is not None else None,
+                other_text=dep.dependency_other_text,
+            )
+        )
+    return items
+
+
+def _build_latest_helped_case_response(
+    applicant: Applicant,
+    helped_at: datetime,
+) -> LatestHelpedCaseResponse:
+    """map Applicant ที่ load relationship แล้ว + helped_at → response."""
+    person = applicant.person
+    prefix_name = person.prefix.name if person.prefix else None
+    marital_name = (
+        applicant.marital_status.name if applicant.marital_status else None
+    )
+    registered, present = _split_helped_case_addresses(list(applicant.addresses or []))
+
+    eco = _primary_economic_info(applicant)
+    housing = LatestHelpedCaseHousing()
+    family_occupation = LatestHelpedCaseFamilyOccupation()
+    monthly_income = None
+    if eco is not None:
+        ht = eco.housing_type
+        housing = LatestHelpedCaseHousing(
+            id=eco.housing_types_id,
+            name=ht.name if ht is not None else None,
+            shelter=eco.housing_shelter,
+        )
+        fot = eco.family_occupation_type
+        family_occupation = LatestHelpedCaseFamilyOccupation(
+            id=eco.family_occupation_type_id,
+            name=fot.name if fot is not None else None,
+            detail=eco.family_occupation,
+        )
+        monthly_income = eco.monthly_income
+
+    return LatestHelpedCaseResponse(
+        found=True,
+        helped_at=helped_at,
+        applicant_id=applicant.id,
+        person=LatestHelpedCasePerson(
+            citizen_id=person.cid,
+            prefix=prefix_name,
+            first_name=person.first_name,
+            last_name=person.last_name,
+            birthdate=person.birth_date,
+            gender=person.gender,
+            phone=applicant.mobile_phone,
+            home_phone=applicant.home_phone,
+            email=applicant.email_address,
+            marital_status_id=applicant.marital_status_id,
+            marital_status=marital_name,
+        ),
+        registered_address=registered,
+        present_address=present,
+        housing=housing,
+        family_occupation=family_occupation,
+        monthly_income=monthly_income,
+        income_sources=_map_income_sources(eco),
+        dependencies=_map_dependencies(applicant),
+    )
+
+
+async def _load_applicant_for_helped_case(
+    session: AsyncSession,
+    applicant_id: int,
+) -> Applicant | None:
+    return await session.scalar(
+        select(Applicant)
+        .where(Applicant.id == applicant_id)
+        .options(
+            selectinload(Applicant.person).selectinload(Person.prefix),
+            selectinload(Applicant.marital_status),
+            selectinload(Applicant.addresses).selectinload(Address.address_type),
+            selectinload(Applicant.addresses)
+            .selectinload(Address.sub_district_postcode)
+            .selectinload(SubDistrictPostcode.sub_district)
+            .selectinload(SubDistrict.district)
+            .selectinload(District.province),
+            selectinload(Applicant.addresses)
+            .selectinload(Address.sub_district_postcode)
+            .selectinload(SubDistrictPostcode.postcode),
+            selectinload(Applicant.economic_infos).selectinload(EconomicInfo.housing_type),
+            selectinload(Applicant.economic_infos).selectinload(
+                EconomicInfo.family_occupation_type
+            ),
+            selectinload(Applicant.economic_infos)
+            .selectinload(EconomicInfo.income_sources)
+            .selectinload(EconomicIncomeSource.income_source_type),
+            selectinload(Applicant.dependency_loads).selectinload(
+                DependencyLoad.dependency_type
+            ),
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Regulation dropdown — GET /v1/regulations
 # ---------------------------------------------------------------------------
@@ -215,7 +418,7 @@ async def list_regulations(
         # sync กับ status_form ฝั่ง VSmart อยู่แล้ว (เหมือน announcement_regulations.id
         # และ type_money_category.id) จึงเทียบผ่าน vsmart_id แทนเทียบ id ของ CARE ตรงๆ
         # เพื่อไม่ผูกกับลำดับ id ภายในของ current_status
-        done_vsmart_status_ids = (7, 14)
+        done_vsmart_status_ids = _DONE_VSMART_STATUS_IDS
         done_status_ids_sq = select(CurrentStatus.id).where(
             CurrentStatus.vsmart_id.in_(done_vsmart_status_ids)
         )
@@ -300,6 +503,91 @@ async def get_regulation(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="regulation_not_found")
     return RegulationRead.model_validate(row)
+
+
+# ---------------------------------------------------------------------------
+# Latest helped case by CID — GET /v1/intake/latest-helped-case
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/latest-helped-case",
+    response_model=LatestHelpedCaseResponse,
+    response_model_exclude_none=True,
+    summary="เคสช่วยเหลือล่าสุดตามเลขบัตรประชาชน",
+    description=(
+        "คืนเคสสถานะล่าสุดเทียบเท่าช่วยเหลือแล้ว (vsmart_id 7) หรือ "
+        "ส่งต่อข้อมูลเรียบร้อยแล้ว (vsmart_id 14) ที่ helped_at ล่าสุดสุด 1 รายการ "
+        "— CID ต้องเป็นตัวเลข 13 หลัก (ไม่ผ่าน = 422) "
+        "— ไม่พบเคสคืน HTTP 200 + found=false"
+    ),
+)
+async def get_latest_helped_case(
+    citizen: str = Query(
+        ...,
+        min_length=13,
+        max_length=13,
+        pattern=r"^\d{13}$",
+        description="เลขบัตรประชาชน 13 หลักตัวเลขล้วน",
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> LatestHelpedCaseResponse:
+    # สถานะล่าสุดต่อ applicant (แถว welfare_request_status ที่ id มากสุด)
+    latest_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id,
+            func.max(WelfareRequestStatus.id).label("latest_id"),
+        )
+        .group_by(WelfareRequestStatus.applicant_id)
+        .subquery()
+    )
+
+    done_status_ids_sq = select(CurrentStatus.id).where(
+        CurrentStatus.vsmart_id.in_(_DONE_VSMART_STATUS_IDS)
+    )
+
+    # helped_at = COALESCE(process_completed_at, สถานะล่าสุด.created_at)
+    # อย่าใช้ intake_completed_at
+    helped_at_expr = func.coalesce(
+        Applicant.process_completed_at,
+        WelfareRequestStatus.created_at,
+    )
+
+    row = (
+        await session.execute(
+            select(
+                Applicant.id.label("applicant_id"),
+                helped_at_expr.label("helped_at"),
+            )
+            .join(Person, Person.id == Applicant.persons_id)
+            .join(
+                latest_status_sq,
+                latest_status_sq.c.applicant_id == Applicant.id,
+            )
+            .join(
+                WelfareRequestStatus,
+                WelfareRequestStatus.id == latest_status_sq.c.latest_id,
+            )
+            .where(
+                Person.cid == citizen,
+                WelfareRequestStatus.current_status_id.in_(done_status_ids_sq),
+            )
+            .order_by(
+                helped_at_expr.desc().nullslast(),
+                Applicant.id.desc(),
+            )
+            .limit(1)
+        )
+    ).one_or_none()
+
+    if row is None:
+        return LatestHelpedCaseResponse(found=False)
+
+    applicant = await _load_applicant_for_helped_case(session, row.applicant_id)
+    if applicant is None or applicant.person is None:
+        return LatestHelpedCaseResponse(found=False)
+
+    return _build_latest_helped_case_response(applicant, row.helped_at)
 
 
 # ---------------------------------------------------------------------------

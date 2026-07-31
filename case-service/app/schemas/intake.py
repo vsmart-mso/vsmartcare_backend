@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -289,3 +289,100 @@ class CaseIntakeRead(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Latest helped case by CID — GET /v1/intake/latest-helped-case
+# ---------------------------------------------------------------------------
+
+
+class LatestHelpedCasePerson(BaseModel):
+    """ข้อมูลผู้ประสบปัญหาสำหรับเติมฟอร์ม Smart."""
+
+    citizen_id: str = Field(..., min_length=13, max_length=13)
+    prefix: str | None = None
+    first_name: str
+    last_name: str
+    birthdate: date | None = None
+    gender: str | None = None
+    phone: str | None = None
+    home_phone: str | None = None
+    email: str | None = None
+    education: str | None = None
+    ethnicity: str | None = None
+    nationality: str | None = None
+    religion: str | None = None
+    marital_status_id: int | None = Field(None, description="id จาก marital_status_types")
+    marital_status: str | None = Field(None, description="สถานภาพสมรส")
+
+
+class LatestHelpedCaseAddress(BaseModel):
+    """ที่อยู่ทะเบียนบ้าน / ปัจจุบัน — ว่างได้เป็น {}."""
+
+    house_no: str | None = None
+    moo: str | None = None
+    village: str | None = None
+    lane: str | None = None
+    alley: str | None = None
+    road: str | None = None
+    province: str | None = Field(None, description="รหัสจังหวัด (code หรือ fallback id)")
+    district: str | None = Field(None, description="รหัสอำเภอ (code หรือ fallback id)")
+    sub_district: str | None = Field(None, description="รหัสตำบล (code หรือ fallback id)")
+    province_name: str | None = None
+    district_name: str | None = None
+    sub_district_name: str | None = None
+    postcode: str | None = None
+
+
+class LatestHelpedCaseHousing(BaseModel):
+    """สภาพที่อยู่อาศัย จาก economic_infos."""
+
+    id: int | None = Field(None, description="housing_types_id")
+    name: str | None = Field(None, description="ชื่อประเภทที่อยู่อาศัยจาก master")
+    shelter: str | None = Field(None, description="ข้อความสภาพที่อยู่อาศัย (housing_shelter)")
+
+
+class LatestHelpedCaseFamilyOccupation(BaseModel):
+    """อาชีพหลักของครอบครัว จาก economic_infos."""
+
+    id: int | None = Field(None, description="family_occupation_type_id")
+    name: str | None = Field(None, description="ชื่ออาชีพจาก master occupation_types")
+    detail: str | None = Field(None, description="ข้อความอาชีพเพิ่มเติม (family_occupation)")
+
+
+class LatestHelpedCaseIncomeSource(BaseModel):
+    """ที่มาของรายได้หนึ่งรายการ จาก economic_income_sources."""
+
+    id: int = Field(..., description="income_source_type_id")
+    name: str | None = Field(None, description="ชื่อจาก income_source_types")
+    other_details: str | None = Field(None, description="รายละเอียดเมื่อเลือกอื่น ๆ")
+
+
+class LatestHelpedCaseDependency(BaseModel):
+    """การอุปการะหนึ่งรายการ จาก dependency_loads."""
+
+    id: int = Field(..., description="dependency_type_id")
+    name: str | None = Field(None, description="ชื่อจาก dependency_types")
+    other_text: str | None = Field(None, description="รายละเอียดเมื่อเลือกอื่น ๆ")
+
+
+class LatestHelpedCaseResponse(BaseModel):
+    """เคสช่วยเหลือล่าสุดตาม CID — found=false ส่งแค่ found."""
+
+    found: bool
+    helped_at: datetime | None = None
+    applicant_id: int | None = None
+    person: LatestHelpedCasePerson | None = None
+    registered_address: LatestHelpedCaseAddress | None = None
+    present_address: LatestHelpedCaseAddress | None = None
+    housing: LatestHelpedCaseHousing | None = None
+    family_occupation: LatestHelpedCaseFamilyOccupation | None = None
+    monthly_income: Decimal | None = Field(
+        None, description="รายได้เฉลี่ยต่อเดือนของครอบครัว (บาท)"
+    )
+    income_sources: list[LatestHelpedCaseIncomeSource] | None = Field(
+        None, description="ที่มาของรายได้"
+    )
+    dependencies: list[LatestHelpedCaseDependency] | None = Field(
+        None, description="การอุปการะ / ภาระเลี้ยงดู"
+    )
