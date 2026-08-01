@@ -2113,6 +2113,19 @@ async def bff_list_regulations(
 
 
 @router.get(
+    "/v1/intake/latest-helped-case",
+    tags=["intake"],
+    summary="เคสช่วยเหลือล่าสุดตามเลขบัตรประชาชน",
+)
+async def bff_latest_helped_case(
+    citizen: str = Query(..., min_length=13, max_length=13, pattern=r"^\d{13}$"),
+):
+    base = settings.case_service_url.rstrip("/")
+    query_string = urlencode({"citizen": citizen})
+    return await _get(f"{base}/v1/intake/latest-helped-case?{query_string}")
+
+
+@router.get(
     "/v1/intake/regulations/{regulation_id}",
     tags=["intake"],
     summary="รายละเอียดระเบียบ",
