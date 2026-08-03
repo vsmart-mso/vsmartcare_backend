@@ -14,6 +14,7 @@ from .geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from .intake import (
     AnnouncementRegulation,
     CaseHandling,
+    CaseHelpBeneficiary,
     CaseKtbCorporate,
     CasePayment,
     CaseRegulationChoice,
@@ -71,6 +72,7 @@ __all__ = [
     "CaseDiagnosis",
     "CaseDiagnosisEditHistory",
     "CaseHandling",
+    "CaseHelpBeneficiary",
     "CaseKtbCorporate",
     "CasePayment",
     "CaseRegulationChoice",

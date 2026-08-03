@@ -71,6 +71,27 @@ class PaymentMethodRead(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class HelpBeneficiaryUpsert(BaseModel):
+    """ผู้รับความช่วยเหลือที่เลือก — null household_member_id = ผู้ยื่น."""
+
+    household_member_id: int | None = None
+    display_name: str | None = Field(None, max_length=255)
+    national_id: str | None = Field(None, max_length=13)
+    age_years: int | None = None
+
+
+class HelpBeneficiaryRead(BaseModel):
+    id: int
+    household_member_id: int | None = None
+    display_name: str | None = None
+    national_id: str | None = None
+    age_years: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class IntakeHandlingUpsert(BaseModel):
     """Body สำหรับ POST/PATCH /cases/{id}/intake — บันทึกข้อมูลหน้า 11."""
 
@@ -84,6 +105,10 @@ class IntakeHandlingUpsert(BaseModel):
     comment: str | None = None
     esignature: str | None = None
     signed_by_sdshv: str | None = Field(None, max_length=255)
+    selected_beneficiaries: list[HelpBeneficiaryUpsert] | None = Field(
+        None,
+        description="None = ไม่แตะตารางเดิม; list (รวมว่าง) = แทนที่ทั้งชุด",
+    )
 
 
 class RegulationChoiceRead(BaseModel):
@@ -116,6 +141,7 @@ class CaseHandlingRead(BaseModel):
 
     regulation_choice: RegulationChoiceRead | None = None
     type_money: TypeMoneyRead | None = None
+    help_beneficiaries: list[HelpBeneficiaryRead] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -30,11 +30,12 @@ from ...models.address import Address
 from ...models.applicant import Applicant
 from ...models.dependency import DependencyLoad
 from ...models.diagnosis import CaseDiagnosis, CaseDiagnosisEditHistory
-from ...models.economic import EconomicIncomeSource, EconomicInfo
+from ...models.economic import EconomicIncomeSource, EconomicInfo, HouseholdMember
 from ...models.geo import District, SubDistrict, SubDistrictPostcode
 from ...models.intake import (
     AnnouncementRegulation,
     CaseHandling,
+    CaseHelpBeneficiary,
     CaseKtbCorporate,
     CasePayment,
     CaseRegulationChoice,
@@ -147,6 +148,7 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
             selectinload(CaseHandling.payment).selectinload(CasePayment.payment_method),
             selectinload(CaseHandling.ktb_corporate),
             selectinload(CaseHandling.type_money),
+            selectinload(CaseHandling.help_beneficiaries),
         ),
     )
 
@@ -721,6 +723,36 @@ async def upsert_intake_handling(
         choice.esignature = body.esignature
         choice.signed_by_sdshv = body.signed_by_sdshv
         choice.updated_at = datetime.utcnow()
+
+    # Replace help beneficiaries เมื่อ client ส่งฟิลด์มา (None = ไม่แตะของเดิม)
+    if body.selected_beneficiaries is not None:
+        await session.execute(
+            delete(CaseHelpBeneficiary).where(
+                CaseHelpBeneficiary.case_handling_id == handling.id
+            )
+        )
+        seen_member_ids: set[int | None] = set()
+        for item in body.selected_beneficiaries:
+            member_id = item.household_member_id
+            if member_id in seen_member_ids:
+                continue
+            seen_member_ids.add(member_id)
+            if member_id is not None:
+                member = await session.get(HouseholdMember, member_id)
+                if member is None or member.applicant_id != applicant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="household_member_not_in_case",
+                    )
+            session.add(
+                CaseHelpBeneficiary(
+                    case_handling_id=handling.id,
+                    household_member_id=member_id,
+                    display_name=item.display_name,
+                    national_id=item.national_id,
+                    age_years=item.age_years,
+                )
+            )
 
     await session.commit()
     reloaded = await _load_handling_full(session, applicant_id)

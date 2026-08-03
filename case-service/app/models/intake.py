@@ -10,6 +10,7 @@
   - type_money (lookup)     FK บน case_handling.type_money_id
   - more_mso (mso_send)     1:1 case_handling
   - type_send, send_data    (mso_send) ส่งข้อมูลออกระบบ
+  - CaseHelpBeneficiary     (ผู้รับความช่วยเหลือ หน้า 11 — เงินเด็ก)
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import ForeignKey, Index, Integer, Numeric, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
 
 if TYPE_CHECKING:
     from .applicant import Applicant
+    from .economic import HouseholdMember
     from .lookup import BankAccountType, BankName, TypeMoney, TypeMoneyCategory
     from .mso_send import MoreMso
     from .person import Person
@@ -143,6 +145,63 @@ class CaseHandling(Base):
         back_populates="case_handling",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+    help_beneficiaries: Mapped[list["CaseHelpBeneficiary"]] = relationship(
+        back_populates="case_handling",
+        cascade="all, delete-orphan",
+    )
+
+
+# ---------------------------------------------------------------------------
+# CaseHelpBeneficiary — ผู้รับความช่วยเหลือ (หน้า 11 เงินสงเคราะห์เด็ก)
+# ---------------------------------------------------------------------------
+
+
+class CaseHelpBeneficiary(Base):
+    """ผู้รับความช่วยเหลือที่เลือกตอนรับเรื่อง — N:1 case_handling
+
+    household_member_id IS NULL = เลือกผู้ยื่น (pattern เดียวกับ welfare_evidences)
+    """
+
+    __tablename__ = "case_help_beneficiaries"
+    __table_args__ = (
+        Index(
+            "uq_case_help_beneficiaries_handling_member",
+            "case_handling_id",
+            "household_member_id",
+            unique=True,
+            postgresql_where=text("household_member_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_case_help_beneficiaries_handling_applicant",
+            "case_handling_id",
+            unique=True,
+            postgresql_where=text("household_member_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    case_handling_id: Mapped[int] = mapped_column(
+        ForeignKey("case_handling.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    household_member_id: Mapped[int | None] = mapped_column(
+        ForeignKey("household_members.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+        comment="FK → household_members.id; NULL = ผู้ยื่น",
+    )
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    national_id: Mapped[str | None] = mapped_column(String(13))
+    age_years: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+
+    case_handling: Mapped["CaseHandling"] = relationship(back_populates="help_beneficiaries")
+    household_member: Mapped["HouseholdMember | None"] = relationship(
+        foreign_keys=[household_member_id],
+        lazy="selectin",
     )
 
 
