@@ -412,3 +412,100 @@ class LatestHelpedCaseResponse(BaseModel):
     dependencies: list[LatestHelpedCaseDependency] | None = Field(
         None, description="การอุปการะ / ภาระเลี้ยงดู"
     )
+
+
+# ---------------------------------------------------------------------------
+# CARE history + fiscal duplicate detection
+# ---------------------------------------------------------------------------
+
+
+class CareHistoryStatusRead(BaseModel):
+    id: int | None = None
+    vsmart_id: int | None = None
+    label: str | None = None
+    color: str | None = None
+
+
+class CareHistoryRegulationRead(BaseModel):
+    id: int | None = None
+    name: str | None = None
+    short_name: str | None = None
+    type_money_category_id: int | None = None
+    type_money_category_name: str | None = None
+    type_money_category_name_acronym: str | None = None
+    type_money_category_color: str | None = None
+
+
+class CareHistoryDateRead(BaseModel):
+    value: datetime | None = Field(
+        default=None,
+        alias="datetime",
+        serialization_alias="datetime",
+    )
+    text: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class CareHistoryRowRead(BaseModel):
+    source: str = Field(default="care")
+    applicant_id: int
+    case_number: str | None = None
+    citizen_id: str | None = None
+    province: str | None = None
+    budget_year: str | None = None
+    helped_at: datetime | None = None
+    receive_date: CareHistoryDateRead | None = None
+    help_date: str | None = None
+    status: CareHistoryStatusRead | None = None
+    announcement_regulation: CareHistoryRegulationRead | None = None
+
+
+class CareHistoryHouseholdMemberRead(BaseModel):
+    citizen_id: str
+    prefix: str | None = None
+    first_name: str
+    last_name: str
+    relation: str | None = None
+    source_applicant_id: int | None = None
+
+
+class CareHistoryResponse(BaseModel):
+    citizen: str
+    person: LatestHelpedCasePerson | None = None
+    registered_address: LatestHelpedCaseAddress | None = None
+    present_address: LatestHelpedCaseAddress | None = None
+    history_done: list[CareHistoryRowRead] = Field(default_factory=list)
+    history_processing: list[CareHistoryRowRead] = Field(default_factory=list)
+    household_members: list[CareHistoryHouseholdMemberRead] = Field(default_factory=list)
+
+
+class FiscalDuplicateCheckItem(BaseModel):
+    reference_key: str = Field(..., min_length=1, max_length=255)
+    citizen_ids: list[str] = Field(default_factory=list)
+    applicant_id: int | None = Field(
+        None,
+        description="CARE applicant_id สำหรับ expand household_members.national_id อัตโนมัติ",
+    )
+    exclude_applicant_id: int | None = Field(
+        None,
+        description="ไม่นับ applicant นี้ในผลลัพธ์ เช่น เช็คแถวของ CARE เอง",
+    )
+    fiscal_start: date
+    fiscal_end: date
+
+
+class FiscalDuplicateCheckResult(BaseModel):
+    reference_key: str
+    has_duplicate: bool
+    duplicate_count: int = 0
+    applicant_ids: list[int] = Field(default_factory=list)
+    case_numbers: list[str] = Field(default_factory=list)
+    expanded_citizen_ids: list[str] = Field(
+        default_factory=list,
+        description="ชุด CID หลัง expand (ผู้ยื่น + household) ที่ใช้ค้นจริง",
+    )
+
+
+class FiscalDuplicateBatchResponse(BaseModel):
+    items: list[FiscalDuplicateCheckResult] = Field(default_factory=list)
