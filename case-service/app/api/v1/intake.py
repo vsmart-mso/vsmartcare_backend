@@ -907,12 +907,22 @@ async def get_intake_history(
 @router.post(
     "/fiscal-duplicates",
     response_model=FiscalDuplicateBatchResponse,
-    summary="ตรวจเคส CARE ซ้ำในปีงบประมาณแบบ batch",
+    summary=(
+        "ตรวจเคส CARE ซ้ำในปีงบประมาณแบบ batch "
+        "(แว่นขยาย — นับทุกสถานะที่มี status log แล้ว)"
+    ),
 )
 async def post_intake_fiscal_duplicates(
     body: list[FiscalDuplicateCheckItem] = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> FiscalDuplicateBatchResponse:
+    """Batch-detect CARE fiscal-year duplicates for the magnifier icon.
+
+    Counts any CARE case that already has a latest status log (any status,
+    including รอรับเรื่อง / ไม่ตรงหลักเกณฑ์ / อยู่ระหว่างเบิก). Fiscal window
+    uses COALESCE(intake_completed_at, applicants.created_at). Drafts with no
+    status log are excluded. Does not affect regulations count_used (still 7/14).
+    """
     if not body:
         return FiscalDuplicateBatchResponse(items=[])
 
@@ -932,9 +942,6 @@ async def post_intake_fiscal_duplicates(
                 citizen_ids.add(member_citizen)
         expanded_citizens_by_applicant[applicant.id] = citizen_ids
 
-    done_status_ids_sq = select(CurrentStatus.id).where(
-        CurrentStatus.vsmart_id.in_(_DONE_VSMART_STATUS_IDS)
-    )
     latest_status_sq = (
         select(
             WelfareRequestStatus.applicant_id.label("applicant_id"),
@@ -967,10 +974,12 @@ async def post_intake_fiscal_duplicates(
             continue
 
         fiscal_end_exclusive = item.fiscal_end + timedelta(days=1)
+        # เคสรอรับเรื่องอาจยังไม่มี intake_completed_at — ใช้ created_at แทน
+        ref_dt = func.coalesce(CaseHandling.intake_completed_at, Applicant.created_at)
         rows = (
             await session.execute(
                 select(Applicant.id, Applicant.case_number)
-                .join(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+                .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
                 .join(Person, Person.id == Applicant.persons_id)
                 .outerjoin(HouseholdMember, HouseholdMember.applicant_id == Applicant.id)
                 .join(
@@ -982,10 +991,8 @@ async def post_intake_fiscal_duplicates(
                     WelfareRequestStatus.id == latest_status_sq.c.latest_id,
                 )
                 .where(
-                    CaseHandling.intake_completed_at.is_not(None),
-                    CaseHandling.intake_completed_at >= item.fiscal_start,
-                    CaseHandling.intake_completed_at < fiscal_end_exclusive,
-                    WelfareRequestStatus.current_status_id.in_(done_status_ids_sq),
+                    ref_dt >= item.fiscal_start,
+                    ref_dt < fiscal_end_exclusive,
                     (
                         Person.cid.in_(citizen_ids)
                         | HouseholdMember.national_id.in_(citizen_ids)
