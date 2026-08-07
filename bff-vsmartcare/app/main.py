@@ -375,9 +375,14 @@ async def _put(
         return r.json()
 
 
-async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
+async def _get(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    *,
+    timeout: float = 10.0,
+) -> Any:
     """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.get(url, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
@@ -590,6 +595,10 @@ class ApproveCaseCreateBody(BaseModel):
         min_length=1,
         description="เหตุผลที่ พมจ. ไม่อนุมัติ ส่งต่อไป case-service เมื่อ approve_status=false",
     )
+
+
+class ApproveCaseBatchCreateBody(BaseModel):
+    items: list[ApproveCaseCreateBody] = Field(..., min_length=1, max_length=30)
 
 
 class WelfareDdaRefDetailCreateBody(BaseModel):
@@ -1573,6 +1582,40 @@ async def create_approve_case_for_staff(body: ApproveCaseCreateBody) -> Any:
     return await _post(f"{base}/v1/case_for_staff/approve-case", json=payload)
 
 
+@router.post(
+    "/v1/case_for_staff/approve-case/batch",
+    tags=["case_for_staff"],
+    summary="บันทึกการอนุมัติหลายเคส (สูงสุด 30)",
+    description="ส่งต่อ `POST …/v1/case_for_staff/approve-case/batch`",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_approve_case_batch_for_staff(body: ApproveCaseBatchCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(
+        f"{base}/v1/case_for_staff/approve-case/batch",
+        json=payload,
+        timeout=120.0,
+    )
+
+
+@router.get(
+    "/v1/case_for_staff/applicants/brief",
+    tags=["case_for_staff"],
+    summary="สรุปเบาหลาย applicant สำหรับ PMJ multi-approve",
+    description="ส่งต่อ `GET …/v1/case_for_staff/applicants/brief?ids=` (timeout 60s)",
+)
+async def list_applicants_brief_for_staff(
+    ids: list[int] = Query(..., description="applicant_id ซ้ำได้"),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    pairs = [("ids", str(i)) for i in ids]
+    return await _get(
+        f"{base}/v1/case_for_staff/applicants/brief?{urlencode(pairs)}",
+        timeout=60.0,
+    )
+
+
 @router.get(
     "/v1/case_for_staff/approve-case",
     tags=["case_for_staff"],
@@ -1684,7 +1727,10 @@ async def list_cover_document_batches_for_staff(
     if pending:
         params["pending"] = "true"
     suffix = f"?{urlencode(params)}" if params else ""
-    return await _get(f"{base}/v1/case_for_staff/cover-document-batch{suffix}")
+    return await _get(
+        f"{base}/v1/case_for_staff/cover-document-batch{suffix}",
+        timeout=60.0,
+    )
 
 
 @router.get(

@@ -735,3 +735,22 @@ class MsoForwardRead(BaseModel):
     json_case: dict[str, Any] | None = None
     response_code: str | None = None
     response_text: str | None = None
+
+
+class ApplicantBriefRead(BaseModel):
+    """สรุปเบาสำหรับ PMJ multi-approve — แทน por-kor-1-detail ทีละเคส."""
+
+    applicant_id: int
+    exists: bool = True
+    case_number: str | None = None
+    cid: str | None = None
+    firstname: str | None = None
+    lastname: str | None = None
+    province_id: int | None = None
+    current_status_id: int | None = None
+    is_approved: bool = False
+    is_pmj_rejected: bool = False
+
+
+class ApplicantBriefListResponse(BaseModel):
+    items: list[ApplicantBriefRead]
