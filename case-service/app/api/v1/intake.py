@@ -16,7 +16,8 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select
@@ -55,6 +56,15 @@ from ...schemas.intake import (
     CaseKtbCorporateUpsert,
     CasePaymentRead,
     CasePaymentUpsert,
+    CareHistoryDateRead,
+    CareHistoryHouseholdMemberRead,
+    CareHistoryRegulationRead,
+    CareHistoryResponse,
+    CareHistoryRowRead,
+    CareHistoryStatusRead,
+    FiscalDuplicateBatchResponse,
+    FiscalDuplicateCheckItem,
+    FiscalDuplicateCheckResult,
     IntakeHandlingUpsert,
     LatestHelpedCaseAddress,
     LatestHelpedCaseDependency,
@@ -67,6 +77,7 @@ from ...schemas.intake import (
     RegulationDropdownItem,
     RegulationRead,
 )
+from ...utils.budget_year import thai_fiscal_year
 from ...services.ktb_requirement import (
     load_applicant_for_audit_refresh,
     refresh_applicant_submission_audit,
@@ -153,8 +164,12 @@ async def _load_handling_full(session: AsyncSession, applicant_id: int) -> CaseH
     )
 
 
-# VSmart status_form 7 (ช่วยเหลือแล้ว) / 14 (ส่งต่อข้อมูลเรียบร้อยแล้ว)
+# VSmart status_form 7 (ช่วยเหลือแล้ว) / 12 (สถานะการเงิน) / 14 (ส่งต่อข้อมูลเรียบร้อยแล้ว)
 _DONE_VSMART_STATUS_IDS = (7, 14)
+# แยก history_processing vs history_done ในหน้าประวัติ — align กับ Smart sufferer_history.done_status [7, 12, 14]
+_HISTORY_SECTION_DONE_VSMART_IDS = (7, 12, 14)
+# แสดงเคส CARE บนเส้นประวัติได้แม้ intake ยังไม่ completed เมื่อสถานะล่าสุดคือ "รอรับเรื่อง"
+_HISTORY_VISIBLE_WITHOUT_COMPLETED_INTAKE_VSMART_IDS = (2,)
 
 
 def _geo_code_or_id(entity: object | None) -> str | None:
@@ -343,6 +358,139 @@ async def _load_applicant_for_helped_case(
             ),
         ),
     )
+
+
+def _normalize_citizen(value: str | None) -> str | None:
+    raw = "".join(ch for ch in str(value or "").strip() if ch.isdigit())
+    if len(raw) != 13:
+        return None
+    return raw
+
+
+def _format_thai_date(value: date | datetime | None) -> CareHistoryDateRead:
+    if value is None:
+        return CareHistoryDateRead()
+    if isinstance(value, datetime):
+        dt_value = value
+    else:
+        dt_value = datetime.combine(value, datetime.min.time())
+    month_th = (
+        "ม.ค.",
+        "ก.พ.",
+        "มี.ค.",
+        "เม.ย.",
+        "พ.ค.",
+        "มิ.ย.",
+        "ก.ค.",
+        "ส.ค.",
+        "ก.ย.",
+        "ต.ค.",
+        "พ.ย.",
+        "ธ.ค.",
+    )
+    return CareHistoryDateRead(
+        value=dt_value,
+        text=f"{dt_value.day} {month_th[dt_value.month - 1]} {dt_value.year + 543}",
+    )
+
+
+def _applicant_case_province(applicant: Applicant) -> str | None:
+    registered, present = _split_helped_case_addresses(list(applicant.addresses or []))
+    return present.province_name or registered.province_name
+
+
+def _history_regulation_from_applicant(applicant: Applicant) -> CareHistoryRegulationRead:
+    handling = applicant.case_handling
+    choice = handling.regulation_choice if handling is not None else None
+    regulation = choice.regulation if choice is not None else None
+    type_money = regulation.type_money_category if regulation is not None else None
+    return CareHistoryRegulationRead(
+        id=regulation.id if regulation is not None else None,
+        name=regulation.name if regulation is not None else None,
+        short_name=regulation.short_name if regulation is not None else None,
+        type_money_category_id=regulation.type_money_category_id if regulation is not None else None,
+        type_money_category_name=type_money.name if type_money is not None else None,
+        type_money_category_name_acronym=(
+            type_money.name_acronym if type_money is not None else None
+        ),
+        type_money_category_color=type_money.color if type_money is not None else None,
+    )
+
+
+def _latest_status_for_applicant(applicant: Applicant) -> WelfareRequestStatus | None:
+    status_logs = list(applicant.status_logs or [])
+    if not status_logs:
+        return None
+    return max(status_logs, key=lambda row: row.id)
+
+
+def _build_care_history_row(applicant: Applicant) -> CareHistoryRowRead | None:
+    latest_status = _latest_status_for_applicant(applicant)
+    if latest_status is None:
+        return None
+    helped_at = applicant.process_completed_at or latest_status.created_at
+    current_status = latest_status.current_status
+    return CareHistoryRowRead(
+        applicant_id=applicant.id,
+        case_number=applicant.case_number,
+        citizen_id=applicant.person.cid if applicant.person is not None else None,
+        province=_applicant_case_province(applicant),
+        budget_year=str(thai_fiscal_year(helped_at)) if helped_at is not None else None,
+        helped_at=helped_at,
+        receive_date=_format_thai_date(applicant.created_at),
+        help_date=helped_at.date().isoformat() if helped_at is not None else None,
+        status=CareHistoryStatusRead(
+            id=current_status.id if current_status is not None else latest_status.current_status_id,
+            vsmart_id=current_status.vsmart_id if current_status is not None else None,
+            label=(
+                current_status.description_public
+                if current_status is not None
+                else None
+            ),
+            color=current_status.color if current_status is not None else None,
+        ),
+        announcement_regulation=_history_regulation_from_applicant(applicant),
+    )
+
+
+async def _load_history_applicants(
+    session: AsyncSession,
+    applicant_ids: list[int],
+) -> list[Applicant]:
+    if not applicant_ids:
+        return []
+    rows = (
+        await session.execute(
+            select(Applicant)
+            .where(Applicant.id.in_(applicant_ids))
+            .options(
+                selectinload(Applicant.person).selectinload(Person.prefix),
+                selectinload(Applicant.marital_status),
+                selectinload(Applicant.addresses).selectinload(Address.address_type),
+                selectinload(Applicant.addresses)
+                .selectinload(Address.sub_district_postcode)
+                .selectinload(SubDistrictPostcode.sub_district)
+                .selectinload(SubDistrict.district)
+                .selectinload(District.province),
+                selectinload(Applicant.addresses)
+                .selectinload(Address.sub_district_postcode)
+                .selectinload(SubDistrictPostcode.postcode),
+                selectinload(Applicant.case_handling)
+                .selectinload(CaseHandling.regulation_choice)
+                .selectinload(CaseRegulationChoice.regulation)
+                .selectinload(AnnouncementRegulation.type_money_category),
+                selectinload(Applicant.household_members)
+                .selectinload(HouseholdMember.prefix),
+                selectinload(Applicant.household_members)
+                .selectinload(HouseholdMember.relation_type),
+                selectinload(Applicant.status_logs).selectinload(
+                    WelfareRequestStatus.current_status
+                ),
+            )
+        )
+    ).scalars().unique().all()
+    by_id = {row.id: row for row in rows}
+    return [by_id[applicant_id] for applicant_id in applicant_ids if applicant_id in by_id]
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +738,285 @@ async def get_latest_helped_case(
         return LatestHelpedCaseResponse(found=False)
 
     return _build_latest_helped_case_response(applicant, row.helped_at)
+
+
+# ---------------------------------------------------------------------------
+# CARE history by CID — GET /v1/intake/history
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/history",
+    response_model=CareHistoryResponse,
+    response_model_exclude_none=True,
+    summary="ประวัติเคส CARE ตามเลขบัตรประชาชน",
+    description=(
+        "คืนเคส CARE ที่ submit แล้ว (case_handling.intake_completed_at IS NOT NULL) "
+        "ของผู้ยื่นหรือสมาชิกครัวเรือนที่มีเลขบัตรตรงกับ citizen "
+        "โดยแยก history_done/history_processing ตามสถานะล่าสุด "
+        "(done = vsmart_id 7/12/14 สอดคล้อง Smart sufferer_history.done_status; "
+        "เคส draft/ยังไม่ submit ไม่รวม — ต้อง confirm PO ก่อนขยาย query)"
+    ),
+)
+async def get_intake_history(
+    citizen: str = Query(
+        ...,
+        min_length=13,
+        max_length=13,
+        pattern=r"^\d{13}$",
+        description="เลขบัตรประชาชน 13 หลักตัวเลขล้วน",
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> CareHistoryResponse:
+    latest_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id.label("applicant_id"),
+            func.max(WelfareRequestStatus.id).label("latest_id"),
+        )
+        .group_by(WelfareRequestStatus.applicant_id)
+        .subquery()
+    )
+    history_done_status_ids_sq = select(CurrentStatus.id).where(
+        CurrentStatus.vsmart_id.in_(_HISTORY_SECTION_DONE_VSMART_IDS)
+    )
+    history_visible_without_completed_intake_status_ids_sq = select(CurrentStatus.id).where(
+        CurrentStatus.vsmart_id.in_(_HISTORY_VISIBLE_WITHOUT_COMPLETED_INTAKE_VSMART_IDS)
+    )
+    rows = (
+        await session.execute(
+            select(
+                Applicant.id.label("applicant_id"),
+                WelfareRequestStatus.current_status_id.label("current_status_id"),
+            )
+            # outerjoin: case waiting-receive may have no case_handling yet
+            .outerjoin(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+            .join(Person, Person.id == Applicant.persons_id)
+            .outerjoin(
+                HouseholdMember,
+                HouseholdMember.applicant_id == Applicant.id,
+            )
+            .join(
+                latest_status_sq,
+                latest_status_sq.c.applicant_id == Applicant.id,
+            )
+            .join(
+                WelfareRequestStatus,
+                WelfareRequestStatus.id == latest_status_sq.c.latest_id,
+            )
+            .where(
+                (
+                    CaseHandling.intake_completed_at.is_not(None)
+                    | WelfareRequestStatus.current_status_id.in_(
+                        history_visible_without_completed_intake_status_ids_sq
+                    )
+                ),
+                (
+                    (Person.cid == citizen)
+                    | (HouseholdMember.national_id == citizen)
+                ),
+            )
+            .order_by(Applicant.created_at.desc(), Applicant.id.desc())
+        )
+    ).all()
+    ordered_applicant_ids: list[int] = []
+    current_status_by_applicant: dict[int, int] = {}
+    seen_ids: set[int] = set()
+    for row in rows:
+        applicant_id = row.applicant_id
+        if applicant_id in seen_ids:
+            continue
+        seen_ids.add(applicant_id)
+        ordered_applicant_ids.append(applicant_id)
+        current_status_by_applicant[applicant_id] = row.current_status_id
+
+    applicants = await _load_history_applicants(session, ordered_applicant_ids)
+    done_status_ids = set((await session.execute(history_done_status_ids_sq)).scalars().all())
+    history_done: list[CareHistoryRowRead] = []
+    history_processing: list[CareHistoryRowRead] = []
+    household_members: list[CareHistoryHouseholdMemberRead] = []
+    seen_household_citizens: set[str] = set()
+    person_summary = None
+    registered_address_summary: LatestHelpedCaseAddress | None = None
+    present_address_summary: LatestHelpedCaseAddress | None = None
+
+    for applicant in applicants:
+        if person_summary is None and applicant.person is not None:
+            registered, present = _split_helped_case_addresses(list(applicant.addresses or []))
+            registered_address_summary = registered
+            present_address_summary = present
+            person_summary = LatestHelpedCasePerson(
+                citizen_id=applicant.person.cid,
+                prefix=applicant.person.prefix.name if applicant.person.prefix else None,
+                first_name=applicant.person.first_name,
+                last_name=applicant.person.last_name,
+                birthdate=applicant.person.birth_date,
+                gender=applicant.person.gender,
+                phone=applicant.mobile_phone,
+                home_phone=applicant.home_phone,
+                email=applicant.email_address,
+                marital_status_id=applicant.marital_status_id,
+                marital_status=(
+                    applicant.marital_status.name if applicant.marital_status is not None else None
+                ),
+            )
+        row = _build_care_history_row(applicant)
+        if row is None:
+            continue
+        if current_status_by_applicant.get(applicant.id) in done_status_ids:
+            history_done.append(row)
+        else:
+            history_processing.append(row)
+        for member in applicant.household_members or []:
+            member_citizen = _normalize_citizen(member.national_id)
+            if member_citizen is None or member_citizen in seen_household_citizens:
+                continue
+            seen_household_citizens.add(member_citizen)
+            household_members.append(
+                CareHistoryHouseholdMemberRead(
+                    citizen_id=member_citizen,
+                    prefix=(
+                        member.prefix.name
+                        if member.prefix is not None
+                        else member.prefix_other
+                    ),
+                    first_name=member.first_name,
+                    last_name=member.last_name,
+                    relation=(
+                        member.relation_type.name if member.relation_type is not None else None
+                    ),
+                    source_applicant_id=applicant.id,
+                )
+            )
+
+    return CareHistoryResponse(
+        citizen=citizen,
+        person=person_summary,
+        registered_address=registered_address_summary,
+        present_address=present_address_summary,
+        history_done=history_done,
+        history_processing=history_processing,
+        household_members=household_members,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CARE fiscal duplicate detection — POST /v1/intake/fiscal-duplicates
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/fiscal-duplicates",
+    response_model=FiscalDuplicateBatchResponse,
+    summary="ตรวจเคส CARE ซ้ำในปีงบประมาณแบบ batch",
+)
+async def post_intake_fiscal_duplicates(
+    body: list[FiscalDuplicateCheckItem] = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> FiscalDuplicateBatchResponse:
+    if not body:
+        return FiscalDuplicateBatchResponse(items=[])
+
+    applicant_ids_to_expand = {item.applicant_id for item in body if item.applicant_id is not None}
+    expanded_applicants = await _load_history_applicants(
+        session, sorted(applicant_ids_to_expand)
+    )
+    expanded_citizens_by_applicant: dict[int, set[str]] = {}
+    for applicant in expanded_applicants:
+        citizen_ids = set()
+        primary_citizen = _normalize_citizen(applicant.person.cid if applicant.person else None)
+        if primary_citizen is not None:
+            citizen_ids.add(primary_citizen)
+        for member in applicant.household_members or []:
+            member_citizen = _normalize_citizen(member.national_id)
+            if member_citizen is not None:
+                citizen_ids.add(member_citizen)
+        expanded_citizens_by_applicant[applicant.id] = citizen_ids
+
+    done_status_ids_sq = select(CurrentStatus.id).where(
+        CurrentStatus.vsmart_id.in_(_DONE_VSMART_STATUS_IDS)
+    )
+    latest_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id.label("applicant_id"),
+            func.max(WelfareRequestStatus.id).label("latest_id"),
+        )
+        .group_by(WelfareRequestStatus.applicant_id)
+        .subquery()
+    )
+
+    results: list[FiscalDuplicateCheckResult] = []
+    for item in body:
+        citizen_ids = {
+            citizen_id
+            for citizen_id in (
+                _normalize_citizen(raw) for raw in (item.citizen_ids or [])
+            )
+            if citizen_id is not None
+        }
+        if item.applicant_id is not None:
+            citizen_ids.update(expanded_citizens_by_applicant.get(item.applicant_id, set()))
+        expanded_citizen_ids = sorted(citizen_ids)
+        if not citizen_ids:
+            results.append(
+                FiscalDuplicateCheckResult(
+                    reference_key=item.reference_key,
+                    has_duplicate=False,
+                    expanded_citizen_ids=expanded_citizen_ids,
+                )
+            )
+            continue
+
+        fiscal_end_exclusive = item.fiscal_end + timedelta(days=1)
+        rows = (
+            await session.execute(
+                select(Applicant.id, Applicant.case_number)
+                .join(CaseHandling, CaseHandling.applicant_id == Applicant.id)
+                .join(Person, Person.id == Applicant.persons_id)
+                .outerjoin(HouseholdMember, HouseholdMember.applicant_id == Applicant.id)
+                .join(
+                    latest_status_sq,
+                    latest_status_sq.c.applicant_id == Applicant.id,
+                )
+                .join(
+                    WelfareRequestStatus,
+                    WelfareRequestStatus.id == latest_status_sq.c.latest_id,
+                )
+                .where(
+                    CaseHandling.intake_completed_at.is_not(None),
+                    CaseHandling.intake_completed_at >= item.fiscal_start,
+                    CaseHandling.intake_completed_at < fiscal_end_exclusive,
+                    WelfareRequestStatus.current_status_id.in_(done_status_ids_sq),
+                    (
+                        Person.cid.in_(citizen_ids)
+                        | HouseholdMember.national_id.in_(citizen_ids)
+                    ),
+                )
+                .order_by(Applicant.created_at.asc(), Applicant.id.asc())
+            )
+        ).all()
+        applicant_ids: list[int] = []
+        case_numbers: list[str] = []
+        seen_applicants: set[int] = set()
+        for row in rows:
+            if item.exclude_applicant_id is not None and row.id == item.exclude_applicant_id:
+                continue
+            if row.id in seen_applicants:
+                continue
+            seen_applicants.add(row.id)
+            applicant_ids.append(row.id)
+            if row.case_number:
+                case_numbers.append(row.case_number)
+        results.append(
+            FiscalDuplicateCheckResult(
+                reference_key=item.reference_key,
+                has_duplicate=len(applicant_ids) > 0,
+                duplicate_count=len(applicant_ids),
+                applicant_ids=applicant_ids,
+                case_numbers=case_numbers,
+                expanded_citizen_ids=expanded_citizen_ids,
+            )
+        )
+    return FiscalDuplicateBatchResponse(items=results)
 
 
 # ---------------------------------------------------------------------------
