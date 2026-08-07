@@ -36,6 +36,23 @@ class ApproveCaseCreate(ApproveCaseBase):
         return self
 
 
+class ApproveCaseBatchCreate(BaseModel):
+    """อนุมัติ/ปฏิเสธหลายเคสในครั้งเดียว (สูงสุด 30)."""
+
+    items: list[ApproveCaseCreate] = Field(..., min_length=1, max_length=30)
+
+
+class ApproveCaseBatchItemResult(BaseModel):
+    applicant_id: int
+    ok: bool = True
+    data: ApproveCaseRead | None = None
+    error: str | None = None
+
+
+class ApproveCaseBatchResult(BaseModel):
+    items: list[ApproveCaseBatchItemResult]
+
+
 class ApproveCaseRead(ApproveCaseBase):
     id: int
     article_id: int | None = None
