@@ -30,6 +30,7 @@ from ...models.applicant import Applicant
 from ...models.applicant_submission_audit import ApplicantSubmissionAudit
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyCategory
+from ...models.dependency import DependencyLoad
 from ...models.economic import HouseholdMember
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
@@ -948,6 +949,39 @@ def _applicant_have_dda_ref_exists():
     )
 
 
+#: physical_condition ของ household_members ที่ถือว่าเป็นคนพิการ
+DISABLED_PHYSICAL_CONDITION = "disabled"
+#: dependency_types.id 4 = "อุปการะเลี้ยงดูคนพิการหรือคนทุพพลภาพ"
+DISABILITY_DEPENDENCY_TYPE_ID = 4
+
+
+def _applicant_is_disabled_exists():
+    """ครัวเรือนของ applicant นี้มีคนพิการหรือไม่ (ใช้เป็น flag ผู้พิการของเคส).
+
+    ปสค.1/ปสค.2 ไม่มีช่องความพิการของผู้ยื่นเอง สัญญาณความพิการระดับเคสจึงมาจาก
+    - household_members.physical_condition = 'disabled' (สมาชิกในครัวเรือนพิการ)
+    - dependency_loads ที่เป็นภาระอุปการะคนพิการ/ทุพพลภาพ
+    ซึ่งตรงกับความหมาย "ครอบครัวคนพิการ" ที่ฝั่ง vSmart ใช้กรอง
+    """
+    member_disabled = (
+        select(HouseholdMember.id)
+        .where(
+            HouseholdMember.applicant_id == Applicant.id,
+            HouseholdMember.physical_condition == DISABLED_PHYSICAL_CONDITION,
+        )
+        .exists()
+    )
+    dependency_disabled = (
+        select(DependencyLoad.applicant_id)
+        .where(
+            DependencyLoad.applicant_id == Applicant.id,
+            DependencyLoad.dependency_type_id == DISABILITY_DEPENDENCY_TYPE_ID,
+        )
+        .exists()
+    )
+    return or_(member_disabled, dependency_disabled)
+
+
 def _applicant_is_approved_exists():
     """มีแถว approve_case ที่ approve_status = true สำหรับ applicant นี้หรือไม่."""
     return (
@@ -1498,6 +1532,7 @@ async def _list_cases_for_staff_finance_impl(
             CaseRegulationChoice.money_amount.label("money_amount"),
             CaseHandling.responsible_division_id.label("responsible_division_id"),
             CasePayment.payment_method_id.label("payment_method_id"),
+            _applicant_is_disabled_exists().label("is_disabled"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
