@@ -263,6 +263,13 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
         False,
         description="true เมื่อเงินสดครบเลขที่ขอเบิก + หลักฐานอย่างน้อย 1 ไฟล์",
     )
+    is_disabled: bool = Field(
+        False,
+        description=(
+            "true เมื่อเคสมีสัญญาณความพิการ — สมาชิกครัวเรือน physical_condition='disabled' "
+            "หรือมีภาระอุปการะเลี้ยงดูคนพิการ/ทุพพลภาพ (dependency_types.id=4)"
+        ),
+    )
 
 
 class CaseForStaffFinanceListResponse(BaseModel):
