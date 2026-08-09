@@ -120,6 +120,13 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         False,
         description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
     )
+    is_disabled: bool = Field(
+        False,
+        description=(
+            "true เมื่อเคยได้รับสวัสดิการเงิน/เบี้ยคนพิการ (received_welfare_types.id=4) "
+            "หรือเครื่องช่วยความพิการ (received_welfare_types.id=11)"
+        ),
+    )
     previous_status_id: int | None = Field(
         None,
         description="current_status_id ของ log ก่อนหน้า (rn=2) — null เมื่อมีสถานะเดียว",
@@ -735,3 +742,22 @@ class MsoForwardRead(BaseModel):
     json_case: dict[str, Any] | None = None
     response_code: str | None = None
     response_text: str | None = None
+
+
+class ApplicantBriefRead(BaseModel):
+    """สรุปเบาสำหรับ PMJ multi-approve — แทน por-kor-1-detail ทีละเคส."""
+
+    applicant_id: int
+    exists: bool = True
+    case_number: str | None = None
+    cid: str | None = None
+    firstname: str | None = None
+    lastname: str | None = None
+    province_id: int | None = None
+    current_status_id: int | None = None
+    is_approved: bool = False
+    is_pmj_rejected: bool = False
+
+
+class ApplicantBriefListResponse(BaseModel):
+    items: list[ApplicantBriefRead]

@@ -265,8 +265,8 @@ def _http_error_detail_from_response(r: httpx.Response) -> Any:
     return d
 
 
-def _json_safe_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """แปลง date/datetime/Decimal ใน dict ให้ httpx json= serialize ได้."""
+def _json_safe_payload(payload: Any) -> Any:
+    """แปลง date/datetime/Decimal ใน payload ให้ httpx json= serialize ได้."""
 
     def _default(value: object) -> str:
         if isinstance(value, (date, datetime)):
@@ -280,11 +280,11 @@ def _json_safe_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _post(
     url: str,
-    json: Dict[str, Any],
+    json: Any,
     *,
     timeout: float = 30.0,
     headers: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+) -> Any:
     """ยิง HTTP POST JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
@@ -347,11 +347,11 @@ async def _put_evidence_multipart(
 
 async def _patch(
     url: str,
-    json: Dict[str, Any],
+    json: Any,
     *,
     timeout: float = 30.0,
     headers: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+) -> Any:
     """ยิง HTTP PATCH JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.patch(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
@@ -362,11 +362,11 @@ async def _patch(
 
 async def _put(
     url: str,
-    json: Dict[str, Any],
+    json: Any,
     *,
     timeout: float = 30.0,
     headers: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+) -> Any:
     """ยิง HTTP PUT JSON; ถ้า status >= 400 จะยก HTTPException."""
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.put(url, json=_json_safe_payload(json), headers=merge_forward_headers(headers))
@@ -375,9 +375,14 @@ async def _put(
         return r.json()
 
 
-async def _get(url: str, headers: Optional[Dict[str, str]] = None) -> Any:
+async def _get(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    *,
+    timeout: float = 10.0,
+) -> Any:
     """ยิง HTTP GET พร้อม header ได้เลือก คืน JSON (object หรือ array); ถ้า status >= 400 จะยก HTTPException."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.get(url, headers=merge_forward_headers(headers))
         if r.status_code >= 400:
             raise HTTPException(status_code=r.status_code, detail=_http_error_detail_from_response(r))
@@ -590,6 +595,10 @@ class ApproveCaseCreateBody(BaseModel):
         min_length=1,
         description="เหตุผลที่ พมจ. ไม่อนุมัติ ส่งต่อไป case-service เมื่อ approve_status=false",
     )
+
+
+class ApproveCaseBatchCreateBody(BaseModel):
+    items: list[ApproveCaseCreateBody] = Field(..., min_length=1, max_length=30)
 
 
 class WelfareDdaRefDetailCreateBody(BaseModel):
@@ -1573,6 +1582,40 @@ async def create_approve_case_for_staff(body: ApproveCaseCreateBody) -> Any:
     return await _post(f"{base}/v1/case_for_staff/approve-case", json=payload)
 
 
+@router.post(
+    "/v1/case_for_staff/approve-case/batch",
+    tags=["case_for_staff"],
+    summary="บันทึกการอนุมัติหลายเคส (สูงสุด 30)",
+    description="ส่งต่อ `POST …/v1/case_for_staff/approve-case/batch`",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_approve_case_batch_for_staff(body: ApproveCaseBatchCreateBody) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    payload = body.model_dump(exclude_none=True)
+    return await _post(
+        f"{base}/v1/case_for_staff/approve-case/batch",
+        json=payload,
+        timeout=120.0,
+    )
+
+
+@router.get(
+    "/v1/case_for_staff/applicants/brief",
+    tags=["case_for_staff"],
+    summary="สรุปเบาหลาย applicant สำหรับ PMJ multi-approve",
+    description="ส่งต่อ `GET …/v1/case_for_staff/applicants/brief?ids=` (timeout 60s)",
+)
+async def list_applicants_brief_for_staff(
+    ids: list[int] = Query(..., description="applicant_id ซ้ำได้"),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    pairs = [("ids", str(i)) for i in ids]
+    return await _get(
+        f"{base}/v1/case_for_staff/applicants/brief?{urlencode(pairs)}",
+        timeout=60.0,
+    )
+
+
 @router.get(
     "/v1/case_for_staff/approve-case",
     tags=["case_for_staff"],
@@ -1684,7 +1727,10 @@ async def list_cover_document_batches_for_staff(
     if pending:
         params["pending"] = "true"
     suffix = f"?{urlencode(params)}" if params else ""
-    return await _get(f"{base}/v1/case_for_staff/cover-document-batch{suffix}")
+    return await _get(
+        f"{base}/v1/case_for_staff/cover-document-batch{suffix}",
+        timeout=60.0,
+    )
 
 
 @router.get(
@@ -2123,6 +2169,30 @@ async def bff_latest_helped_case(
     base = settings.case_service_url.rstrip("/")
     query_string = urlencode({"citizen": citizen})
     return await _get(f"{base}/v1/intake/latest-helped-case?{query_string}")
+
+
+@router.get(
+    "/v1/intake/history",
+    tags=["intake"],
+    summary="ประวัติเคส CARE ตามเลขบัตรประชาชน",
+)
+async def bff_intake_history(
+    citizen: str = Query(..., min_length=13, max_length=13, pattern=r"^\d{13}$"),
+):
+    base = settings.case_service_url.rstrip("/")
+    query_string = urlencode({"citizen": citizen})
+    return await _get(f"{base}/v1/intake/history?{query_string}")
+
+
+@router.post(
+    "/v1/intake/fiscal-duplicates",
+    tags=["intake"],
+    summary="ตรวจเคส CARE ซ้ำในปีงบประมาณแบบ batch",
+)
+async def bff_intake_fiscal_duplicates(request: Request):
+    body = await request.json()
+    base = settings.case_service_url.rstrip("/")
+    return await _post(f"{base}/v1/intake/fiscal-duplicates", json=body)
 
 
 @router.get(

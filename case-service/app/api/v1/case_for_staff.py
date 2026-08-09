@@ -30,13 +30,14 @@ from ...models.applicant import Applicant
 from ...models.applicant_submission_audit import ApplicantSubmissionAudit
 from ...models.geo import District, Postcode, Province, SubDistrict, SubDistrictPostcode
 from ...models.lookup import AttachmentType, BankName, CurrentStatus, TypeMoneyCategory
+from ...models.dependency import DependencyLoad
 from ...models.economic import HouseholdMember
 from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.intake import CaseHandling, CasePayment, CaseRegulationChoice
 from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
-from ...models.welfare import WelfareEvidence
+from ...models.welfare import WelfareEvidence, WelfareHistoryDetail
 from ...services.process_sla import (
     apply_emergency_flag_for_money_category,
     apply_process_sla_to_applicant,
@@ -137,6 +138,9 @@ from ...services.cover_document_batch import (
 )
 from ...schemas.payment import (
     ApproveCaseCreate,
+    ApproveCaseBatchCreate,
+    ApproveCaseBatchItemResult,
+    ApproveCaseBatchResult,
     ApproveCaseRead,
     FilePaymentRead,
     FilePaymentUploadRead,
@@ -150,6 +154,8 @@ from ...schemas.payment import (
     WelfarePaymentBatchRead,
 )
 from ...schemas.case_for_staff import (
+    ApplicantBriefListResponse,
+    ApplicantBriefRead,
     CaseForStaffApplicantStaffFieldsRead,
     CaseForStaffApplicantStaffFieldsUpdate,
     CaseForStaffResponsibleDivisionRead,
@@ -943,6 +949,29 @@ def _applicant_have_dda_ref_exists():
     )
 
 
+#: received_welfare_types.id ที่ถือว่าเป็นสวัสดิการคนพิการ
+#: 4 = เงิน/เบี้ยคนพิการ, 11 = เครื่องช่วยความพิการ
+DISABILITY_RECEIVED_WELFARE_TYPE_IDS = (4, 11)
+
+
+def _applicant_is_disabled_exists():
+    """เคยได้รับสวัสดิการคนพิการหรือไม่ (ใช้เป็น flag ผู้พิการของเคส).
+
+    true เมื่อ welfare_histories_detail มี received_welfare_type_id เป็น
+    4 (เงิน/เบี้ยคนพิการ) หรือ 11 (เครื่องช่วยความพิการ)
+    """
+    return (
+        select(WelfareHistoryDetail.welfare_history_id)
+        .where(
+            WelfareHistoryDetail.welfare_history_id == Applicant.id,
+            WelfareHistoryDetail.received_welfare_type_id.in_(
+                DISABILITY_RECEIVED_WELFARE_TYPE_IDS
+            ),
+        )
+        .exists()
+    )
+
+
 def _applicant_is_approved_exists():
     """มีแถว approve_case ที่ approve_status = true สำหรับ applicant นี้หรือไม่."""
     return (
@@ -1162,6 +1191,7 @@ async def list_cases_for_staff(
 
     have_dda_ref = _applicant_have_dda_ref_exists()
     is_approved = _applicant_is_approved_exists()
+    is_disabled = _applicant_is_disabled_exists()
 
     stmt = (
         select(
@@ -1197,6 +1227,7 @@ async def list_cases_for_staff(
             Postcode.name.label("postcode"),
             have_dda_ref.label("have_dda_ref"),
             is_approved.label("is_approved"),
+            is_disabled.label("is_disabled"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
             case(
                 (return_edit_resubmitted_sq.c.applicant_id.is_not(None), True),
@@ -1493,6 +1524,7 @@ async def _list_cases_for_staff_finance_impl(
             CaseRegulationChoice.money_amount.label("money_amount"),
             CaseHandling.responsible_division_id.label("responsible_division_id"),
             CasePayment.payment_method_id.label("payment_method_id"),
+            _applicant_is_disabled_exists().label("is_disabled"),
         )
         .join(Person, Person.id == Applicant.persons_id)
         .outerjoin(BankName, BankName.id == Applicant.bank_name_id)
@@ -2916,6 +2948,242 @@ async def create_approve_case_for_staff(
     res_data = ApproveCaseRead.model_validate(row)
     res_data.esignature = _load_esignature_base64(res_data.esignature)
     return res_data
+
+
+@router.post(
+    "/approve-case/batch",
+    response_model=ApproveCaseBatchResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="บันทึกการอนุมัติหลายเคส (สูงสุด 30)",
+    description=(
+        "เรียก record_approve_case_with_status ทีละรายการใน transaction เดียว — "
+        "กฎ TASK-06 (reject ไม่เปลี่ยน status) คงเดิม"
+    ),
+)
+async def create_approve_case_batch_for_staff(
+    body: ApproveCaseBatchCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ApproveCaseBatchResult:
+    results: list[ApproveCaseBatchItemResult] = []
+    email_jobs: list[tuple] = []
+    for item in body.items:
+        applicant = await session.get(Applicant, item.applicant_id)
+        if applicant is None:
+            results.append(
+                ApproveCaseBatchItemResult(
+                    applicant_id=item.applicant_id,
+                    ok=False,
+                    error="applicant_not_found",
+                )
+            )
+            continue
+        try:
+            article_id = await resolve_article_id_for_applicant(session, item.applicant_id)
+            row, status_log, current_status = await record_approve_case_with_status(
+                session,
+                applicant_id=item.applicant_id,
+                approve_status=item.approve_status,
+                esignature=item.esignature,
+                user_sdshv=item.user_sdshv,
+                reject_reason=item.reject_reason,
+                article_id=article_id,
+            )
+            await session.flush()
+            res_data = ApproveCaseRead.model_validate(row)
+            res_data.esignature = _load_esignature_base64(res_data.esignature)
+            results.append(
+                ApproveCaseBatchItemResult(
+                    applicant_id=item.applicant_id,
+                    ok=True,
+                    data=res_data,
+                )
+            )
+            if status_log is not None and current_status is not None:
+                email_jobs.append((status_log, current_status))
+        except HTTPException as exc:
+            results.append(
+                ApproveCaseBatchItemResult(
+                    applicant_id=item.applicant_id,
+                    ok=False,
+                    error=str(exc.detail),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — คืน error ต่อรายการ ไม่ล้มทั้ง batch
+            results.append(
+                ApproveCaseBatchItemResult(
+                    applicant_id=item.applicant_id,
+                    ok=False,
+                    error=str(exc),
+                )
+            )
+    await session.commit()
+    for status_log, current_status in email_jobs:
+        await enqueue_status_email(
+            session,
+            applicant_id=status_log.applicant_id,
+            status_log_id=status_log.id,
+            current_status_id=status_log.current_status_id,
+            current_status_color=current_status.color,
+            remarks=status_log.remarks,
+        )
+    return ApproveCaseBatchResult(items=results)
+
+
+@router.get(
+    "/applicants/brief",
+    response_model=ApplicantBriefListResponse,
+    summary="สรุปเบาหลาย applicant สำหรับ PMJ multi-approve",
+    description=(
+        "คืน exists/province/is_approved/cid ฯลฯ สำหรับ ids ที่ส่งมา (สูงสุด 30) — "
+        "ใช้แทน por-kor-1-detail ทีละเคสใน visibility check"
+    ),
+)
+async def list_applicants_brief_for_staff(
+    ids: list[int] = Query(..., description="applicant_id ซ้ำได้; จะ dedupe และจำกัด 30"),
+    session: AsyncSession = Depends(get_session),
+) -> ApplicantBriefListResponse:
+    # Preserve order, dedupe, cap 30
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for raw in ids:
+        try:
+            aid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if aid < 1 or aid in seen:
+            continue
+        seen.add(aid)
+        ordered_ids.append(aid)
+        if len(ordered_ids) >= 30:
+            break
+    if not ordered_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ids_required")
+
+    latest_status_sq = (
+        select(
+            WelfareRequestStatus.applicant_id.label("applicant_id"),
+            WelfareRequestStatus.current_status_id.label("current_status_id"),
+            func.row_number()
+            .over(
+                partition_by=WelfareRequestStatus.applicant_id,
+                order_by=[WelfareRequestStatus.updated_at.desc(), WelfareRequestStatus.id.desc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    primary_address_sq = (
+        select(
+            Address.applicant_id.label("applicant_id"),
+            Address.sub_district_postcode_id.label("sub_district_postcode_id"),
+            func.row_number()
+            .over(
+                partition_by=Address.applicant_id,
+                order_by=[Address.id.asc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    location_subdistrict_postcode_id = func.coalesce(
+        primary_address_sq.c.sub_district_postcode_id,
+        Person.sub_district_postcode_id,
+    )
+    is_approved = _applicant_is_approved_exists()
+    active_pmj_reject_sq = (
+        select(
+            ApproveCase.applicant_id.label("applicant_id"),
+            func.row_number()
+            .over(
+                partition_by=ApproveCase.applicant_id,
+                order_by=ApproveCase.id.desc(),
+            )
+            .label("rn"),
+        )
+        .where(
+            ApproveCase.approve_status.is_(False),
+            ApproveCase.reject_reason.is_not(None),
+            ApproveCase.reject_resolved_at.is_(None),
+        )
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Applicant.id.label("applicant_id"),
+            Applicant.case_number.label("case_number"),
+            Person.first_name.label("firstname"),
+            Person.last_name.label("lastname"),
+            Person.cid.label("cid"),
+            Province.id.label("province_id"),
+            latest_status_sq.c.current_status_id.label("current_status_id"),
+            is_approved.label("is_approved"),
+            case(
+                (
+                    and_(
+                        active_pmj_reject_sq.c.applicant_id.is_not(None),
+                        ~is_approved,
+                    ),
+                    True,
+                ),
+                else_=False,
+            ).label("is_pmj_rejected"),
+        )
+        .join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(
+            primary_address_sq,
+            and_(
+                primary_address_sq.c.applicant_id == Applicant.id,
+                primary_address_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            SubDistrictPostcode,
+            SubDistrictPostcode.id == location_subdistrict_postcode_id,
+        )
+        .outerjoin(Postcode, Postcode.id == SubDistrictPostcode.postcode_id)
+        .outerjoin(SubDistrict, SubDistrict.id == SubDistrictPostcode.sub_district_id)
+        .outerjoin(District, District.id == SubDistrict.district_id)
+        .outerjoin(Province, Province.id == District.province_id)
+        .outerjoin(
+            latest_status_sq,
+            and_(
+                latest_status_sq.c.applicant_id == Applicant.id,
+                latest_status_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            active_pmj_reject_sq,
+            and_(
+                active_pmj_reject_sq.c.applicant_id == Applicant.id,
+                active_pmj_reject_sq.c.rn == 1,
+            ),
+        )
+        .where(Applicant.id.in_(ordered_ids))
+    )
+    result = await session.execute(stmt)
+    rows_by_id = {row["applicant_id"]: row for row in result.mappings().all()}
+    items: list[ApplicantBriefRead] = []
+    for aid in ordered_ids:
+        row = rows_by_id.get(aid)
+        if row is None:
+            items.append(ApplicantBriefRead(applicant_id=aid, exists=False))
+            continue
+        items.append(
+            ApplicantBriefRead(
+                applicant_id=aid,
+                exists=True,
+                case_number=row["case_number"],
+                cid=row["cid"],
+                firstname=row["firstname"],
+                lastname=row["lastname"],
+                province_id=row["province_id"],
+                current_status_id=row["current_status_id"],
+                is_approved=bool(row["is_approved"]),
+                is_pmj_rejected=bool(row["is_pmj_rejected"]),
+            )
+        )
+    return ApplicantBriefListResponse(items=items)
 
 
 @router.get(
