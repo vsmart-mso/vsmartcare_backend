@@ -120,6 +120,13 @@ class CaseForStaffRead(ProcessSlaFields, KtbSubmissionAuditFields):
         False,
         description="true เมื่อ applicant มีแถว approve_case ที่ approve_status = true",
     )
+    is_disabled: bool = Field(
+        False,
+        description=(
+            "true เมื่อเคยได้รับสวัสดิการเงิน/เบี้ยคนพิการ (received_welfare_types.id=4) "
+            "หรือเครื่องช่วยความพิการ (received_welfare_types.id=11)"
+        ),
+    )
     previous_status_id: int | None = Field(
         None,
         description="current_status_id ของ log ก่อนหน้า (rn=2) — null เมื่อมีสถานะเดียว",
@@ -262,13 +269,6 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
     is_cash_disbursement_complete: bool = Field(
         False,
         description="true เมื่อเงินสดครบเลขที่ขอเบิก + หลักฐานอย่างน้อย 1 ไฟล์",
-    )
-    is_disabled: bool = Field(
-        False,
-        description=(
-            "true เมื่อเคสมีสัญญาณความพิการ — สมาชิกครัวเรือน physical_condition='disabled' "
-            "หรือมีภาระอุปการะเลี้ยงดูคนพิการ/ทุพพลภาพ (dependency_types.id=4)"
-        ),
     )
 
 
