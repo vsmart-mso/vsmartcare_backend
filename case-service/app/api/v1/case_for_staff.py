@@ -37,7 +37,7 @@ from ...models.status_log import WelfareRequestStatus
 from ...models.intake import CaseHandling, CasePayment, CaseRegulationChoice
 from ...models.mso_send import MoreMso, SendData, TypeSend
 from ...models.payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
-from ...models.welfare import WelfareEvidence
+from ...models.welfare import WelfareEvidence, WelfareHistoryDetail
 from ...services.process_sla import (
     apply_emergency_flag_for_money_category,
     apply_process_sla_to_applicant,
@@ -949,37 +949,27 @@ def _applicant_have_dda_ref_exists():
     )
 
 
-#: physical_condition ของ household_members ที่ถือว่าเป็นคนพิการ
-DISABLED_PHYSICAL_CONDITION = "disabled"
-#: dependency_types.id 4 = "อุปการะเลี้ยงดูคนพิการหรือคนทุพพลภาพ"
-DISABILITY_DEPENDENCY_TYPE_ID = 4
+#: received_welfare_types.id ที่ถือว่าเป็นสวัสดิการคนพิการ
+#: 4 = เงิน/เบี้ยคนพิการ, 11 = เครื่องช่วยความพิการ
+DISABILITY_RECEIVED_WELFARE_TYPE_IDS = (4, 11)
 
 
 def _applicant_is_disabled_exists():
-    """ครัวเรือนของ applicant นี้มีคนพิการหรือไม่ (ใช้เป็น flag ผู้พิการของเคส).
+    """เคยได้รับสวัสดิการคนพิการหรือไม่ (ใช้เป็น flag ผู้พิการของเคส).
 
-    ปสค.1/ปสค.2 ไม่มีช่องความพิการของผู้ยื่นเอง สัญญาณความพิการระดับเคสจึงมาจาก
-    - household_members.physical_condition = 'disabled' (สมาชิกในครัวเรือนพิการ)
-    - dependency_loads ที่เป็นภาระอุปการะคนพิการ/ทุพพลภาพ
-    ซึ่งตรงกับความหมาย "ครอบครัวคนพิการ" ที่ฝั่ง vSmart ใช้กรอง
+    true เมื่อ welfare_histories_detail มี received_welfare_type_id เป็น
+    4 (เงิน/เบี้ยคนพิการ) หรือ 11 (เครื่องช่วยความพิการ)
     """
-    member_disabled = (
-        select(HouseholdMember.id)
+    return (
+        select(WelfareHistoryDetail.welfare_history_id)
         .where(
-            HouseholdMember.applicant_id == Applicant.id,
-            HouseholdMember.physical_condition == DISABLED_PHYSICAL_CONDITION,
+            WelfareHistoryDetail.welfare_history_id == Applicant.id,
+            WelfareHistoryDetail.received_welfare_type_id.in_(
+                DISABILITY_RECEIVED_WELFARE_TYPE_IDS
+            ),
         )
         .exists()
     )
-    dependency_disabled = (
-        select(DependencyLoad.applicant_id)
-        .where(
-            DependencyLoad.applicant_id == Applicant.id,
-            DependencyLoad.dependency_type_id == DISABILITY_DEPENDENCY_TYPE_ID,
-        )
-        .exists()
-    )
-    return or_(member_disabled, dependency_disabled)
 
 
 def _applicant_is_approved_exists():
@@ -1201,6 +1191,7 @@ async def list_cases_for_staff(
 
     have_dda_ref = _applicant_have_dda_ref_exists()
     is_approved = _applicant_is_approved_exists()
+    is_disabled = _applicant_is_disabled_exists()
 
     stmt = (
         select(
@@ -1236,6 +1227,7 @@ async def list_cases_for_staff(
             Postcode.name.label("postcode"),
             have_dda_ref.label("have_dda_ref"),
             is_approved.label("is_approved"),
+            is_disabled.label("is_disabled"),
             prev_status_sq.c.previous_status_id.label("previous_status_id"),
             case(
                 (return_edit_resubmitted_sq.c.applicant_id.is_not(None), True),
