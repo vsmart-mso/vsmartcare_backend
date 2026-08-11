@@ -185,6 +185,14 @@ class CaseForStaffFinanceRead(ProcessSlaFields):
     bank_account_no: str | None = Field(None, max_length=50)
     email_address: str | None = Field(None, max_length=255)
     mobile_phone: str | None = Field(None, max_length=20)
+    regulation_id: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "case_regulation_choice.regulation_id — ระเบียบที่ให้ความช่วยเหลือ "
+            "ใช้ id ชุดเดียวกับ Announcement_regulations.id ฝั่ง พม. Smart"
+        ),
+    )
     money_amount: Decimal | None = None
     responsible_division_id: Optional[int] = Field(
         None,

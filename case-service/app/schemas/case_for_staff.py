@@ -237,6 +237,14 @@ class CaseForStaffFinanceRead(CaseForStaffRead):
     bank_account_no: str | None = Field(None, max_length=50, description="applicants.bank_account_no")
     email_address: str | None = Field(None, max_length=255, description="applicants.email_address")
     mobile_phone: str | None = Field(None, max_length=20, description="applicants.mobile_phone")
+    regulation_id: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "case_regulation_choice.regulation_id (ผ่าน case_handling) — ระเบียบที่ให้ความช่วยเหลือ "
+            "ใช้ id ชุดเดียวกับ Announcement_regulations.id ฝั่ง พม. Smart"
+        ),
+    )
     money_amount: Decimal | None = Field(
         None,
         ge=0,
