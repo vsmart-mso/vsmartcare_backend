@@ -1521,6 +1521,7 @@ async def _list_cases_for_staff_finance_impl(
             Applicant.bank_account_no.label("bank_account_no"),
             Applicant.email_address.label("email_address"),
             Applicant.mobile_phone.label("mobile_phone"),
+            CaseRegulationChoice.regulation_id.label("regulation_id"),
             CaseRegulationChoice.money_amount.label("money_amount"),
             CaseHandling.responsible_division_id.label("responsible_division_id"),
             CasePayment.payment_method_id.label("payment_method_id"),
