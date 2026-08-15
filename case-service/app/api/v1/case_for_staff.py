@@ -128,11 +128,15 @@ from ...schemas.cover_document_batch import (
     CoverDocumentBatchListResponse,
     CoverDocumentBatchRead,
     CoverDocumentBatchUpdate,
+    CoverDocumentByDocumentRead,
+    CoverDocumentMemberRead,
+    CoverDocumentMembersResponse,
 )
 from ...services.cover_document_batch import (
     batch_to_read,
     create_cover_document_batch,
     get_cover_document_batch,
+    list_cover_document_batch_members,
     list_cover_document_batches,
     update_cover_document_batch,
 )
@@ -3113,6 +3117,7 @@ async def list_applicants_brief_for_staff(
         select(
             Applicant.id.label("applicant_id"),
             Applicant.case_number.label("case_number"),
+            Applicant.type_money_category_id.label("type_money_id"),
             Person.first_name.label("firstname"),
             Person.last_name.label("lastname"),
             Person.cid.label("cid"),
@@ -3179,6 +3184,7 @@ async def list_applicants_brief_for_staff(
                 firstname=row["firstname"],
                 lastname=row["lastname"],
                 province_id=row["province_id"],
+                type_money_id=row["type_money_id"],
                 current_status_id=row["current_status_id"],
                 is_approved=bool(row["is_approved"]),
                 is_pmj_rejected=bool(row["is_pmj_rejected"]),
@@ -3577,6 +3583,46 @@ async def patch_cover_document_batch_for_staff(
 
 
 @router.get(
+    "/cover-document-batch/members",
+    response_model=CoverDocumentMembersResponse,
+    summary="สมาชิกชุดเอกสารตาม date_at + type_money_id",
+    description=(
+        "คืนสมาชิกของชุดอนุมัติตามวันที่เอกสารและหมวดเงิน — "
+        "สค. (type_money_id=6) ขยายจังหวัดแม่–ลูกตาม DWF; หมวดอื่นไม่ขยาย"
+    ),
+)
+async def list_cover_document_batch_members_for_staff(
+    province_id: int = Query(..., ge=1),
+    date_at: date = Query(..., description="วันเอกสาร YYYY-MM-DD"),
+    type_money_id: int = Query(..., ge=1),
+    pending_only: bool = Query(True),
+    session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
+) -> CoverDocumentMembersResponse:
+    sor_kor_province_ids: tuple[int, ...] | None = None
+    scope_province = province_id
+    if not staff.is_internal:
+        scope_province = staff.province_id
+        if type_money_id == SOR_KOR_TYPE_MONEY_ID:
+            sor_kor_province_ids = allowed_sor_kor_province_ids(staff.province_id)
+    items = await list_cover_document_batch_members(
+        session,
+        province_id=scope_province,
+        date_at=date_at,
+        type_money_id=type_money_id,
+        pending_only=pending_only,
+        sor_kor_province_ids=sor_kor_province_ids,
+        sor_kor_type_money_id=SOR_KOR_TYPE_MONEY_ID,
+    )
+    return CoverDocumentMembersResponse(
+        date_at=date_at,
+        type_money_id=type_money_id,
+        province_id=scope_province,
+        items=[CoverDocumentMemberRead.model_validate(item) for item in items],
+    )
+
+
+@router.get(
     "/cover-document-batch/{batch_id}",
     response_model=CoverDocumentBatchRead,
     summary="ดึง cover document batch พร้อมสมาชิก",
@@ -3595,23 +3641,44 @@ async def get_cover_document_batch_for_staff(
     "/cover-document-batch",
     response_model=CoverDocumentBatchListResponse,
     summary="รายการ cover document batch",
+    description=(
+        "by_document=false (default): รายการต่อ batch (BC). "
+        "by_document=true: รวมตาม (article.date_at, type_money_id) รวมเคสที่ยังไม่ผูก batch. "
+        "pending=true นับจากสถานะอนุมัติจริง"
+    ),
 )
 async def list_cover_document_batches_for_staff(
     province_id: int | None = Query(None, ge=1),
     pending: bool = Query(False),
+    date_at: date | None = Query(None),
+    type_money_id: int | None = Query(None, ge=1),
+    from_date: date | None = Query(None),
+    to_date: date | None = Query(None),
+    by_document: bool = Query(False),
     session: AsyncSession = Depends(get_session),
     staff: StaffClaims = Depends(require_staff),
 ) -> CoverDocumentBatchListResponse:
     sor_kor_province_ids: tuple[int, ...] | None = None
     if province_id is not None and not staff.is_internal:
         sor_kor_province_ids = allowed_sor_kor_province_ids(staff.province_id)
-    batches = await list_cover_document_batches(
+    rows = await list_cover_document_batches(
         session,
         province_id=province_id,
         pending=pending,
+        date_at=date_at,
+        type_money_id=type_money_id,
+        from_date=from_date,
+        to_date=to_date,
+        by_document=by_document,
         sor_kor_province_ids=sor_kor_province_ids,
         sor_kor_type_money_id=SOR_KOR_TYPE_MONEY_ID,
     )
+    if by_document:
+        return CoverDocumentBatchListResponse(
+            by_document=True,
+            items=[CoverDocumentByDocumentRead.model_validate(row) for row in rows],
+        )
     return CoverDocumentBatchListResponse(
-        items=[CoverDocumentBatchRead.model_validate(batch_to_read(batch)) for batch in batches]
+        by_document=False,
+        items=[CoverDocumentBatchRead.model_validate(batch_to_read(batch)) for batch in rows],
     )

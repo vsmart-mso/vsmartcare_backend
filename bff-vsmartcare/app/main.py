@@ -1702,6 +1702,33 @@ async def patch_cover_document_batch_for_staff(
 
 
 @router.get(
+    "/v1/case_for_staff/cover-document-batch/members",
+    tags=["case_for_staff"],
+    summary="สมาชิกชุดเอกสารตาม date_at + type_money_id",
+)
+async def list_cover_document_batch_members_for_staff(
+    province_id: int = Query(..., ge=1),
+    date_at: str = Query(...),
+    type_money_id: int = Query(..., ge=1),
+    pending_only: bool = Query(True),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    params: dict[str, str] = {
+        "province_id": str(province_id),
+        "date_at": date_at,
+        "type_money_id": str(type_money_id),
+    }
+    if not pending_only:
+        params["pending_only"] = "false"
+    else:
+        params["pending_only"] = "true"
+    return await _get(
+        f"{base}/v1/case_for_staff/cover-document-batch/members?{urlencode(params)}",
+        timeout=60.0,
+    )
+
+
+@router.get(
     "/v1/case_for_staff/cover-document-batch/{batch_id}",
     tags=["case_for_staff"],
     summary="ดึง cover document batch",
@@ -1719,13 +1746,28 @@ async def get_cover_document_batch_for_staff(batch_id: int) -> Any:
 async def list_cover_document_batches_for_staff(
     province_id: Optional[int] = Query(None, ge=1),
     pending: bool = Query(False),
+    date_at: Optional[str] = Query(None),
+    type_money_id: Optional[int] = Query(None, ge=1),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    by_document: bool = Query(False),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
-    params = {}
+    params: dict[str, str] = {}
     if province_id is not None:
-        params["province_id"] = province_id
+        params["province_id"] = str(province_id)
     if pending:
         params["pending"] = "true"
+    if date_at:
+        params["date_at"] = date_at
+    if type_money_id is not None:
+        params["type_money_id"] = str(type_money_id)
+    if from_date:
+        params["from_date"] = from_date
+    if to_date:
+        params["to_date"] = to_date
+    if by_document:
+        params["by_document"] = "true"
     suffix = f"?{urlencode(params)}" if params else ""
     return await _get(
         f"{base}/v1/case_for_staff/cover-document-batch{suffix}",
