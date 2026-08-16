@@ -17,7 +17,11 @@ from ..models.geo import District, Postcode, Province, SubDistrict, SubDistrictP
 from ..models.payment import ApproveCase
 from ..models.person import Person
 from ..models.address import Address
-from ..services.article_approval import get_article_by_applicant_id, upsert_article
+from ..services.article_approval import (
+    get_article_by_applicant_id,
+    resolve_active_pmj_rejects_for_applicant,
+    upsert_article,
+)
 from ..services.dwf_scope import SOR_KOR_TYPE_MONEY_ID
 
 _BATCH_HEADER_FIELDS = (
@@ -105,6 +109,13 @@ async def create_cover_document_batch(
             article.updated_at = datetime.now()
         article.batch_id = batch.id
 
+    # ส่งเข้าคิว พมจ. อีกครั้ง — ปิด active reject เดิมของแต่ละเคส
+    for applicant_id in applicant_ids:
+        await resolve_active_pmj_rejects_for_applicant(
+            session,
+            applicant_id=applicant_id,
+        )
+
     await session.flush()
     return batch
 
@@ -126,6 +137,12 @@ async def update_cover_document_batch(
         setattr(batch, key, value)
     batch.updated_at = datetime.now()
     await _sync_member_articles(session, batch)
+    # กันเคสที่เคยตีกลับแล้วยังอยู่ในชุด / ถูก sync หัวชุดซ้ำ
+    for article in batch.articles:
+        await resolve_active_pmj_rejects_for_applicant(
+            session,
+            applicant_id=article.applicant_id,
+        )
     await session.flush()
     return batch
 
