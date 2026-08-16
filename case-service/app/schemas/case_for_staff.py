@@ -762,6 +762,7 @@ class ApplicantBriefRead(BaseModel):
     firstname: str | None = None
     lastname: str | None = None
     province_id: int | None = None
+    type_money_id: int | None = None
     current_status_id: int | None = None
     is_approved: bool = False
     is_pmj_rejected: bool = False
