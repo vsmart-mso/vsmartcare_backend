@@ -61,7 +61,8 @@ filtered_applicants AS (
 """
 
 
-# CTE ระดับประเทศ: เหมือน _FILTERED_APPLICANTS_CTE แต่ไม่กรองจังหวัด + เพิ่ม province_id ใน SELECT
+# CTE ระดับประเทศ: เหมือน _FILTERED_APPLICANTS_CTE แต่กรองจังหวัดได้หลายค่า (ไม่ส่ง = ทุกจังหวัด)
+# + เพิ่ม province_id ใน SELECT
 _NATIONAL_FILTERED_APPLICANTS_CTE = """
 national_filtered AS (
     SELECT
@@ -93,6 +94,10 @@ national_filtered AS (
         CAST(:type_money_ids AS int[]) IS NULL
         OR ap.type_money_category_id = ANY(CAST(:type_money_ids AS int[]))
     )
+      AND (
+        CAST(:province_ids AS int[]) IS NULL
+        OR d.province_id = ANY(CAST(:province_ids AS int[]))
+    )
 )
 """
 
@@ -100,17 +105,43 @@ national_filtered AS (
 async def fetch_national_total(
     session: AsyncSession,
     *,
+    province_ids: list[int] | None,
+    current_status_ids: list[int] | None,
     type_money_ids: list[int] | None,
 ) -> int:
+    # นับเฉพาะ applicant ที่มีสถานะซึ่งยัง filter_activate อยู่ ให้ฐานของ percent ตรงกับ
+    # ผลรวมของ statuses[].count (ซึ่ง join current_status ที่ filter_activate = true)
     sql = text(
-        f"WITH {_NATIONAL_FILTERED_APPLICANTS_CTE} SELECT COUNT(*) FROM national_filtered"
+        f"""
+        WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}
+        SELECT COUNT(fa.applicant_id)
+        FROM national_filtered fa
+        JOIN current_status cs ON cs.id = fa.current_status_id
+        WHERE cs.filter_activate = true
+          AND (
+              CAST(:current_status_ids AS int[]) IS NULL
+              OR fa.current_status_id = ANY(CAST(:current_status_ids AS int[]))
+          )
+        """
     )
-    return await session.scalar(sql, {"type_money_ids": type_money_ids}) or 0
+    return (
+        await session.scalar(
+            sql,
+            {
+                "province_ids": province_ids,
+                "current_status_ids": current_status_ids,
+                "type_money_ids": type_money_ids,
+            },
+        )
+        or 0
+    )
 
 
 async def fetch_national_status_counts(
     session: AsyncSession,
     *,
+    province_ids: list[int] | None,
+    current_status_ids: list[int] | None,
     type_money_ids: list[int] | None,
 ) -> list[dict]:
     sql = text(
@@ -124,26 +155,64 @@ async def fetch_national_status_counts(
         FROM current_status cs
         LEFT JOIN national_filtered fa ON fa.current_status_id = cs.id
         WHERE cs.filter_activate = true
+          AND (
+              CAST(:current_status_ids AS int[]) IS NULL
+              OR cs.id = ANY(CAST(:current_status_ids AS int[]))
+          )
         GROUP BY cs.id, cs.description_staff, cs.color, cs.filter_order
         ORDER BY cs.filter_order
         """
     )
-    rows = (await session.execute(sql, {"type_money_ids": type_money_ids})).mappings().all()
+    rows = (
+        await session.execute(
+            sql,
+            {
+                "province_ids": province_ids,
+                "current_status_ids": current_status_ids,
+                "type_money_ids": type_money_ids,
+            },
+        )
+    ).mappings().all()
     return [dict(r) for r in rows]
 
 
-async def fetch_provinces_total_count(session: AsyncSession) -> int:
-    return await session.scalar(text("SELECT COUNT(*) FROM province")) or 0
+async def fetch_provinces_total_count(
+    session: AsyncSession,
+    *,
+    province_ids: list[int] | None = None,
+) -> int:
+    sql = text(
+        """
+        SELECT COUNT(*) FROM province
+        WHERE (
+            CAST(:province_ids AS int[]) IS NULL
+            OR id = ANY(CAST(:province_ids AS int[]))
+        )
+        """
+    )
+    return await session.scalar(sql, {"province_ids": province_ids}) or 0
+
+
+async def fetch_existing_province_ids(session: AsyncSession, province_ids: list[int]) -> set[int]:
+    """คืนเฉพาะ id ที่มีจริงใน `province` — ใช้หาว่าค่าไหนผิดเพื่อบอกใน error 404."""
+    if not province_ids:
+        return set()
+    sql = text("SELECT id FROM province WHERE id = ANY(CAST(:province_ids AS int[]))")
+    rows = (await session.execute(sql, {"province_ids": province_ids})).scalars().all()
+    return set(rows)
 
 
 async def fetch_provinces_page(
     session: AsyncSession,
     *,
+    province_ids: list[int] | None,
     current_status_ids: list[int] | None,
     type_money_ids: list[int] | None,
     limit: int,
     offset: int,
 ) -> list[dict]:
+    # กรอง prov ที่ outer query ด้วย ไม่ใช่แค่ใน CTE — ไม่งั้นจังหวัดนอก filter ยังโผล่มา
+    # เป็นแถว total = 0 (เพราะ LEFT JOIN) และ pagination จะนับจากทั้ง 77 จังหวัดเหมือนเดิม
     sql = text(
         f"""
         WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}
@@ -160,6 +229,10 @@ async def fetch_provinces_page(
         FROM province prov
         LEFT JOIN national_filtered fa ON fa.province_id = prov.id
         LEFT JOIN current_status cs ON cs.id = fa.current_status_id
+        WHERE (
+            CAST(:province_ids AS int[]) IS NULL
+            OR prov.id = ANY(CAST(:province_ids AS int[]))
+        )
         GROUP BY prov.id, prov.name
         ORDER BY prov.id
         LIMIT :limit OFFSET :offset
@@ -169,6 +242,7 @@ async def fetch_provinces_page(
         await session.execute(
             sql,
             {
+                "province_ids": province_ids,
                 "type_money_ids": type_money_ids,
                 "current_status_ids": current_status_ids,
                 "limit": limit,
@@ -188,6 +262,9 @@ async def fetch_provinces_status_breakdown(
 ) -> list[dict]:
     if not province_ids:
         return []
+    # `:province_ids` ถูกใช้ทั้งใน CTE และ outer WHERE โดยตั้งใจ — ค่าที่ส่งมาคือจังหวัดของ
+    # หน้าปัจจุบัน ซึ่งเป็น subset ของ province filter อยู่แล้ว การกรองใน CTE ด้วยจึงถูกต้อง
+    # และช่วยตัดงานตั้งแต่ต้นทาง
     sql = text(
         f"""
         WITH {_NATIONAL_FILTERED_APPLICANTS_CTE}

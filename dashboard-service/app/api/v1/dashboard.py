@@ -33,6 +33,7 @@ from ...queries import (
     fetch_districts_page,
     fetch_districts_status_breakdown,
     fetch_districts_total_count,
+    fetch_existing_province_ids,
     fetch_national_status_counts,
     fetch_national_total,
     fetch_overview_status_counts,
@@ -61,15 +62,69 @@ async def _require_province(session: AsyncSession, province_id: int) -> dict:
     return province
 
 
+# 77 = จำนวนจังหวัดทั้งประเทศ — ส่งเกินนี้แปลว่า caller ส่งอะไรผิดแน่ ๆ
+MAX_PROVINCE_FILTER = 77
+
+
+async def _validate_province_ids(
+    session: AsyncSession, province_id: list[int] | None
+) -> list[int] | None:
+    """ตรวจ `province_id` หลายค่าก่อนใช้กรอง — ห้ามเมิน param แล้วคืนข้อมูลทั้งประเทศ
+
+    ไม่ส่งมา (หรือส่งมาว่าง) = ไม่กรอง คืน None ตามพฤติกรรมเดิม
+    ส่งมาแล้วมีค่าผิด ต้อง error พร้อมบอกว่าค่าไหนผิด เพื่อให้ caller debug ได้
+    """
+    ids = _clean_ids(province_id)
+    if ids is None:
+        return None
+
+    unique_ids = sorted(set(ids))
+    if len(unique_ids) > MAX_PROVINCE_FILTER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"too_many_province_id: ส่งมา {len(unique_ids)} ค่า "
+                f"เกินที่รองรับ {MAX_PROVINCE_FILTER} ค่า"
+            ),
+        )
+
+    existing = await fetch_existing_province_ids(session, unique_ids)
+    missing = [pid for pid in unique_ids if pid not in existing]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"province_not_found: {missing}",
+        )
+    return unique_ids
+
+
 @router.get("/national/overview", response_model=DashboardNationalOverviewRead)
 async def get_national_overview(
+    province_id: list[int] | None = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
+    current_status_id: list[int] | None = Query(
+        None, description="กรองตาม current_status_id ได้หลายค่า"
+    ),
     type_money_id: list[int] | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> DashboardNationalOverviewRead:
-    """สรุปทั้งประเทศ แยกตาม status — ใช้ทำ donut chart ระดับประเทศ."""
+    """สรุปทั้งประเทศ (หรือเฉพาะจังหวัดที่ระบุ) แยกตาม status — ใช้ทำ donut chart."""
+    province_ids = await _validate_province_ids(session, province_id)
+    current_status_ids = _clean_ids(current_status_id)
     type_money_ids = _clean_ids(type_money_id)
-    total = await fetch_national_total(session, type_money_ids=type_money_ids)
-    status_rows = await fetch_national_status_counts(session, type_money_ids=type_money_ids)
+    total = await fetch_national_total(
+        session,
+        province_ids=province_ids,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+    )
+    status_rows = await fetch_national_status_counts(
+        session,
+        province_ids=province_ids,
+        current_status_ids=current_status_ids,
+        type_money_ids=type_money_ids,
+    )
     statuses = [
         DashboardStatusCount(
             current_status_id=row["current_status_id"],
@@ -90,6 +145,7 @@ async def get_national_overview(
 async def _build_provinces_response(
     session: AsyncSession,
     *,
+    province_ids: list[int] | None,
     current_status_id: list[int] | None,
     type_money_id: list[int] | None,
     page: int,
@@ -99,21 +155,27 @@ async def _build_provinces_response(
     current_status_ids = _clean_ids(current_status_id)
     type_money_ids = _clean_ids(type_money_id)
 
-    total_items = _prefetched_total if _prefetched_total is not None else await fetch_provinces_total_count(session)
+    # total_items/total_pages ต้องนับจากชุดที่กรองแล้ว ไม่ใช่ 77 จังหวัดเสมอ
+    total_items = (
+        _prefetched_total
+        if _prefetched_total is not None
+        else await fetch_provinces_total_count(session, province_ids=province_ids)
+    )
     total_pages = max(1, (total_items + page_size - 1) // page_size) if total_items else 1
 
     province_rows = await fetch_provinces_page(
         session,
+        province_ids=province_ids,
         current_status_ids=current_status_ids,
         type_money_ids=type_money_ids,
         limit=page_size,
         offset=(page - 1) * page_size,
     )
-    province_ids = [r["province_id"] for r in province_rows]
+    page_province_ids = [r["province_id"] for r in province_rows]
 
     breakdown_rows = await fetch_provinces_status_breakdown(
         session,
-        province_ids=province_ids,
+        province_ids=page_province_ids,
         current_status_ids=current_status_ids,
         type_money_ids=type_money_ids,
     )
@@ -143,16 +205,21 @@ async def _build_provinces_response(
 
 @router.get("/provinces", response_model=DashboardProvincesRead)
 async def get_provinces(
+    province_id: list[int] | None = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
     current_status_id: list[int] | None = Query(None),
     type_money_id: list[int] | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int | None = Query(None, ge=1),
     session: AsyncSession = Depends(get_session),
 ) -> DashboardProvincesRead:
-    """ตารางรายจังหวัดทั้งประเทศ แยกตาม status — มี pagination."""
+    """ตารางรายจังหวัด (ทั้งประเทศ หรือเฉพาะที่ระบุ) แยกตาม status — มี pagination."""
     resolved = min(page_size or settings.default_page_size, settings.max_page_size)
+    province_ids = await _validate_province_ids(session, province_id)
     return await _build_provinces_response(
         session,
+        province_ids=province_ids,
         current_status_id=current_status_id,
         type_money_id=type_money_id,
         page=page,
@@ -162,17 +229,22 @@ async def get_provinces(
 
 @router.get("/provinces/export")
 async def export_provinces(
+    province_id: list[int] | None = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
     current_status_id: list[int] | None = Query(None),
     type_money_id: list[int] | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    """Excel รายจังหวัดทั้งประเทศ — ไม่มี pagination."""
+    """Excel รายจังหวัด (ทั้งประเทศ หรือเฉพาะที่ระบุ) — ไม่มี pagination."""
     from openpyxl import Workbook
     from urllib.parse import quote
 
-    total = await fetch_provinces_total_count(session)
+    province_ids = await _validate_province_ids(session, province_id)
+    total = await fetch_provinces_total_count(session, province_ids=province_ids)
     data = await _build_provinces_response(
         session,
+        province_ids=province_ids,
         current_status_id=current_status_id,
         type_money_id=type_money_id,
         page=1,
@@ -193,8 +265,10 @@ async def export_provinces(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    safe = "dashboard-national-provinces.xlsx"
-    utf8 = quote("dashboard-ทั้งประเทศ-รายจังหวัด.xlsx")
+    # กรองจังหวัดแล้วอย่าตั้งชื่อไฟล์ว่า "ทั้งประเทศ" — ผู้ใช้ สสว. จะเข้าใจผิดว่าได้ข้อมูลครบ
+    scope = "ทั้งประเทศ" if province_ids is None else f"{len(province_ids)}-จังหวัด"
+    safe = "dashboard-national-provinces.xlsx" if province_ids is None else "dashboard-provinces.xlsx"
+    utf8 = quote(f"dashboard-{scope}-รายจังหวัด.xlsx")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
