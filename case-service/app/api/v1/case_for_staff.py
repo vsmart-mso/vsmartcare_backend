@@ -676,11 +676,29 @@ def _finance_location_visibility_condition(
 ):
     actor_province_id = _actor_province_id(staff, province_id)
     if is_dwf_mother_province(actor_province_id):
-        province_ids = _validated_requested_dwf_province_ids(
+        # Auto-expand mother/child provinces for Sor Kor only; other money types
+        # stay in the actor's own province. Do not require dwf_scope.
+        sor_kor_province_ids = _validated_requested_dwf_province_ids(
             actor_province_id,
             requested_province_ids,
         )
-        return province_column.in_(province_ids)
+        if type_money_ids is not None and SOR_KOR_TYPE_MONEY_ID not in type_money_ids:
+            return province_column == province_id
+        if type_money_ids == {SOR_KOR_TYPE_MONEY_ID}:
+            return province_column.in_(sor_kor_province_ids)
+        return or_(
+            and_(
+                type_money_column == SOR_KOR_TYPE_MONEY_ID,
+                province_column.in_(sor_kor_province_ids),
+            ),
+            and_(
+                or_(
+                    type_money_column.is_(None),
+                    type_money_column != SOR_KOR_TYPE_MONEY_ID,
+                ),
+                province_column == province_id,
+            ),
+        )
 
     finance_sor_kor_province_ids = visible_finance_sor_kor_province_ids(actor_province_id)
     if not finance_sor_kor_province_ids and SOR_KOR_TYPE_MONEY_ID in (
@@ -3606,7 +3624,7 @@ async def list_cover_document_batch_members_for_staff(
         if type_money_id == SOR_KOR_TYPE_MONEY_ID:
             sor_kor_province_ids = allowed_sor_kor_province_ids(staff.province_id)
     items = await list_cover_document_batch_members(
-        session,
+        session, 
         province_id=scope_province,
         date_at=date_at,
         type_money_id=type_money_id,
