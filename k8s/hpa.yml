@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: vcare-bff
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
@@ -35,7 +35,7 @@ spec:
     kind: Deployment
     name: vcare-case-service
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
@@ -61,7 +61,7 @@ spec:
     kind: Deployment
     name: vcare-notification-service
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
@@ -87,7 +87,7 @@ spec:
     kind: Deployment
     name: vcare-ocr-service
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
@@ -139,7 +139,7 @@ spec:
     kind: Deployment
     name: vcare-dashboard-service
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource:
