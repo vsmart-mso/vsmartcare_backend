@@ -20,10 +20,10 @@ pipeline {
     }
 
     environment {
-        REGISTRY   = "registry-vs.m-society.go.th"
-        PROJECT    = "kitsune-cop"
+        REGISTRY   = "staging-registry-vs.m-society.go.th"
+        PROJECT    = "root"
         REPO       = "vcare-backend"
-        BASE_IMAGE = "registry-vs.m-society.go.th/kitsune-cop/vcare-backend"
+        BASE_IMAGE = "staging-registry-vs.m-society.go.th/root/vcare-backend"
         IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
         NAMESPACE  = "vcare"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
