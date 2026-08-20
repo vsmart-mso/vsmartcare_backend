@@ -6,7 +6,6 @@ metadata:
   labels:
     app: vcare-bff
 spec:
-  replicas: 20
   selector:
     matchLabels:
       app: vcare-bff
@@ -42,7 +41,6 @@ metadata:
   labels:
     app: vcare-case-service
 spec:
-  replicas: 20
   selector:
     matchLabels:
       app: vcare-case-service
@@ -89,7 +87,6 @@ metadata:
   labels:
     app: vcare-notification-service
 spec:
-  replicas: 20
   selector:
     matchLabels:
       app: vcare-notification-service
@@ -125,7 +122,6 @@ metadata:
   labels:
     app: vcare-ocr-service
 spec:
-  replicas: 20
   selector:
     matchLabels:
       app: vcare-ocr-service
@@ -197,7 +193,6 @@ metadata:
   labels:
     app: vcare-dashboard-service
 spec:
-  replicas: 20
   selector:
     matchLabels:
       app: vcare-dashboard-service
