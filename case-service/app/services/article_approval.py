@@ -118,7 +118,11 @@ async def resolve_active_pmj_rejects_for_applicant(
     *,
     applicant_id: int,
 ) -> int:
-    """ปิด PMJ reject ที่ยัง active เมื่อ นสค. ส่งเคสกลับให้ พมจ. พิจารณาอีกครั้ง."""
+    """ปิด PMJ reject ที่ยัง active (ตั้ง reject_resolved_at).
+
+    เรียกเมื่อ: สร้าง/อัปเดต cover_document_batch (ส่งเข้าคิว พมจ. อีกครั้ง)
+    หรือเมื่ออนุมัติสำเร็จ (approve_status=true).
+    """
     result = await session.execute(
         update(ApproveCase)
         .where(
