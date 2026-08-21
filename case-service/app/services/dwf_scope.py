@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
+#หมวดเงิน สค 6
 SOR_KOR_TYPE_MONEY_ID = 6
 
 

@@ -3306,10 +3306,16 @@ def _multi_query_pairs(base: list[tuple[str, Any]], key: str, values: Optional[l
     dependencies=_require_bearer_or_trusted_api_key,
 )
 async def get_dashboard_national_overview(
+    province_id: Optional[list[int]] = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
+    current_status_id: Optional[list[int]] = Query(None),
     type_money_id: Optional[list[int]] = Query(None),
 ) -> DashboardNationalOverviewRead:
     base = settings.dashboard_service_url.rstrip("/")
-    pairs = _multi_query_pairs([], "type_money_id", type_money_id)
+    pairs = _multi_query_pairs([], "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
     data = await _get(f"{base}/v1/dashboard/national/overview?{urlencode(pairs)}")
     return DashboardNationalOverviewRead.model_validate(data)
 
@@ -3322,6 +3328,9 @@ async def get_dashboard_national_overview(
     dependencies=_require_bearer_or_trusted_api_key,
 )
 async def get_dashboard_provinces(
+    province_id: Optional[list[int]] = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
     current_status_id: Optional[list[int]] = Query(None),
     type_money_id: Optional[list[int]] = Query(None),
     page: int = Query(1, ge=1),
@@ -3329,6 +3338,7 @@ async def get_dashboard_provinces(
 ) -> DashboardProvincesRead:
     base = settings.dashboard_service_url.rstrip("/")
     pairs: list[tuple[str, Any]] = [("page", page), ("page_size", page_size)]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
     pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
     pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
     data = await _get(f"{base}/v1/dashboard/provinces?{urlencode(pairs)}")
@@ -3342,11 +3352,15 @@ async def get_dashboard_provinces(
     dependencies=_require_bearer_or_trusted_api_key,
 )
 async def get_dashboard_provinces_export(
+    province_id: Optional[list[int]] = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
     current_status_id: Optional[list[int]] = Query(None),
     type_money_id: Optional[list[int]] = Query(None),
 ) -> Response:
     base = settings.dashboard_service_url.rstrip("/")
-    pairs = _multi_query_pairs([], "current_status_id", current_status_id)
+    pairs = _multi_query_pairs([], "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
     pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
     r = await _get_raw(f"{base}/v1/dashboard/provinces/export?{urlencode(pairs)}", timeout=60.0)
     out_headers: Dict[str, str] = {}
