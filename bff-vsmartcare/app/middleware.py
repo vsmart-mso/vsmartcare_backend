@@ -58,6 +58,7 @@ _STAFF_COMPAT_PATH_PREFIXES = (
     "/v1/lookups",
     "/v1/geo",
     "/v1/dashboard",
+    "/v1/indicators",
 )
 
 
