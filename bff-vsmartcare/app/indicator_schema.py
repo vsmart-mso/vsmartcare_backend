@@ -20,6 +20,11 @@ class IndicatorFilterMeta(BaseModel):
     aided_status_id: int
 
 
+class IndicatorNationwideFilterMeta(IndicatorFilterMeta):
+    province_ids: list[int] | None = None
+    type_money_category_ids: list[int] | None = None
+
+
 class IndicatorExportFilterMeta(IndicatorFilterMeta):
     province_ids: list[int] | None = None
     type_money_category_ids: list[int] | None = None
@@ -63,9 +68,32 @@ class IndicatorProvinceItem(BaseModel):
     total_money_amount: Decimal = Field(..., ge=0)
 
 
+class IndicatorExportHouseholdMemberItem(BaseModel):
+    """สมาชิกครัวเรือนหนึ่งคนใน export — mirror case-service."""
+
+    seq: int
+    prefix_name: str | None = None
+    first_name: str
+    last_name: str
+    date_of_birth: date | None = None
+    age: int | None = None
+    relation_name: str | None = None
+    occupation: str | None = None
+    monthly_income: Decimal | None = None
+    physical_condition: str | None = None
+    self_care: bool | None = None
+
+
 class IndicatorExportCaseItem(BaseModel):
+    """Flat dossier row — mirror case-service. ไม่ส่งลำดับ / จำนวนเงินที่ขอ."""
+
     applicant_id: int
+    case_channel: str = "พม.CARE"
     case_number: str | None = None
+    notified_at: datetime | None = None
+    is_emergency: bool | None = None
+    is_existing_case: bool | None = None
+    existing_case_source: str | None = None
     first_name: str
     last_name: str
     cid: str
@@ -73,6 +101,12 @@ class IndicatorExportCaseItem(BaseModel):
     birth_date: date
     age: int | None = None
     mobile_phone: str | None = None
+    home_phone: str | None = None
+    fax_number: str | None = None
+    email_address: str | None = None
+    is_government_officer: bool | None = None
+    requester_relation_name: str | None = None
+    marital_status_name: str | None = None
     house_number: str | None = None
     house_moo: str | None = None
     alley: str | None = None
@@ -83,19 +117,54 @@ class IndicatorExportCaseItem(BaseModel):
     address_province_name: str
     effective_province_id: int
     effective_province_name: str
+    latitude: str | None = None
+    longitude: str | None = None
+    address_full: str | None = None
     occupation: str | None = None
     monthly_income: Decimal | None = None
+    family_occupation: str | None = None
+    household_member_count: int | None = None
+    housing_type_name: str | None = None
+    housing_shelter: str | None = None
+    housing_rent: Decimal | None = None
+    income_source_names: str | None = None
+    dependency_summary: str | None = None
+    household_members: list[IndicatorExportHouseholdMemberItem] = Field(
+        default_factory=list,
+    )
+    has_received_welfare: bool | None = None
+    received_count: int | None = None
+    total_received_amount: Decimal | None = None
+    received_welfare_type_names: str | None = None
     family_distress: str | None = None
+    problem_details: str | None = None
+    help_request_summary: str | None = None
+    request_in_kind_text: str | None = None
+    request_other_text: str | None = None
     type_money_category_id: int | None = None
     type_money_name: str | None = None
     type_money_name_acronym: str | None = None
+    intake_type_money_name: str | None = None
     regulation_id: int | None = None
     regulation_name: str | None = None
     regulation_short_name: str | None = None
     help_kind: str | None = None
     money_amount: Decimal | None = None
+    diagnosis_text: str | None = None
     aided_at: datetime | None = None
+    payment_method_name: str | None = None
+    receive_mode: str | None = None
+    payee_full_name: str | None = None
+    payee_cid: str | None = None
+    payee_mobile: str | None = None
+    bank_name: str | None = None
+    account_number: str | None = None
+    account_name: str | None = None
+    bank_branch: str | None = None
     sw_user_sdshv: str | None = None
+    sw_name: str | None = None
+    sw_position: str | None = None
+    sw_license_sdshv: str | None = None
 
 
 class IndicatorsByProvinceResponse(BaseModel):
@@ -114,7 +183,7 @@ class IndicatorsNationwideResponse(BaseModel):
     province_ids: list[int] | None = None
     fiscal_start: datetime
     fiscal_end: datetime
-    filter: IndicatorFilterMeta
+    filter: IndicatorNationwideFilterMeta
     items: list[IndicatorProvinceItem]
     totals: IndicatorTotals
 
@@ -126,3 +195,33 @@ class IndicatorsExportResponse(BaseModel):
     filter: IndicatorExportFilterMeta
     items: list[IndicatorExportCaseItem]
     totals: IndicatorTotals
+
+
+class IndicatorProvinceOverviewFilterMeta(IndicatorFilterMeta):
+    province_ids: list[int] | None = None
+    regulation_ids: list[int] | None = None
+
+
+class IndicatorProvinceOverviewItem(BaseModel):
+    province_id: int
+    province_name: str = Field(..., min_length=1, max_length=255)
+    total_budget_amount: Decimal = Field(..., ge=0)
+    pending_service_case_count: int = Field(..., ge=0)
+    disbursement_case_count: int = Field(..., ge=0)
+    aided_case_count: int = Field(..., ge=0)
+
+
+class IndicatorProvinceOverviewTotals(BaseModel):
+    total_budget_amount: Decimal = Field(..., ge=0)
+    pending_service_case_count: int = Field(..., ge=0)
+    disbursement_case_count: int = Field(..., ge=0)
+    aided_case_count: int = Field(..., ge=0)
+
+
+class IndicatorsProvinceOverviewResponse(BaseModel):
+    budget_year: int
+    fiscal_start: datetime
+    fiscal_end: datetime
+    filter: IndicatorProvinceOverviewFilterMeta
+    items: list[IndicatorProvinceOverviewItem]
+    totals: IndicatorProvinceOverviewTotals

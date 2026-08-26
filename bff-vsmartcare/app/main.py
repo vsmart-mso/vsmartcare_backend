@@ -38,6 +38,7 @@ from .indicator_schema import (
     IndicatorsByProvinceResponse,
     IndicatorsExportResponse,
     IndicatorsNationwideResponse,
+    IndicatorsProvinceOverviewResponse,
 )
 from .services.staff_digest_dispatch import (
     StaffDigestDispatchResult,
@@ -166,7 +167,7 @@ _TAGS = [
     {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
     {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
-    {"name": "indicators", "description": "ตัวชี้วัดเงินช่วยเหลือ พม Care — รายจังหวัดแยก 6 ประเภท / ทุกจังหวัดไม่แยกหมวด / export JSON แถวต่อเคส (สค. นับที่จังหวัดแม่ตาม DWF)"},
+    {"name": "indicators", "description": "ตัวชี้วัดเงินช่วยเหลือ พม Care — รายจังหวัดแยก 6 ประเภท / ทุกจังหวัดไม่แยกหมวด / export JSON แถวแบน dossier / province-overview สรุป 4 ตัวเลข (สค. นับที่จังหวัดแม่ตาม DWF)"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -2917,6 +2918,7 @@ async def get_indicators_by_province(
     summary="ตัวชี้วัดเงินช่วยเหลือครบทุกจังหวัด (ไม่แยกประเภทเงิน)",
     description=(
         "ส่งต่อ `GET …/v1/indicators/nationwide` ใน case-service — "
+        "กรอง `type_money_category_id` ได้ (ไม่ส่ง = 1–6); "
         "สค. จัดเข้าจังหวัดแม่ตาม DWF; จังหวัดลูกได้ สค. = 0 ในหมวดนี้"
     ),
     response_model=IndicatorsNationwideResponse,
@@ -2933,6 +2935,10 @@ async def get_indicators_nationwide(
         None,
         description="กรองเฉพาะจังหวัดที่ระบุ — ส่งซ้ำได้หลายค่า; ไม่ส่ง = ครบทุกจังหวัด",
     ),
+    type_money_category_id: Optional[list[int]] = Query(
+        None,
+        description="กรองประเภทเงิน — ส่งซ้ำได้; ไม่ส่ง = 1–6",
+    ),
     case_status: IndicatorCaseStatus = Query(
         IndicatorCaseStatus.aided,
         description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11)",
@@ -2946,6 +2952,9 @@ async def get_indicators_nationwide(
     if province_id:
         for pid in province_id:
             pairs.append(("province_id", pid))
+    if type_money_category_id:
+        for tid in type_money_category_id:
+            pairs.append(("type_money_category_id", tid))
     data = await _get(f"{base}/v1/indicators/nationwide?{urlencode(pairs)}")
     return IndicatorsNationwideResponse.model_validate(data)
 
@@ -2953,10 +2962,11 @@ async def get_indicators_nationwide(
 @router.get(
     "/v1/indicators/export",
     tags=["indicators"],
-    summary="Export ตัวชี้วัดเงินช่วยเหลือเป็น JSON แถวต่อเคส",
+    summary="Export ตัวชี้วัดเงินช่วยเหลือเป็น JSON แถวแบนต่อเคส (dossier)",
     description=(
         "ส่งต่อ `GET …/v1/indicators/export` ใน case-service — "
-        "JSON แถวต่อเคสให้ FE map เข้าเทมเพลต Excel; สค. นับที่จังหวัดแม่ตาม DWF; "
+        "JSON แถวแบนครบ 10 กลุ่มให้ FE map เข้าเทมเพลต Excel; "
+        "สค. นับที่จังหวัดแม่ตาม DWF; ไม่ส่งลำดับ / จำนวนเงินที่ขอ; "
         "ไม่รวมรหัสหน่วยงาน/เลขที่รับ"
     ),
     response_model=IndicatorsExportResponse,
@@ -3002,6 +3012,54 @@ async def get_indicators_export(
             pairs.append(("regulation_id", rid))
     data = await _get(f"{base}/v1/indicators/export?{urlencode(pairs)}")
     return IndicatorsExportResponse.model_validate(data)
+
+
+@router.get(
+    "/v1/indicators/province-overview",
+    tags=["indicators"],
+    summary="สรุป 4 ตัวเลขรายจังหวัด (รอรับเรื่อง / รอเบิกจ่าย / ให้ความช่วยเหลือ / ยอดเงิน)",
+    description=(
+        "ส่งต่อ `GET …/v1/indicators/province-overview` ใน case-service — "
+        "นับเคสเป็น snapshot สถานะปัจจุบัน; "
+        "`budget_year` + `case_status` มีผลเฉพาะยอดเงิน (aided=4 / forwarded=11); "
+        "สค. นับที่จังหวัดแม่ตาม DWF"
+    ),
+    response_model=IndicatorsProvinceOverviewResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_indicators_province_overview(
+    budget_year: int = Query(
+        ...,
+        ge=2500,
+        le=2700,
+        description="ปีงบประมาณ พ.ศ. (เช่น 2568) — มีผลเฉพาะยอดเงิน",
+    ),
+    province_id: Optional[list[int]] = Query(
+        None,
+        description="กรองด้วย effective_province — ส่งซ้ำได้หลายค่า; ไม่ส่ง = ครบทุกจังหวัด",
+    ),
+    regulation_id: Optional[list[int]] = Query(
+        None,
+        description="กรองระเบียบ — ส่งซ้ำได้; ไม่ส่ง = ทุกระเบียบ",
+    ),
+    case_status: IndicatorCaseStatus = Query(
+        IndicatorCaseStatus.aided,
+        description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11) — มีผลเฉพาะยอดเงิน",
+    ),
+) -> IndicatorsProvinceOverviewResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("budget_year", budget_year),
+        ("case_status", case_status.value),
+    ]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    if regulation_id:
+        for rid in regulation_id:
+            pairs.append(("regulation_id", rid))
+    data = await _get(f"{base}/v1/indicators/province-overview?{urlencode(pairs)}")
+    return IndicatorsProvinceOverviewResponse.model_validate(data)
 
 
 @router.post(

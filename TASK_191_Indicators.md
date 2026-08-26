@@ -15,6 +15,7 @@ Staff Indicators API — สรุปเงินช่วยเหลือ พ
 | 1 | GET | ตัวชี้วัด **รายจังหวัด** — แสดงเงิน/จำนวนเคสแยกตามประเภทเงินทั้ง 6 ประเภท ของจังหวัดที่เลือก |
 | 2 | GET | ตัวชี้วัด **ทุกจังหวัด** — แถวละจังหวัด (`case_count` + `total_money_amount` รวมทุกประเภทเงิน) ไม่แยกหมวด; ไม่ส่ง `province_id` = ครบทุกจังหวัดใน master |
 | 3 | GET | **Export JSON แถวต่อเคส** — คืนรายการเคสที่เข้าเกณฑ์ให้ frontend map เข้าเทมเพลต Excel (ไม่สร้าง `.xlsx` ใน backend) |
+| 4 | GET | **Province overview** — สรุป 4 ตัวเลขรายจังหวัด (รอรับเรื่อง / รอเบิกจ่าย / ให้ความช่วยเหลือ / ยอดเงินปีงบ) |
 
 ## Background / Flow ที่เกี่ยวข้อง
 
@@ -302,6 +303,8 @@ GET /v1/indicators/by-province
 GET /v1/indicators/nationwide
   ?budget_year=<int>          # required
   &province_id=<int>          # optional, ซ้ำได้หลายค่า — ถ้าระบุคืนเฉพาะจังหวัดที่เลือก; ไม่ส่ง = ครบทุกจังหวัด
+  &type_money_category_id=<int>   # optional, ซ้ำได้ — ไม่ส่ง = 1–6
+  &case_status=aided|forwarded    # optional; default=aided
 ```
 
 **Response:**
@@ -315,7 +318,9 @@ GET /v1/indicators/nationwide
   "filter": {
     "case_status": "aided",
     "latest_status_id": 4,
-    "aided_status_id": 4
+    "aided_status_id": 4,
+    "province_ids": null,
+    "type_money_category_ids": null
   },
   "items": [
     {
@@ -338,9 +343,10 @@ GET /v1/indicators/nationwide
 }
 ```
 
-กฎนับเคสของเส้น 2 เหมือนเส้น 1 (status ล่าสุด = 11, aided_at ในปีงบ, ประเภทเงิน id 1–6) แต่ **GROUP BY จังหวัด** แล้วรวมเงินทุกประเภทในแถวนั้น — ไม่คืน `type_money_category_id`
+กฎนับเคสของเส้น 2 เหมือนเส้น 1 (status ล่าสุด = 11, aided_at ในปีงบ, ประเภทเงิน id 1–6) แต่ **GROUP BY จังหวัด** แล้วรวมเงินทุกประเภทในแถวนั้น — ไม่คืน `type_money_category_id` ใน `items[]`  
+`type_money_category_id` ใน query มีผลกับ**การนับเคส/เงิน** (filter ใน SQL) แต่ response ยังไม่แยกหมวดต่อแถว — ใช้ `/by-province` ถ้าต้องการแยก 6 ประเภท
 
-#### เส้นที่ 3 — Export JSON แถวต่อเคส
+#### เส้นที่ 3 — Export JSON แถวแบนต่อเคส (dossier ครบ 10 กลุ่ม)
 
 ```
 GET /v1/indicators/export
@@ -348,31 +354,39 @@ GET /v1/indicators/export
   &province_id=<int>                    # optional, ซ้ำได้ — กรองด้วย effective_province
   &type_money_category_id=<int>         # optional, ซ้ำได้ — ไม่ส่ง = 1–6
   &regulation_id=<int>                  # optional, ซ้ำได้ — ไม่ส่ง = ทุกระเบียบ
+  &case_status=aided|forwarded          # optional; default=aided
 ```
 
 BFF: `GET /api-vsmartcare/v1/indicators/export?...` proxy JSON แบบเส้น indicators อื่น
 
-กฎนับเคสเหมือนเส้น 1–2 (status ล่าสุด = 11, `aided_at` ในปีงบ, ประเภทเงิน 1–6, สค. → `effective_province` ตาม DWF)  
-เรียง `effective_province_id`, `applicant_id` — **ไม่มี pagination ใน phase นี้**
+กฎนับเคสเหมือนเส้น 1–2 (`case_status`, `aided_at` ในปีงบ, ประเภทเงิน 1–6, สค. → `effective_province` ตาม DWF)  
+เรียง `effective_province_id`, `applicant_id` — **ไม่มี pagination ใน phase นี้**  
+Shape: **1 แถวต่อเคส (flat)** — ฟิลด์ 1:N ส่วนใหญ่รวมเป็น `str` ด้วย `string_agg` คั่น `; ` ยกเว้น `household_members` เป็น `list`
 
-**คอลัมน์ที่คืนใน `items[]` (มีใน DB):**
+**คอลัมน์ที่คืนใน `items[]`:**
 
 | กลุ่ม | ฟิลด์ JSON | แหล่ง |
 |-------|------------|--------|
-| เคส | `applicant_id`, `case_number` | `applicants` |
-| บุคคล | `first_name`, `last_name`, `cid`, `gender`, `birth_date`, `age` | `persons` + `applicants.age` |
-| ติดต่อ | `mobile_phone` | `applicants.mobile_phone` |
-| ที่อยู่ | `house_number`, `house_moo`, `alley`, `road`, `sub_district_name`, `district_name`, `address_province_id`, `address_province_name` | Address แถวแรก + geo |
-| จังหวัดที่นับ | `effective_province_id`, `effective_province_name` | DWF remap สค. |
-| เศรษฐกิจ | `occupation`, `monthly_income` | `economic_infos` แถวแรก (id ASC) |
-| ปัญหา | `family_distress` | `applicants.family_distress` |
-| หมวด/ระเบียบ | `type_money_category_id`, `type_money_name`, `type_money_name_acronym`, `regulation_id`, `regulation_name`, `regulation_short_name` | category + `announcement_regulations` |
-| เงิน | `help_kind`, `money_amount`, `aided_at` | `case_regulation_choice` + aided_at |
-| Staff | `sw_user_sdshv` | `case_handling.sw_user_sdshv` |
+| 1. ทั่วไป | `case_channel` (= `"พม.CARE"`), `case_number`, `notified_at`, `applicant_id` | ค่าคงที่ + `applicants` (`notified_at` = `created_at`) |
+| 2. รายละเอียดคำร้อง | `is_emergency`, `is_existing_case`, `existing_case_source` | `applicants` + `applicant_submission_audit` |
+| 3. ผู้ประสบปัญหา | `first_name`, `last_name`, `cid`, `gender`, `birth_date`, `age`, `mobile_phone`, `home_phone`, `fax_number`, `email_address`, `is_government_officer`, `requester_relation_name`, `marital_status_name`, ที่อยู่ชิ้นส่วน, `latitude`, `longitude`, `address_full`, `address_province_*`, `effective_province_*` | `persons` + `applicants` + Address แถวแรก + lookup + geo; `address_full` คำนวณใน Python |
+| 4. เศรษฐกิจ | `occupation`, `monthly_income`, `family_occupation`, `household_member_count`, `housing_type_name`, `housing_shelter`, `housing_rent`, `income_source_names` | `economic_infos` แถวแรก + `housing_types` + `string_agg` แหล่งรายได้ |
+| 5. สมาชิก / อุปการะ | `dependency_summary`, `household_members[]` | `dependency_summary` = `string_agg` จาก `dependency_loads`; `household_members` = `json_agg` จาก `household_members` เรียง `seq` ASC (ตัดผู้ประสบปัญหา: match `national_id`=`persons.cid` หรือชื่อ+นามสกุล; ว่าง → `[]`) |
+| 6. สวัสดิการเคยได้รับ | `has_received_welfare`, `received_count`, `total_received_amount`, `received_welfare_type_names` | `welfare_histories` + `string_agg` ประเภท |
+| 7. ปัญหา / ความต้องการ | `family_distress`, `problem_details`, `help_request_summary`, `request_in_kind_text`, `request_other_text` | `applicants` + `welfare_request_types` |
+| 8. การพิจารณา | `type_money_category_*`, `intake_type_money_name`, `regulation_*`, `help_kind`, `money_amount`, `diagnosis_text`, `aided_at` | category + `case_handling.type_money` + regulation + diagnosis ล่าสุด (`id DESC`) |
+| 9. จ่ายเงิน | `payment_method_name`, `receive_mode`, `payee_*`, `bank_name`, `account_number`, `account_name`, `bank_branch` | `case_payment` (+ person ตาม `receive_mode`); ธนาคาร fallback `applicants.bank_*` |
+| 10. นักสังคม | `sw_user_sdshv`, `sw_name`, `sw_position`, `sw_license_sdshv` | diagnosis ล่าสุด (`owner_*`) + coalesce ใบอนุญาตจาก `case_handling.sw_user_sdshv` |
 
-**ไม่คืน (FE ปล่อยว่างในเทมเพลต):** ลำดับ, รหัสหน่วยงาน, ชื่อหน่วยงาน, เลขที่รับ, วันที่รับ, ผลการพิจารณา, และฟิลด์อื่นที่ไม่มีใน DB
+**ไม่คืน:**
 
-**Response (ร่าง):**
+| ฟิลด์ | เหตุผล |
+|-------|--------|
+| ลำดับ | FE ใส่จาก index ของแถว |
+| จำนวนเงินที่ขอ | ไม่มีคอลัมน์ใน DB |
+| รหัสหน่วยงาน / ชื่อหน่วยงาน / เลขที่รับ / วันที่รับ | ปล่อยให้ FE ว่างในเทมเพลต |
+
+**Response (ตัวอย่างย่อ):**
 
 ```json
 {
@@ -390,7 +404,12 @@ BFF: `GET /api-vsmartcare/v1/indicators/export?...` proxy JSON แบบเส�
   "items": [
     {
       "applicant_id": 1,
+      "case_channel": "พม.CARE",
       "case_number": "...",
+      "notified_at": "2025-01-10T...",
+      "is_emergency": false,
+      "is_existing_case": false,
+      "existing_case_source": null,
       "first_name": "...",
       "last_name": "...",
       "cid": "...",
@@ -398,29 +417,51 @@ BFF: `GET /api-vsmartcare/v1/indicators/export?...` proxy JSON แบบเส�
       "birth_date": "1990-01-01",
       "age": 35,
       "mobile_phone": "...",
-      "house_number": "...",
-      "house_moo": "...",
-      "alley": null,
-      "road": null,
-      "sub_district_name": "...",
-      "district_name": "...",
+      "home_phone": null,
+      "address_full": "123 ม.1 ต.... อ.... จ.พิจิตร",
       "address_province_id": 66,
       "address_province_name": "พิจิตร",
       "effective_province_id": 65,
       "effective_province_name": "พิษณุโลก",
       "occupation": "...",
       "monthly_income": "5000.00",
+      "income_source_names": "ค้าขาย; อื่น ๆ (รับจ้าง)",
+      "dependency_summary": "บุตร",
+      "household_members": [
+        {
+          "seq": 1,
+          "prefix_name": "เด็กชาย",
+          "first_name": "สมชาย",
+          "last_name": "ใจดี",
+          "date_of_birth": "2015-03-01",
+          "age": 10,
+          "relation_name": "บุตร",
+          "occupation": "นักเรียน",
+          "monthly_income": null,
+          "physical_condition": "normal",
+          "self_care": true
+        }
+      ],
+      "has_received_welfare": false,
       "family_distress": "...",
+      "problem_details": "...",
+      "help_request_summary": "เงิน",
       "type_money_category_id": 6,
-      "type_money_name": "...",
       "type_money_name_acronym": "สค.",
+      "intake_type_money_name": "อุดหนุน",
       "regulation_id": 12,
-      "regulation_name": "...",
-      "regulation_short_name": "...",
-      "help_kind": "money",
       "money_amount": "5000.00",
+      "diagnosis_text": "...",
       "aided_at": "2025-03-01T...",
-      "sw_user_sdshv": "sw.user01"
+      "payment_method_name": "โอนเงินเข้าบัญชี",
+      "receive_mode": "self",
+      "payee_full_name": "...",
+      "payee_cid": "...",
+      "bank_name": "...",
+      "sw_user_sdshv": "sw.user01",
+      "sw_name": "...",
+      "sw_position": "...",
+      "sw_license_sdshv": "sw.user01"
     }
   ],
   "totals": { "case_count": 1, "total_money_amount": "5000.00" }
@@ -429,8 +470,69 @@ BFF: `GET /api-vsmartcare/v1/indicators/export?...` proxy JSON แบบเส�
 
 - `money_amount` null → นับเคสได้ แต่เงินใน totals บวกเป็น 0  
 - ไม่มี `regulation_choice` → ยังโผล่ได้เมื่อไม่กรอง `regulation_id` (ฟิลด์ระเบียบ/เงินเป็น null)  
-- ไม่มี `economic_infos` → `occupation` / `monthly_income` เป็น null  
-- ตัวอย่าง สค. ลูก→แม่: ที่อยู่พิจิตร (66) + สค. → `address_province_id=66`, `effective_province_id=65`
+- ไม่มี `economic_infos` → ฟิลด์เศรษฐกิจเป็น null  
+- ตัวอย่าง สค. ลูก→แม่: ที่อยู่พิจิตร (66) + สค. → `address_province_id=66`, `effective_province_id=65`  
+- ไม่สร้าง `.xlsx` ใน backend — FE map เอง
+
+#### เส้นที่ 4 — Province overview (สรุป 4 ตัวเลขรายจังหวัด)
+
+```
+GET /v1/indicators/province-overview
+  ?budget_year=<int>                    # required พ.ศ. — มีผลเฉพาะยอดเงิน
+  &province_id=<int>                    # optional, ซ้ำได้
+  &regulation_id=<int>                  # optional, ซ้ำได้
+  &case_status=aided|forwarded          # optional; default=aided — มีผลเฉพาะยอดเงิน
+```
+
+BFF: `GET /api-vsmartcare/v1/indicators/province-overview?...` proxy แบบ nationwide/export
+
+**กฎนับ (lock):**
+
+| ฟิลด์ | กฎ |
+|------|-----|
+| `pending_service_case_count` | สถานะล่าสุด = **1** (รอรับเรื่อง) — snapshot ปัจจุบัน |
+| `disbursement_case_count` | สถานะล่าสุด ∈ **{3,10}** และมี `approve_case.approve_status=true` (= `finance_pending` ใน staff digest) |
+| `aided_case_count` | สถานะล่าสุด ∈ **{10,4,11}** — snapshot กลุ่ม “ให้ความช่วยเหลือ” ตายตัว ไม่ผูก `case_status` |
+| `total_budget_amount` | `SUM(COALESCE(money_amount,0))` ของเคสสถานะตาม `case_status` (`aided`→**4**, `forwarded`→**11**) ที่ `aided_at` อยู่ในปีงบ (+ filter ระเบียบ/จังหวัด) — เหมือน `/export` |
+
+หมายเหตุ:
+- **ปีงบ + `case_status` มีผลเฉพาะยอดเงิน** — การ์ดนับเคส 3 ใบเป็น snapshot สถานะปัจจุบัน ไม่ผูกปีงบ/`case_status`
+- เคส status **10 ที่อนุมัติแล้ว** นับทั้ง `disbursement_case_count` และ `aided_case_count` ตามนิยาม — ไม่บังคับ mutual-exclusive
+- จังหวัดใช้ `effective_province` + DWF สค. เหมือน indicators อื่น; left-fill จังหวัดว่างเป็น 0 เหมือน nationwide
+- เมื่อกรอง `regulation_id` — เคสไม่มี regulation ถูกตัด
+
+**Response:**
+
+```json
+{
+  "budget_year": 2568,
+  "fiscal_start": "...",
+  "fiscal_end": "...",
+  "filter": {
+    "case_status": "aided",
+    "latest_status_id": 4,
+    "aided_status_id": 4,
+    "province_ids": null,
+    "regulation_ids": null
+  },
+  "items": [
+    {
+      "province_id": 10,
+      "province_name": "กรุงเทพมหานคร",
+      "total_budget_amount": "520000.00",
+      "pending_service_case_count": 12,
+      "disbursement_case_count": 5,
+      "aided_case_count": 40
+    }
+  ],
+  "totals": {
+    "total_budget_amount": "520000.00",
+    "pending_service_case_count": 12,
+    "disbursement_case_count": 5,
+    "aided_case_count": 40
+  }
+}
+```
 
 ### Query plan (ระดับ logic)
 
@@ -478,6 +580,7 @@ BFF: `GET /api-vsmartcare/v1/indicators/export?...` proxy JSON แบบเส�
 | `GET /api-vsmartcare/v1/indicators/by-province` | `GET /v1/indicators/by-province` |
 | `GET /api-vsmartcare/v1/indicators/nationwide` | `GET /v1/indicators/nationwide` |
 | `GET /api-vsmartcare/v1/indicators/export` | `GET /v1/indicators/export` |
+| `GET /api-vsmartcare/v1/indicators/province-overview` | `GET /v1/indicators/province-overview` |
 
 Auth: Bearer JWT หรือ trusted `X-API-Key` (pattern เดียว Staff routes อื่น) — **ไม่เช็ค role ที่ BFF**
 
@@ -590,7 +693,7 @@ Auth: Bearer JWT หรือ trusted `X-API-Key` (pattern เดียว Staff
 ```
 case-service:
   GET /v1/indicators/by-province?province_id=&budget_year=&case_status=
-  GET /v1/indicators/nationwide?budget_year=&province_id=&case_status=
+  GET /v1/indicators/nationwide?budget_year=&province_id=&type_money_category_id=&case_status=
   GET /v1/indicators/export?budget_year=&province_id=&type_money_category_id=&regulation_id=&case_status=
 
 bff-vsmartcare:
