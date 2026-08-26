@@ -39,7 +39,7 @@ services:
       # ทับค่าใน .env เวลารันด้วย compose — host ต้องเป็น `postgres` ไม่ใช่ localhost
       - SERVICE_NAME=case-service
       - PORT=8000
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - STATUS_EMAIL_ENABLED=true
       - STATUS_EMAIL_TIMEOUT_SECONDS=5
@@ -105,7 +105,7 @@ services:
         required: false
     environment:
       - PORT=8000
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
       # GEMINI_API_KEY / OCR_API_KEY — ตั้งใน ocr-service/.env เท่านั้น
       # อย่าใส่ ${GEMINI_API_KEY:-} ที่นี่ (ค่าว่างจะทับ env_file)
       - APP_ENV=${APP_ENV:-development}
@@ -123,7 +123,7 @@ services:
       - ./thaid-auth-service/.env
     environment:
       - PORT=8000
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
       - THAID_JWT_SECRET=${THAID_JWT_SECRET:-dev-thaid-jwt-secret-change-in-production}
     ports:
       - "8003:8000"
@@ -138,7 +138,7 @@ services:
       context: ./dashboard-service
     environment:
       - PORT=8000
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
     ports:
       - "8005:8000"
     depends_on:
