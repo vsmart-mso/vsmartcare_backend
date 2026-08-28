@@ -1,0 +1,65 @@
+# case-service uploads storage for np (ns staging) — NFS server on np-store01
+# (192.168.10.22), the same host that runs MinIO on np. Kept separate from
+# k8s/case-service-storage.yml and case-service-storage-beta.yml, which point
+# at 172.21.103.131 — that host is on the OTHER cluster's network
+# (172.21.103.x) and is NOT reachable from np pods (192.168.10.x), which is
+# why case-service on np can't reuse either of those.
+#
+# NOT APPLIED by the Jenkinsfile beta path (same as deployment-beta.yml /
+# service-beta.yml) — reference only.
+#
+# ⚠️ UNVERIFIED / LIKELY NOT SET UP YET: dev-np-quickstart.md's np-store01
+# inventory entry only documents MinIO ("book-bank bucket only") — there is
+# no mention of an NFS server running there. Before this PV works, someone
+# needs to actually provision the export on np-store01, e.g. (adapting
+# NFS_SETUP.md's recipe to this host):
+#
+#   ssh webmaster@192.168.10.22
+#   sudo apt install -y nfs-kernel-server
+#   sudo mkdir -p /srv/nfs/vcare-beta/case-service/uploads/welfare-evidence
+#   sudo mkdir -p /srv/nfs/vcare-beta/case-service/uploads/file-payments
+#   sudo chown -R nobody:nogroup /srv/nfs/vcare-beta
+#   sudo chmod -R 0770 /srv/nfs/vcare-beta
+#   echo "/srv/nfs/vcare-beta/case-service/uploads 192.168.10.0/24(rw,sync,no_subtree_check,no_root_squash)" \
+#     | sudo tee -a /etc/exports
+#   sudo exportfs -ra
+#   sudo systemctl enable --now nfs-kernel-server
+#
+# And on every np worker node case-service might be scheduled to (database,
+# masternode, nginx — dev-np-quickstart.md §1): nfs-common must be installed,
+# or the pod sits ContainerCreating with "mount: wrong fs type".
+#
+# PVC name is unchanged (vcare-case-service-uploads-beta-pvc) so
+# deployment-beta.yml doesn't need editing — only the PV's backing server/path
+# differ from the ns vcare version.
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vcare-case-service-uploads-np-pv
+  labels:
+    app: case-service
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-manual
+  nfs:
+    server: 192.168.10.22
+    path: /srv/nfs/vcare-beta/case-service/uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vcare-case-service-uploads-beta-pvc
+  namespace: staging
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-manual
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: vcare-case-service-uploads-np-pv

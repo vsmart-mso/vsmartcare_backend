@@ -1,0 +1,43 @@
+# Points at np's real PostgreSQL host (np-data01, 192.168.10.21:5432) so
+# in-cluster DATABASE_URLs on np can reference a stable Service name instead
+# of hardcoding the IP.
+#
+# Unlike k8s/external-db.yml (ns vcare, 172.21.103.x cluster), this needs no
+# nginx/hostNetwork proxy workaround: np pods already reach 192.168.10.0/24
+# directly — Calico natOutgoing SNATs pod traffic to the node IP, and pg_hba
+# on np-data01 grants that whole /24 (not the pod CIDR) — see
+# dev-np-quickstart.md §5. So this is just the standard "Service with no
+# selector + matching Endpoints" pattern for pointing a Service at a fixed
+# external IP:port.
+#
+# Apply once to ns staging on np:
+#   kubectl -n staging apply -f k8s/external-db-np.yml
+#
+# Then point DATABASE_URL at it instead of the raw IP, e.g.:
+#   postgresql+asyncpg://admin:<pw>@external-db:5432/case_service
+#
+# NOTE: np's actual per-service Secrets are applied out-of-band by ops, not
+# from this repo (dev-np-quickstart.md §4.3) — creating this Service does not
+# by itself change any DATABASE_URL already in use on np; whoever manages
+# those Secrets needs to repoint the host to "external-db" separately.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-db
+  namespace: staging
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: external-db
+  namespace: staging
+subsets:
+  - addresses:
+      - ip: 192.168.10.21
+    ports:
+      - port: 5432
