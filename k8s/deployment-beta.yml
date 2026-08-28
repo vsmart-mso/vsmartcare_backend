@@ -1,0 +1,221 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-bff-beta
+  labels:
+    app: vcare-bff-beta
+spec:
+  selector:
+    matchLabels:
+      app: vcare-bff-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-bff-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-bff
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-bff-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-case-service-beta
+  labels:
+    app: vcare-case-service-beta
+spec:
+  selector:
+    matchLabels:
+      app: vcare-case-service-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-case-service-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-case-service
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-case-service-secret-beta
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads/welfare-evidence
+              subPath: welfare-evidence
+            - name: uploads
+              mountPath: /app/uploads/file-payments
+              subPath: file-payments
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: vcare-case-service-uploads-beta-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-notification-service-beta
+  labels:
+    app: vcare-notification-service-beta
+spec:
+  selector:
+    matchLabels:
+      app: vcare-notification-service-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-notification-service-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-notification-service
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-notification-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-ocr-service-beta
+  labels:
+    app: vcare-ocr-service-beta
+spec:
+  selector:
+    matchLabels:
+      app: vcare-ocr-service-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-ocr-service-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-ocr-service
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-ocr-service-secret-beta
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-thaid-auth-service-beta
+  labels:
+    app: vcare-thaid-auth-service-beta
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vcare-thaid-auth-service-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-thaid-auth-service-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-thaid-auth-service
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-thaid-auth-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: vcare
+  name: vcare-dashboard-service-beta
+  labels:
+    app: vcare-dashboard-service-beta
+spec:
+  selector:
+    matchLabels:
+      app: vcare-dashboard-service-beta
+  template:
+    metadata:
+      labels:
+        app: vcare-dashboard-service-beta
+    spec:
+      imagePullSecrets:
+        - name: staggingbackcred
+      containers:
+        - name: vcare-dashboard-service
+          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-dashboard-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

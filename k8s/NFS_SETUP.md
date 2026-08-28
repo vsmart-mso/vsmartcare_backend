@@ -55,6 +55,24 @@ kubectl -n vcare get pvc vcare-case-service-uploads-pvc
 kubectl -n vcare describe pod -l app=vcare-case-service   # เช็ค volume mount ผ่านไหม
 ```
 
+## Beta
+
+Beta ใช้ export path แยกจาก main คนละชุด กัน uploads ปนกัน: บนเครื่อง 63 ให้
+สร้างเพิ่ม `/srv/nfs/vcare-beta/case-service/uploads/{welfare-evidence,file-payments}`
+และเพิ่มบรรทัด `/etc/exports` แยกสำหรับ path นี้ (`chown`/`chmod` เหมือนของ main)
+แล้ว apply `k8s/case-service-storage-beta.yml` แทน `case-service-storage.yml`
+
+ก่อน apply PVC ใหม่ ถ้า `vcare-case-service-beta` เคยแชร์ PVC กับ main มาก่อน
+(มีไฟล์ upload เก่าอยู่แล้ว และ evidence record ใน DB อ้างถึงไฟล์พวกนั้น) ต้อง
+ก็อปไฟล์เดิมมาที่ path ใหม่ก่อน ไม่งั้น record เก่าจะอ่านไฟล์ไม่เจอ:
+
+```bash
+# รันบนเครื่อง 63 เอง (path ต้นทาง-ปลายทางอยู่เครื่องเดียวกัน)
+sudo cp -a /srv/nfs/vcare/case-service/uploads/. /srv/nfs/vcare-beta/case-service/uploads/
+sudo chown -R nobody:nogroup /srv/nfs/vcare-beta
+sudo chmod -R 0770 /srv/nfs/vcare-beta
+```
+
 ## หมายเหตุ
 
 - เดิม docker-compose mount แยก 2 host path เข้า 2 container path — ในแบบ k8s
