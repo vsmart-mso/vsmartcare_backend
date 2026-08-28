@@ -27,6 +27,8 @@ pipeline {
         IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
         NAMESPACE  = "vcare"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
+        // beta builds/deploys every service under a "-beta" suffixed tag+name so it never overwrites production
+        BRANCH_SUFFIX = "${(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') ? '-beta' : ''}"
     }
 
     stages {
@@ -49,8 +51,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-bff-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-bff-latest \
+                                -t ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-latest \
                                 bff-vsmartcare/
                         '''
                     }
@@ -65,8 +67,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-case-service-latest \
+                                -t ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-latest \
                                 case-service/
                         '''
                     }
@@ -81,8 +83,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-notification-service-latest \
+                                -t ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-latest \
                                 notification-service/
                         '''
                     }
@@ -97,8 +99,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-ocr-service-latest \
+                                -t ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-latest \
                                 ocr-service/
                         '''
                     }
@@ -113,8 +115,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-thaid-auth-service-latest \
+                                -t ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-latest \
                                 thaid-auth-service/
                         '''
                     }
@@ -129,8 +131,8 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
-                                -t ${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG} \
-                                -t ${BASE_IMAGE}:vcare-dashboard-service-latest \
+                                -t ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
+                                -t ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-latest \
                                 dashboard-service/
                         '''
                     }
@@ -167,8 +169,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-bff-latest
+                            docker push ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -181,8 +183,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-case-service-latest
+                            docker push ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -195,8 +197,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-notification-service-latest
+                            docker push ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -209,8 +211,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-ocr-service-latest
+                            docker push ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -223,8 +225,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service-latest
+                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -237,8 +239,8 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            docker push ${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
-                            docker push ${BASE_IMAGE}:vcare-dashboard-service-latest
+                            docker push ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                            docker push ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-latest
                         '''
                     }
                 }
@@ -249,14 +251,33 @@ pipeline {
             stages {
                 stage('Apply Manifests') {
                     steps {
-                        sh '''
-                            export KUBECONFIG=${KUBECONFIG}
-                            kubectl apply -f k8s/external-db.yml
-                            kubectl apply -f k8s/case-service-storage.yml
-                            kubectl apply -f k8s/deployment.yml
-                            kubectl apply -f k8s/service.yml
-                            kubectl apply -f k8s/hpa.yml
-                        '''
+                        script {
+                            def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
+                            if (branchName.contains('beta')) {
+                                // beta deploys its own "-beta" suffixed Deployments/Services and runs without
+                                // HPA/autoscaling; remove any HPA left over from a previous deploy
+                                sh '''
+                                    export KUBECONFIG=${KUBECONFIG}
+                                    kubectl apply -f k8s/external-db.yml
+                                    kubectl apply -f k8s/case-service-storage-beta.yml
+                                    kubectl apply -f k8s/deployment-beta.yml
+                                    kubectl apply -f k8s/service-beta.yml
+                                    kubectl -n ${NAMESPACE} delete hpa \
+                                        vcare-bff vcare-case-service vcare-notification-service \
+                                        vcare-ocr-service vcare-thaid-auth-service vcare-dashboard-service \
+                                        --ignore-not-found=true
+                                '''
+                            } else {
+                                sh '''
+                                    export KUBECONFIG=${KUBECONFIG}
+                                    kubectl apply -f k8s/external-db.yml
+                                    kubectl apply -f k8s/case-service-storage.yml
+                                    kubectl apply -f k8s/deployment.yml
+                                    kubectl apply -f k8s/service.yml
+                                    kubectl apply -f k8s/hpa.yml
+                                '''
+                            }
+                        }
                     }
                 }
                 stage('Rollout') {
@@ -271,9 +292,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-bff \
-                                        vcare-bff=${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-bff${BRANCH_SUFFIX} \
+                                        vcare-bff=${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }
@@ -287,9 +308,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-case-service \
-                                        vcare-case-service=${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-case-service${BRANCH_SUFFIX} \
+                                        vcare-case-service=${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }
@@ -303,9 +324,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service \
-                                        vcare-notification-service=${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service${BRANCH_SUFFIX} \
+                                        vcare-notification-service=${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }
@@ -319,9 +340,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service \
-                                        vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service${BRANCH_SUFFIX} \
+                                        vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }
@@ -335,9 +356,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service \
-                                        vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service${BRANCH_SUFFIX} \
+                                        vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }
@@ -351,9 +372,9 @@ pipeline {
                             steps {
                                 sh '''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service \
-                                        vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
-                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=300s
+                                    kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service${BRANCH_SUFFIX} \
+                                        vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                    kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service${BRANCH_SUFFIX} --timeout=300s
                                 '''
                             }
                         }

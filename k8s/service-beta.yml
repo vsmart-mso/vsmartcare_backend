@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-bff-beta
+  labels:
+    app: vcare-bff-beta
+spec:
+  selector:
+    app: vcare-bff-beta
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+      nodePort: 30810
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-case-service-beta
+  labels:
+    app: vcare-case-service-beta
+spec:
+  selector:
+    app: vcare-case-service-beta
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 8000
+      nodePort: 30811
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-notification-service-beta
+  labels:
+    app: vcare-notification-service-beta
+spec:
+  selector:
+    app: vcare-notification-service-beta
+  ports:
+    - protocol: TCP
+      port: 8002
+      targetPort: 8000
+      nodePort: 30812
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-ocr-service-beta
+  labels:
+    app: vcare-ocr-service-beta
+spec:
+  selector:
+    app: vcare-ocr-service-beta
+  ports:
+    - protocol: TCP
+      port: 8003
+      targetPort: 8000
+      nodePort: 30813
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-thaid-auth-service-beta
+  labels:
+    app: vcare-thaid-auth-service-beta
+spec:
+  selector:
+    app: vcare-thaid-auth-service-beta
+  ports:
+    - protocol: TCP
+      port: 8004
+      targetPort: 8000
+      nodePort: 30814
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: vcare
+  name: vcare-dashboard-service-beta
+  labels:
+    app: vcare-dashboard-service-beta
+spec:
+  selector:
+    app: vcare-dashboard-service-beta
+  ports:
+    - protocol: TCP
+      port: 8005
+      targetPort: 8000
+      nodePort: 30815
+  type: NodePort
