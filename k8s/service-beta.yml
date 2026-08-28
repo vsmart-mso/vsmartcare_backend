@@ -1,101 +1,107 @@
+# Mirrors what already exists on np (ns staging) — NOT applied by the
+# Jenkinsfile beta path (see deployment-beta.yml header). Names match np's
+# real Services exactly — no "vcare-" prefix, no "-beta" suffix.
+#
+# Only bff-vsmartcare is NodePort (31980, matching dev-np-quickstart.md §0/§4:
+# the edge proxies /api-vsmartcare to this NodePort). The other five backend
+# services are internal-only — ClusterIP :8000, reached through the bff, not
+# the public edge (§4.1 diagram) — unlike the old ns vcare version where all
+# six were NodePort with distinct ports (8000-8005 / 30810-30815); np has no
+# reason to expose them individually since bff is the only public entry point.
+
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-bff-beta
+  namespace: staging
+  name: bff-vsmartcare
   labels:
-    app: vcare-bff-beta
+    app: bff-vsmartcare
 spec:
   selector:
-    app: vcare-bff-beta
+    app: bff-vsmartcare
   ports:
     - protocol: TCP
       port: 8000
       targetPort: 8000
-      nodePort: 30810
+      nodePort: 31980
   type: NodePort
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-case-service-beta
+  namespace: staging
+  name: case-service
   labels:
-    app: vcare-case-service-beta
+    app: case-service
 spec:
   selector:
-    app: vcare-case-service-beta
+    app: case-service
   ports:
     - protocol: TCP
-      port: 8001
+      port: 8000
       targetPort: 8000
-      nodePort: 30811
-  type: NodePort
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-notification-service-beta
+  namespace: staging
+  name: notification-service
   labels:
-    app: vcare-notification-service-beta
+    app: notification-service
 spec:
   selector:
-    app: vcare-notification-service-beta
+    app: notification-service
   ports:
     - protocol: TCP
-      port: 8002
+      port: 8000
       targetPort: 8000
-      nodePort: 30812
-  type: NodePort
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-ocr-service-beta
+  namespace: staging
+  name: ocr-service
   labels:
-    app: vcare-ocr-service-beta
+    app: ocr-service
 spec:
   selector:
-    app: vcare-ocr-service-beta
+    app: ocr-service
   ports:
     - protocol: TCP
-      port: 8003
+      port: 8000
       targetPort: 8000
-      nodePort: 30813
-  type: NodePort
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-thaid-auth-service-beta
+  namespace: staging
+  name: thaid-auth-service
   labels:
-    app: vcare-thaid-auth-service-beta
+    app: thaid-auth-service
 spec:
   selector:
-    app: vcare-thaid-auth-service-beta
+    app: thaid-auth-service
   ports:
     - protocol: TCP
-      port: 8004
+      port: 8000
       targetPort: 8000
-      nodePort: 30814
-  type: NodePort
+  type: ClusterIP
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: vcare
-  name: vcare-dashboard-service-beta
+  namespace: staging
+  name: dashboard-service
   labels:
-    app: vcare-dashboard-service-beta
+    app: dashboard-service
 spec:
   selector:
-    app: vcare-dashboard-service-beta
+    app: dashboard-service
   ports:
     - protocol: TCP
-      port: 8005
+      port: 8000
       targetPort: 8000
-      nodePort: 30815
-  type: NodePort
+  type: ClusterIP
