@@ -16,6 +16,9 @@ case-service ไม่ได้เป็นเจ้าของ schema (เท�
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -642,4 +645,297 @@ async def fetch_districts_status_breakdown(
             },
         )
     ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# รายการคำร้อง (คัดจาก case_for_staff list) — province_id ไม่บังคับ = ทั้งประเทศ
+# ---------------------------------------------------------------------------
+
+CURRENT_STATUS_PENDING_INTAKE = 1
+CURRENT_STATUS_EDIT_REQUESTED = 8
+ATTACHMENT_TYPE_KTB_CORPORATE = 11
+DISABILITY_RECEIVED_WELFARE_TYPE_IDS = (4, 11)
+
+
+@dataclass(frozen=True)
+class DashboardCaseFilters:
+    province_ids: list[int] | None = None
+    current_status_ids: list[int] | None = None
+    type_money_ids: list[int] | None = None
+    case_number: str | None = None
+    current_status: str | None = None
+    firstname: str | None = None
+    lastname: str | None = None
+    cid: str | None = None
+    datetime_create: date | None = None
+    province_name: str | None = None
+    district_id: int | None = None
+    district_name: str | None = None
+    subdistrict_id: int | None = None
+    subdistrict_name: str | None = None
+    subdistrict_postcode_id: int | None = None
+    postcode: str | None = None
+
+
+_CASES_LOCATION_FROM = """
+FROM applicants ap
+JOIN persons p ON p.id = ap.persons_id
+LEFT JOIN LATERAL (
+    SELECT a.sub_district_postcode_id
+    FROM address a
+    WHERE a.applicant_id = ap.id
+    ORDER BY a.id ASC
+    LIMIT 1
+) pa ON TRUE
+JOIN sub_districts_postcode sdp
+    ON sdp.id = COALESCE(pa.sub_district_postcode_id, p.sub_district_postcode_id)
+JOIN sub_districts sd ON sd.id = sdp.sub_district_id
+JOIN districts d ON d.id = sd.district_id
+JOIN province prov ON prov.id = d.province_id
+JOIN postcode pc ON pc.id = sdp.postcode_id
+LEFT JOIN LATERAL (
+    SELECT wrs.current_status_id
+    FROM welfare_request_status wrs
+    WHERE wrs.applicant_id = ap.id
+    ORDER BY wrs.updated_at DESC, wrs.id DESC
+    LIMIT 1
+) ls ON TRUE
+LEFT JOIN current_status cs ON cs.id = ls.current_status_id
+LEFT JOIN type_money_category tmc ON tmc.id = ap.type_money_category_id
+"""
+
+
+def _cases_filter_sql(filters: DashboardCaseFilters) -> tuple[str, dict]:
+    clauses = [
+        """(
+            CAST(:province_ids AS int[]) IS NULL
+            OR d.province_id = ANY(CAST(:province_ids AS int[]))
+        )""",
+        """(
+            CAST(:type_money_ids AS int[]) IS NULL
+            OR ap.type_money_category_id = ANY(CAST(:type_money_ids AS int[]))
+        )""",
+        """(
+            CAST(:current_status_ids AS int[]) IS NULL
+            OR ls.current_status_id = ANY(CAST(:current_status_ids AS int[]))
+        )""",
+    ]
+    params: dict = {
+        "province_ids": filters.province_ids,
+        "type_money_ids": filters.type_money_ids,
+        "current_status_ids": filters.current_status_ids,
+    }
+    if filters.case_number:
+        clauses.append("ap.case_number ILIKE :case_number")
+        params["case_number"] = f"%{filters.case_number}%"
+    if filters.current_status:
+        clauses.append("cs.description_staff ILIKE :current_status")
+        params["current_status"] = f"%{filters.current_status}%"
+    if filters.firstname:
+        clauses.append("p.first_name ILIKE :firstname")
+        params["firstname"] = f"%{filters.firstname}%"
+    if filters.lastname:
+        clauses.append("p.last_name ILIKE :lastname")
+        params["lastname"] = f"%{filters.lastname}%"
+    if filters.cid:
+        clauses.append("p.cid ILIKE :cid")
+        params["cid"] = f"%{filters.cid}%"
+    if filters.datetime_create is not None:
+        clauses.append("CAST(ap.created_at AS date) = CAST(:datetime_create AS date)")
+        params["datetime_create"] = filters.datetime_create
+    if filters.province_name:
+        clauses.append("prov.name ILIKE :province_name")
+        params["province_name"] = f"%{filters.province_name}%"
+    if filters.district_id is not None:
+        clauses.append("d.id = :district_id")
+        params["district_id"] = filters.district_id
+    if filters.district_name:
+        clauses.append("d.name ILIKE :district_name")
+        params["district_name"] = f"%{filters.district_name}%"
+    if filters.subdistrict_id is not None:
+        clauses.append("sd.id = :subdistrict_id")
+        params["subdistrict_id"] = filters.subdistrict_id
+    if filters.subdistrict_name:
+        clauses.append("sd.name ILIKE :subdistrict_name")
+        params["subdistrict_name"] = f"%{filters.subdistrict_name}%"
+    if filters.subdistrict_postcode_id is not None:
+        clauses.append("sdp.id = :subdistrict_postcode_id")
+        params["subdistrict_postcode_id"] = filters.subdistrict_postcode_id
+    if filters.postcode:
+        clauses.append("pc.name ILIKE :postcode")
+        params["postcode"] = f"%{filters.postcode}%"
+    return " AND ".join(clauses), params
+
+
+async def fetch_dashboard_cases_count(
+    session: AsyncSession,
+    filters: DashboardCaseFilters,
+) -> int:
+    where_sql, params = _cases_filter_sql(filters)
+    sql = text(
+        f"""
+        SELECT COUNT(*)
+        {_CASES_LOCATION_FROM}
+        WHERE {where_sql}
+        """
+    )
+    return await session.scalar(sql, params) or 0
+
+
+async def fetch_dashboard_cases_page(
+    session: AsyncSession,
+    filters: DashboardCaseFilters,
+    *,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    where_sql, params = _cases_filter_sql(filters)
+    params = {**params, "limit": limit, "offset": offset}
+    sql = text(
+        f"""
+        SELECT
+            ap.id AS applicant_id,
+            ap.case_number AS case_number,
+            ls.current_status_id AS current_status_id,
+            cs.description_staff AS current_status,
+            cs.color AS current_status_color,
+            ap.type_money_category_id AS type_money_id,
+            tmc.name AS type_money_id_name,
+            tmc.color AS type_money_id_color,
+            tmc.name_acronym AS type_money_name_acronym,
+            ap.sw_explorer_sdshv AS sw_explorer_sdshv,
+            p.first_name AS firstname,
+            p.last_name AS lastname,
+            p.cid AS cid,
+            COALESCE(
+                GREATEST(0, EXTRACT(YEAR FROM AGE(CURRENT_DATE, p.birth_date))::int),
+                0
+            ) AS person_age,
+            ap.created_at AS datetime_create,
+            ap.is_emergency AS is_emergency,
+            ap.is_existing_case AS is_existing_case,
+            ap.time_count_process AS time_count_process,
+            ap.process_started_at AS process_started_at,
+            ap.process_completed_at AS process_completed_at,
+            ap.process_sla_days AS process_sla_days,
+            prov.id AS province_id,
+            prov.name AS province_name,
+            d.id AS district_id,
+            d.name AS district_name,
+            sd.id AS subdistrict_id,
+            sd.name AS subdistrict_name,
+            sdp.id AS subdistrict_postcode_id,
+            pc.name AS postcode,
+            COALESCE(pay.count_037, 0) AS count_037,
+            COALESCE(pay.count_038, 0) AS count_038,
+            pay.is_037_or_038 AS is_037_or_038,
+            EXISTS (
+                SELECT 1
+                FROM welfare_payment wp_dda
+                JOIN welfare_dda_ref dda ON dda.id = wp_dda.dda_ref_id
+                WHERE wp_dda.applicant_id = ap.id
+            ) AS have_dda_ref,
+            EXISTS (
+                SELECT 1
+                FROM approve_case ac
+                WHERE ac.applicant_id = ap.id
+                  AND ac.approve_status = true
+            ) AS is_approved,
+            EXISTS (
+                SELECT 1
+                FROM welfare_histories_detail whd
+                WHERE whd.welfare_history_id = ap.id
+                  AND whd.received_welfare_type_id IN {DISABILITY_RECEIVED_WELFARE_TYPE_IDS}
+            ) AS is_disabled,
+            ps.previous_status_id AS previous_status_id,
+            EXISTS (
+                SELECT 1
+                FROM welfare_request_status s8
+                JOIN welfare_request_status s1
+                    ON s1.applicant_id = s8.applicant_id
+                   AND s1.current_status_id = {CURRENT_STATUS_PENDING_INTAKE}
+                   AND (
+                       s1.updated_at > s8.updated_at
+                       OR (s1.updated_at = s8.updated_at AND s1.id > s8.id)
+                   )
+                WHERE s8.applicant_id = ap.id
+                  AND s8.current_status_id = {CURRENT_STATUS_EDIT_REQUESTED}
+            ) AS is_return_edit_resubmitted,
+            (
+                pmj.pmj_reject_reason IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM approve_case ac_ok
+                    WHERE ac_ok.applicant_id = ap.id
+                      AND ac_ok.approve_status = true
+                )
+            ) AS is_pmj_rejected,
+            CASE
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM approve_case ac_ok
+                    WHERE ac_ok.applicant_id = ap.id
+                      AND ac_ok.approve_status = true
+                )
+                THEN pmj.pmj_reject_reason
+                ELSE NULL
+            END AS pmj_reject_reason,
+            ch.responsible_division_id AS responsible_division_id,
+            COALESCE(asa.require_ktb_corporate, true) AS require_ktb_corporate,
+            COALESCE(asa.require_ktb_reason, 'NEW_CASE') AS require_ktb_reason,
+            asa.existing_case_source AS existing_case_source,
+            asa.existing_case_detected_sources AS existing_case_detected_sources,
+            asa.existing_case_ref_id AS existing_case_ref_id,
+            asa.existing_case_province_id AS existing_case_province_id,
+            asa.existing_case_province_name AS existing_case_province_name,
+            asa.submission_province_id AS submission_province_id,
+            asa.submission_province_name AS submission_province_name,
+            asa.is_account_changed AS is_account_changed,
+            EXISTS (
+                SELECT 1
+                FROM welfare_evidences we
+                WHERE we.applicant_id = ap.id
+                  AND we.attachment_type_id = {ATTACHMENT_TYPE_KTB_CORPORATE}
+            ) AS has_ktb_evidence
+        {_CASES_LOCATION_FROM}
+        LEFT JOIN LATERAL (
+            SELECT wrs.current_status_id AS previous_status_id
+            FROM welfare_request_status wrs
+            WHERE wrs.applicant_id = ap.id
+            ORDER BY wrs.updated_at DESC, wrs.id DESC
+            OFFSET 1 LIMIT 1
+        ) ps ON TRUE
+        LEFT JOIN case_handling ch ON ch.applicant_id = ap.id
+        LEFT JOIN applicant_submission_audit asa ON asa.applicant_id = ap.id
+        LEFT JOIN LATERAL (
+            SELECT ac.reject_reason AS pmj_reject_reason
+            FROM approve_case ac
+            WHERE ac.applicant_id = ap.id
+              AND ac.approve_status = false
+              AND ac.reject_reason IS NOT NULL
+              AND ac.reject_resolved_at IS NULL
+            ORDER BY ac.id DESC
+            LIMIT 1
+        ) pmj ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT
+                COUNT(*) FILTER (WHERE wp.is_037_or_038 IS FALSE) AS count_037,
+                COUNT(*) FILTER (WHERE wp.is_037_or_038 IS TRUE) AS count_038,
+                (
+                    SELECT wp2.is_037_or_038
+                    FROM welfare_payment wp2
+                    WHERE wp2.applicant_id = ap.id
+                    ORDER BY wp2.id DESC
+                    LIMIT 1
+                ) AS is_037_or_038
+            FROM welfare_payment wp
+            WHERE wp.applicant_id = ap.id
+        ) pay ON TRUE
+        WHERE {where_sql}
+        ORDER BY ap.created_at DESC, ap.id DESC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    rows = (await session.execute(sql, params)).mappings().all()
     return [dict(r) for r in rows]
