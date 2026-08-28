@@ -403,6 +403,49 @@ pipeline {
                         }
                     }
                 }
+                stage('Ensure np Env Secret (beta only)') {
+                    // Forces every backend Deployment's envFrom back onto our own
+                    // "vcare-<svc>-secret-beta" Secret (from k8s/secrets-beta.yml)
+                    // on every run — self-healing against anything that resets it
+                    // back to the ops-managed "<svc>-env" Secret between deploys.
+                    //
+                    // k8s/secrets-beta.yml itself is gitignored (real credentials —
+                    // Gmail app password, ThaiD client secret, Gemini key, JWT
+                    // secrets — never committed) and is NOT applied here: this
+                    // stage only patches envFrom to *point at* the Secret by name.
+                    // The Secret's actual content has to already exist on the
+                    // cluster — apply it by hand once (and again after editing it):
+                    //   kubectl -n staging apply -f k8s/secrets-beta.yml
+                    // If that Secret is missing entirely, the patch below still
+                    // succeeds (it only changes the reference) but the pod will
+                    // fail to start with "Secret ... not found" — that's the signal
+                    // to go apply k8s/secrets-beta.yml by hand.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    # deployment name : secret name — "bff-vsmartcare" maps to
+                                    # "vcare-bff-secret-beta", not "vcare-bff-vsmartcare-secret-beta"
+                                    for pair in \
+                                        "bff-vsmartcare:vcare-bff-secret-beta" \
+                                        "case-service:vcare-case-service-secret-beta" \
+                                        "notification-service:vcare-notification-service-secret-beta" \
+                                        "ocr-service:vcare-ocr-service-secret-beta" \
+                                        "thaid-auth-service:vcare-thaid-auth-service-secret-beta" \
+                                        "dashboard-service:vcare-dashboard-service-secret-beta"; do
+                                        d="${pair%%:*}"
+                                        s="${pair##*:}"
+                                        kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                            "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
+                                    done
+                                '''
+                            }
+                        }
+                    }
+                }
                 stage('Ensure np Pull Secret (beta only)') {
                     // Ensure "betabackcred" exists in ns staging and is wired into
                     // every service's Deployment before any rollout below tries to
@@ -692,6 +735,15 @@ pipeline {
                                         bff-vsmartcare case-service notification-service \
                                         ocr-service thaid-auth-service dashboard-service
                                     kubectl -n ${NP_NAMESPACE} get pods -o wide
+
+                                    echo "--- envFrom secret per Deployment ---"
+                                    for d in bff-vsmartcare case-service notification-service \
+                                             ocr-service thaid-auth-service dashboard-service; do
+                                        echo -n "$d: "
+                                        kubectl -n ${NP_NAMESPACE} get deploy "$d" \
+                                            -o jsonpath='{.spec.template.spec.containers[0].envFrom}'
+                                        echo
+                                    done
                                 '''
                             }
                         }
