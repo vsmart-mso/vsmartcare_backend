@@ -40,6 +40,7 @@ from .services.staff_digest_dispatch import (
 )
 from .case_display_schema import CaseDisplayRead
 from .dashboard_schema import (
+    DashboardCasesRead,
     DashboardDistrictsRead,
     DashboardNationalOverviewRead,
     DashboardOverviewRead,
@@ -3483,6 +3484,75 @@ async def get_dashboard_sub_districts(
     pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
     data = await _get(f"{base}/v1/dashboard/sub-districts?{urlencode(pairs)}")
     return DashboardSubDistrictsRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/cases",
+    tags=["dashboard"],
+    summary="รายการคำร้องสำหรับหน้า dashboard (province_id ไม่บังคับ = ทั้งประเทศ)",
+    description=(
+        "ส่งต่อ `GET …/v1/dashboard/cases` ใน dashboard-service — "
+        "ฟิลด์แถวสอดคล้อง `/v1/case_for_staff` มี pagination; "
+        "ไม่ส่ง province_id = ทุกจังหวัด"
+    ),
+    response_model=DashboardCasesRead,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_cases(
+    province_id: Optional[list[int]] = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+    case_number: Optional[str] = Query(None),
+    current_status: Optional[str] = Query(None),
+    firstname: Optional[str] = Query(None),
+    lastname: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    datetime_create: Optional[date] = Query(None),
+    province_name: Optional[str] = Query(None),
+    district_id: Optional[int] = Query(None),
+    district_name: Optional[str] = Query(None),
+    subdistrict_id: Optional[int] = Query(None),
+    subdistrict_name: Optional[str] = Query(None),
+    subdistrict_postcode_id: Optional[int] = Query(None),
+    postcode: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> DashboardCasesRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("page", page), ("page_size", page_size)]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    if case_number is not None:
+        pairs.append(("case_number", case_number))
+    if current_status is not None:
+        pairs.append(("current_status", current_status))
+    if firstname is not None:
+        pairs.append(("firstname", firstname))
+    if lastname is not None:
+        pairs.append(("lastname", lastname))
+    if cid is not None:
+        pairs.append(("cid", cid))
+    if datetime_create is not None:
+        pairs.append(("datetime_create", datetime_create.isoformat()))
+    if province_name is not None:
+        pairs.append(("province_name", province_name))
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if district_name is not None:
+        pairs.append(("district_name", district_name))
+    if subdistrict_id is not None:
+        pairs.append(("subdistrict_id", subdistrict_id))
+    if subdistrict_name is not None:
+        pairs.append(("subdistrict_name", subdistrict_name))
+    if subdistrict_postcode_id is not None:
+        pairs.append(("subdistrict_postcode_id", subdistrict_postcode_id))
+    if postcode is not None:
+        pairs.append(("postcode", postcode))
+    data = await _get(f"{base}/v1/dashboard/cases?{urlencode(pairs)}", timeout=60.0)
+    return DashboardCasesRead.model_validate(data)
 
 
 def _ocr_service_headers() -> Dict[str, str]:

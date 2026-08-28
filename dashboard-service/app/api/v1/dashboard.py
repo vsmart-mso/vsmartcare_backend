@@ -8,7 +8,8 @@ caller (BFF) ส่ง province_id/district_id/current_status_id ที่ "อ�
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -16,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_session
 from ...schemas import (
+    DashboardCaseRow,
+    DashboardCasesRead,
     DashboardDistrictRow,
     DashboardDistrictsRead,
     DashboardNationalOverviewRead,
@@ -28,7 +31,10 @@ from ...schemas import (
 )
 from ...settings import settings
 from ...queries import (
+    DashboardCaseFilters,
     fetch_active_current_statuses,
+    fetch_dashboard_cases_count,
+    fetch_dashboard_cases_page,
     fetch_district,
     fetch_districts_page,
     fetch_districts_status_breakdown,
@@ -53,6 +59,141 @@ router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
 def _clean_ids(ids: list[int] | None) -> list[int] | None:
     """list ว่าง (`?type_money_id=` ไม่ระบุค่า) ให้ถือว่าไม่ได้กรอง เหมือน None."""
     return ids or None
+
+
+def _clean_text_filter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+_BANGKOK = ZoneInfo("Asia/Bangkok")
+
+
+def _sla_fields(
+    started_at: datetime | None,
+    sla_days: int | None,
+    *,
+    completed_at: datetime | None,
+    frozen_elapsed: int | None,
+) -> dict:
+    """คำนวณฟิลด์ SLA ให้สอดคล้อง case-service `process_sla_fields_dict`."""
+    empty = {
+        "process_started_at": started_at,
+        "process_completed_at": completed_at,
+        "process_sla_days": sla_days,
+        "process_elapsed_days": None,
+        "process_remaining_days": None,
+        "process_traffic_color": None,
+        "process_is_overdue": None,
+        "time_count_process": None,
+    }
+    if sla_days is None:
+        return empty
+
+    def _now_bangkok(value: datetime | None) -> datetime:
+        if value is None:
+            return datetime.now(tz=_BANGKOK)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=_BANGKOK)
+        return value.astimezone(_BANGKOK)
+
+    def _elapsed(start: datetime, end: datetime | None) -> int:
+        end_bkk = _now_bangkok(end)
+        start_bkk = start.astimezone(_BANGKOK) if start.tzinfo else start.replace(tzinfo=_BANGKOK)
+        return (end_bkk.date() - start_bkk.date()).days
+
+    def _traffic(elapsed: int, sla: int) -> str:
+        if sla == 10:
+            if elapsed <= 4:
+                return "green"
+            if elapsed <= 7:
+                return "yellow"
+            if elapsed <= 10:
+                return "orange"
+            return "red"
+        if sla == 15:
+            if elapsed <= 5:
+                return "green"
+            if elapsed <= 11:
+                return "yellow"
+            if elapsed <= 15:
+                return "orange"
+            return "red"
+        if sla <= 0:
+            return "red"
+        pct = elapsed / sla
+        if pct <= 0.40:
+            return "green"
+        if pct <= 0.70:
+            return "yellow"
+        if pct <= 1.0:
+            return "orange"
+        return "red"
+
+    if started_at is None:
+        if completed_at is not None and frozen_elapsed is not None:
+            remaining = sla_days - frozen_elapsed
+            return {
+                "process_started_at": started_at,
+                "process_completed_at": completed_at,
+                "process_sla_days": sla_days,
+                "process_elapsed_days": frozen_elapsed,
+                "process_remaining_days": remaining,
+                "process_traffic_color": _traffic(frozen_elapsed, sla_days),
+                "process_is_overdue": remaining < 0,
+                "time_count_process": frozen_elapsed,
+            }
+        return empty
+
+    elapsed = _elapsed(started_at, completed_at)
+    remaining = sla_days - elapsed
+    return {
+        "process_started_at": started_at,
+        "process_completed_at": completed_at,
+        "process_sla_days": sla_days,
+        "process_elapsed_days": elapsed,
+        "process_remaining_days": remaining,
+        "process_traffic_color": _traffic(elapsed, sla_days),
+        "process_is_overdue": remaining < 0,
+        "time_count_process": elapsed,
+    }
+
+
+def _row_to_dashboard_case(row: dict) -> DashboardCaseRow:
+    completed_at = row.get("process_completed_at")
+    frozen = row.get("time_count_process") if completed_at is not None else None
+    row.update(
+        _sla_fields(
+            row.get("process_started_at"),
+            row.get("process_sla_days"),
+            completed_at=completed_at,
+            frozen_elapsed=frozen if isinstance(frozen, int) else None,
+        )
+    )
+    row["current_address_province_id"] = row.get("province_id")
+    row["current_address_province_name"] = row.get("province_name")
+    row["person_age"] = int(row.get("person_age") or 0)
+    row["count_037"] = int(row.get("count_037") or 0)
+    row["count_038"] = int(row.get("count_038") or 0)
+    row.setdefault("prior_self_submit_case_numbers", [])
+    row.setdefault("self_submit_fiscal_year_count", 0)
+    row.setdefault("self_submit_fiscal_year_case_numbers", [])
+    row.setdefault("responsible_division_name", None)
+
+    sources = row.get("existing_case_detected_sources")
+    if sources is not None and not isinstance(sources, list):
+        row["existing_case_detected_sources"] = None
+
+    require_ktb = bool(row.get("require_ktb_corporate", True))
+    source = row.get("existing_case_source")
+    ref_id = row.get("existing_case_ref_id")
+    prior_reuse = None
+    if not require_ktb and source in {"VCARE", "Legacy"} and ref_id is not None:
+        prior_reuse = int(ref_id)
+    row["prior_ktb_reuse_applicant_id"] = prior_reuse
+    return DashboardCaseRow.model_validate(row)
 
 
 async def _require_province(session: AsyncSession, province_id: int) -> dict:
@@ -528,4 +669,73 @@ async def export_districts(
                 f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{utf8_filename}'
             )
         },
+    )
+
+
+@router.get("/cases", response_model=DashboardCasesRead)
+async def get_cases(
+    province_id: list[int] | None = Query(
+        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    ),
+    current_status_id: list[int] | None = Query(
+        None, description="กรองตาม current_status_id ได้หลายค่า"
+    ),
+    type_money_id: list[int] | None = Query(
+        None, description="กรองตาม type_money_category.id ได้หลายค่า"
+    ),
+    case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
+    current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: date | None = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: str | None = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: int | None = Query(None, description="กรองตามอำเภอ"),
+    district_name: str | None = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: int | None = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: str | None = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: int | None = Query(
+        None, description="กรองตามแถว bridge sub_districts_postcode"
+    ),
+    postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    page: int = Query(1, ge=1),
+    page_size: int | None = Query(None, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> DashboardCasesRead:
+    """รายการคำร้องแบบ case_for_staff — ไม่ส่ง province_id = ทั้ง 77 จังหวัด มี pagination."""
+    province_ids = await _validate_province_ids(session, province_id)
+    resolved_page_size = min(page_size or settings.default_page_size, settings.max_page_size)
+    filters = DashboardCaseFilters(
+        province_ids=province_ids,
+        current_status_ids=_clean_ids(current_status_id),
+        type_money_ids=_clean_ids(type_money_id),
+        case_number=_clean_text_filter(case_number),
+        current_status=_clean_text_filter(current_status),
+        firstname=_clean_text_filter(firstname),
+        lastname=_clean_text_filter(lastname),
+        cid=_clean_text_filter(cid),
+        datetime_create=datetime_create,
+        province_name=_clean_text_filter(province_name),
+        district_id=district_id,
+        district_name=_clean_text_filter(district_name),
+        subdistrict_id=subdistrict_id,
+        subdistrict_name=_clean_text_filter(subdistrict_name),
+        subdistrict_postcode_id=subdistrict_postcode_id,
+        postcode=_clean_text_filter(postcode),
+    )
+    total_items = await fetch_dashboard_cases_count(session, filters)
+    total_pages = max(1, (total_items + resolved_page_size - 1) // resolved_page_size) if total_items else 1
+    rows = await fetch_dashboard_cases_page(
+        session,
+        filters,
+        limit=resolved_page_size,
+        offset=(page - 1) * resolved_page_size,
+    )
+    return DashboardCasesRead(
+        province_ids=province_ids,
+        page=page,
+        page_size=resolved_page_size,
+        total_items=total_items,
+        total_pages=total_pages,
+        items=[_row_to_dashboard_case(row) for row in rows],
     )
