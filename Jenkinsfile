@@ -66,6 +66,20 @@ pipeline {
             }
         }
 
+        stage('Stash np Manifests') {
+            // node('nonprod') below opens its own workspace on np-agent01
+            // (/var/lib/jenkins-agent/workspace/...), separate from the one
+            // Checkout just cloned into on the default agent — files aren't
+            // shared between them automatically. Stash here once, unstash in
+            // every node('nonprod') block that needs a k8s/*.yml file.
+            when {
+                expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+            }
+            steps {
+                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml'
+            }
+        }
+
         stage('Build Docker Images') {
             parallel {
                 stage('bff') {
@@ -304,6 +318,7 @@ pipeline {
                     }
                     steps {
                         node('nonprod') {
+                            unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 sh '''
                                     kubectl -n ${NP_NAMESPACE} apply -f k8s/external-db-np.yml
@@ -327,6 +342,7 @@ pipeline {
                     }
                     steps {
                         node('nonprod') {
+                            unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 sh '''
                                     kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-np.yml
