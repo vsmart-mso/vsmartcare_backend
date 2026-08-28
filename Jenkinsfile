@@ -76,7 +76,7 @@ pipeline {
                 expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
             }
             steps {
-                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml'
+                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml,k8s/hpa-np.yml,k8s/service-beta.yml'
             }
         }
 
@@ -356,6 +356,48 @@ pipeline {
                                     fi
 
                                     kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-beta-pvc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure np Services (beta only)') {
+                    // Applies k8s/service-beta.yml — see that file's header.
+                    // Unlike deployment-beta.yml, this one IS actively applied
+                    // by CI, because ocr-service's NodePort doesn't exist on np
+                    // yet and nothing else creates it. Idempotent: safe to
+                    // re-apply every beta run (existing ClusterIPs are kept —
+                    // we don't set spec.clusterIP, so apply won't touch it).
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/service-beta.yml
+                                    kubectl -n ${NP_NAMESPACE} get svc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure np HPA (beta only)') {
+                    // Applies k8s/hpa-np.yml — see that file's header for which
+                    // five services get 2→3 autoscaling and why case-service is
+                    // deliberately excluded. Idempotent: safe to re-apply every
+                    // beta run.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-np.yml
+                                    kubectl -n ${NP_NAMESPACE} get hpa
                                 '''
                             }
                         }

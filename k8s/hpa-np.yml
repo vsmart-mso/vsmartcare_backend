@@ -1,0 +1,152 @@
+# HPA for np (ns staging) — mirrors k8s/hpa.yml (ns vcare) but with np's real
+# Deployment names (no "vcare-" prefix, no "-beta" suffix) and np-specific
+# replica bounds.
+#
+# case-service is DELIBERATELY EXCLUDED — no HPA object for it at all.
+# dev-np-quickstart.md is explicit and repeated on this: "case-service must
+# stay at 1 replica" — its container runs `alembic upgrade head` on start and
+# the Deployment uses `strategy: Recreate`; a second replica (or a
+# RollingUpdate surge) would race the migration against the same database.
+# Do not add case-service here without first removing that constraint.
+#
+# The other five backend services (bff-vsmartcare, notification-service,
+# ocr-service, thaid-auth-service, dashboard-service) are the ones
+# dev-np-quickstart.md item 16 calls "stateless" and already runs at a fixed
+# 2 replicas + podAntiAffinity on np — this HPA lets them scale 2→3 instead
+# of staying fixed. Bounds/thresholds copied from k8s/hpa.yml for consistency
+# with production's tuning.
+#
+# Requires metrics-server (or equivalent) in the cluster to have any effect —
+# dev-np-quickstart.md implies `kubectl top` works on np, which needs it, but
+# this hasn't been directly verified. If HPA shows "unknown" for CPU/memory
+# targets via `kubectl -n staging get hpa`, that's what to check first.
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: bff-vsmartcare
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bff-vsmartcare
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: notification-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notification-service
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: ocr-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ocr-service
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: thaid-auth-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: thaid-auth-service
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: dashboard-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dashboard-service
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

@@ -1,13 +1,35 @@
-# Mirrors what already exists on np (ns staging) — NOT applied by the
-# Jenkinsfile beta path (see deployment-beta.yml header). Names match np's
-# real Services exactly — no "vcare-" prefix, no "-beta" suffix.
+# Applied by the Jenkinsfile beta path — see "Ensure np Services (beta only)".
+# This is the one file in this pair (with deployment-beta.yml) that CI now
+# actively owns, rather than just mirroring what ops already has, because
+# ocr-service's NodePort below doesn't exist on np yet and nothing else
+# creates it. Names match np's real Services exactly — no "vcare-" prefix,
+# no "-beta" suffix (np and ns vcare are different clusters, nothing to
+# collide with).
 #
-# Only bff-vsmartcare is NodePort (31980, matching dev-np-quickstart.md §0/§4:
-# the edge proxies /api-vsmartcare to this NodePort). The other five backend
-# services are internal-only — ClusterIP :8000, reached through the bff, not
-# the public edge (§4.1 diagram) — unlike the old ns vcare version where all
-# six were NodePort with distinct ports (8000-8005 / 30810-30815); np has no
-# reason to expose them individually since bff is the only public entry point.
+# bff-vsmartcare and ocr-service are NodePort (31980 and 31982) because
+# np-edge01 is NOT a cluster member (see dev-np-quickstart.md §1 inventory —
+# it has no k8s Node name) — it can only reach a NodePort on a node IP, never
+# a ClusterIP, which only resolves inside the cluster's pod network. The
+# other four backend services stay ClusterIP :8000, reached only through the
+# bff, not the public edge (§4.1 diagram).
+#
+# ocr-service went from ClusterIP to NodePort because the frontend is being
+# changed to call it directly instead of proxying through bff (see
+# src/api/ocr.ts in vsmartcare_frontend) — needed for large file uploads that
+# risk timing out / hitting body-size limits through the bff hop.
+#
+# 31982 is a GUESS, not confirmed against real usage — dev-np-quickstart.md
+# only documents 31968 (frontend), 31980 (bff) and 31981 (ess-regis) as taken.
+# Verify before applying: kubectl -n staging get svc -o wide
+# (also check no other NodePort Service anywhere in the cluster already
+# claims 31982 — Service creation fails cleanly if it's taken, but confirm
+# first rather than relying on that).
+#
+# ⚠️ This Service alone does NOT make ocr-service reachable from the browser.
+# np-edge01 (outside the cluster) still needs a new location block proxying
+# /api-vsmartcare-ocr/ to this NodePort, stripping that prefix — that's an
+# edge/nginx config change on np-edge01, which lives in the ops repo, not
+# here. See the note handed to the user for the exact snippet needed.
 
 apiVersion: v1
 kind: Service
@@ -72,7 +94,8 @@ spec:
     - protocol: TCP
       port: 8000
       targetPort: 8000
-  type: ClusterIP
+      nodePort: 31982
+  type: NodePort
 ---
 apiVersion: v1
 kind: Service
