@@ -30,7 +30,7 @@ pipeline {
         PROJECT    = "root"
         REPO       = "vcare-backend"
         BASE_IMAGE = "registry-vs.m-society.go.th/root/vcare-backend"
-        IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
+        IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: 'nogit'}-${env.BUILD_NUMBER}"
 
         // beta pushes every image under a "-beta" suffixed tag so it never
         // overwrites production's :latest (and any other tag) on the shared
