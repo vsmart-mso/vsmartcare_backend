@@ -291,10 +291,27 @@ pipeline {
                             export KUBECONFIG=${KUBECONFIG}
                             kubectl apply -f k8s/external-db.yml
                             kubectl apply -f k8s/case-service-storage.yml
-                            kubectl apply -f k8s/deployment.yml
                             kubectl apply -f k8s/service.yml
                             kubectl apply -f k8s/hpa.yml
                         '''
+                        // k8s/deployment.yml holds all 6 services with their image field
+                        // hardcoded to "<svc>-latest". Re-applying it on every build reverts
+                        // whichever service is about to be redeployed back to "-latest" first,
+                        // then Rollout below immediately overwrites that with the real build
+                        // tag — two writes to the same object a few seconds apart for no
+                        // functional gain, and on a control plane with slow disk I/O that's
+                        // double the exposure to "spec update not observed" stalls. Only
+                        // force-resync the full manifest (picks up replica/resource/label/
+                        // pull-secret edits) on a BUILD_ALL run; routine single-service builds
+                        // rely on Rollout's set image as the sole write for that Deployment.
+                        script {
+                            if (params.BUILD_ALL) {
+                                sh '''
+                                    export KUBECONFIG=${KUBECONFIG}
+                                    kubectl apply -f k8s/deployment.yml
+                                '''
+                            }
+                        }
                     }
                 }
                 stage('Ensure np External DB (beta only)') {
@@ -499,7 +516,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/bff-vsmartcare \
                                                         '*'=${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/bff-vsmartcare
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=bff-vsmartcare
@@ -514,7 +531,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-bff \
                                                 vcare-bff=${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=600s
                                         '''
                                     }
                                 }
@@ -538,7 +555,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/case-service \
                                                         '*'=${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/case-service
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=case-service
@@ -553,7 +570,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-case-service \
                                                 vcare-case-service=${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=600s
                                         '''
                                     }
                                 }
@@ -575,7 +592,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/notification-service \
                                                         '*'=${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/notification-service
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=notification-service
@@ -590,7 +607,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service \
                                                 vcare-notification-service=${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=600s
                                         '''
                                     }
                                 }
@@ -612,7 +629,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service \
                                                         '*'=${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/ocr-service
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=ocr-service
@@ -627,7 +644,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service \
                                                 vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=600s
                                         '''
                                     }
                                 }
@@ -649,7 +666,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service \
                                                         '*'=${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/thaid-auth-service
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=thaid-auth-service
@@ -664,7 +681,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service \
                                                 vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=600s
                                         '''
                                     }
                                 }
@@ -686,7 +703,7 @@ pipeline {
                                                 sh '''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service \
                                                         '*'=${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG}
-                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service --timeout=300s; then
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/dashboard-service
                                                         kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=dashboard-service
@@ -701,7 +718,7 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service \
                                                 vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
-                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=300s
+                                            kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=600s
                                         '''
                                     }
                                 }
