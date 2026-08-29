@@ -3392,6 +3392,7 @@ async def get_dashboard_status_export(
         "case", description="situation = รูปแบบรายงานสถานการณ์, case = รูปแบบรายงานเคส"
     ),
     province_id: Optional[list[int]] = Query(None),
+    applicant_id: Optional[list[int]] = Query(None),
     district_id: Optional[list[int]] = Query(None),
     sub_district_id: Optional[list[int]] = Query(None),
     current_status_id: Optional[list[int]] = Query(None),
@@ -3400,6 +3401,7 @@ async def get_dashboard_status_export(
     base = settings.dashboard_service_url.rstrip("/")
     pairs: list[tuple[str, Any]] = [("level", level), ("report_type", report_type)]
     pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "applicant_id", applicant_id)
     pairs = _multi_query_pairs(pairs, "district_id", district_id)
     pairs = _multi_query_pairs(pairs, "sub_district_id", sub_district_id)
     pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
