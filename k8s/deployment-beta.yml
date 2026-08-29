@@ -1,0 +1,254 @@
+# Mirrors what already exists on np (ns staging) — NOT applied by the
+# Jenkinsfile beta path, which only patches images on the existing
+# Deployments there (dev-np-quickstart.md §4). Kept as a reference of what's
+# live, not something CI creates or owns.
+#
+# Names match np's real Deployments exactly — no "vcare-" prefix, no "-beta"
+# suffix (np and ns vcare are different clusters, so no suffix is needed here
+# to avoid colliding with production's own vcare-* Deployments in ns vcare —
+# see deployment.yml). imagePullSecrets list all three that Jenkinsfile
+# patches in at deploy time (regcred, regcred-staging, betabackcred).
+#
+# The per-service Secret names (envFrom) DO keep "-beta" — those are ours
+# (k8s/secrets-beta.yml), not np's, so there's no name to match and no
+# ambiguity risk from dropping the suffix there.
+#
+# case-service's uploads volume (vcare-case-service-uploads-beta-pvc) is
+# provided by k8s/case-service-storage-np.yml, NOT case-service-storage-beta.yml
+# — that one points at 172.21.103.131, unreachable from np. The np version
+# points at np-store01 (192.168.10.22, same host as MinIO) — see that file for
+# the ⚠️ caveat: the NFS export there isn't confirmed to exist yet.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: bff-vsmartcare
+  labels:
+    app: bff-vsmartcare
+spec:
+  selector:
+    matchLabels:
+      app: bff-vsmartcare
+  template:
+    metadata:
+      labels:
+        app: bff-vsmartcare
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-bff
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-bff-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: case-service
+  labels:
+    app: case-service
+spec:
+  selector:
+    matchLabels:
+      app: case-service
+  template:
+    metadata:
+      labels:
+        app: case-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-case-service
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-case-service-secret-beta
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads/welfare-evidence
+              subPath: welfare-evidence
+            - name: uploads
+              mountPath: /app/uploads/file-payments
+              subPath: file-payments
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: vcare-case-service-uploads-beta-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: notification-service
+  labels:
+    app: notification-service
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-notification-service
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-notification-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: ocr-service
+  labels:
+    app: ocr-service
+spec:
+  selector:
+    matchLabels:
+      app: ocr-service
+  template:
+    metadata:
+      labels:
+        app: ocr-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-ocr-service
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-ocr-service-secret-beta
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: thaid-auth-service
+  labels:
+    app: thaid-auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: thaid-auth-service
+  template:
+    metadata:
+      labels:
+        app: thaid-auth-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-thaid-auth-service
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-thaid-auth-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: staging
+  name: dashboard-service
+  labels:
+    app: dashboard-service
+spec:
+  selector:
+    matchLabels:
+      app: dashboard-service
+  template:
+    metadata:
+      labels:
+        app: dashboard-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+        - name: regcred-staging
+        - name: betabackcred
+      containers:
+        - name: vcare-dashboard-service
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-beta-latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: vcare-dashboard-service-secret-beta
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
