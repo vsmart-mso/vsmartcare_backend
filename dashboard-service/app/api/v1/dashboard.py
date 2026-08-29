@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, timezone
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -33,8 +34,11 @@ from ...settings import settings
 from ...queries import (
     DashboardCaseFilters,
     fetch_active_current_statuses,
+    fetch_dashboard_case_export_rows,
+    fetch_dashboard_case_list,
     fetch_dashboard_cases_count,
     fetch_dashboard_cases_page,
+    fetch_dashboard_situation_export_rows,
     fetch_district,
     fetch_districts_page,
     fetch_districts_status_breakdown,
@@ -54,6 +58,93 @@ from ...queries import (
 )
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
+BANGKOK_PROVINCE_ID = 10
+
+BANGKOK_EXPORT_HEADERS = [
+    "หมายเลขเคส",
+    "ชื่อ",
+    "นามสกุล",
+    "หมวดเงิน",
+    "หมวดเงิน_ชื่อเต็ม",
+    "status_id",
+    "สถานะ_ระบบ",
+    "ขั้นตอน_ธุรกิจ",
+    "ผู้รับผิดชอบ",
+    "วันที่ยื่น",
+]
+
+PROVINCIAL_EXPORT_GROUPS = [
+    ("A2:A3", "ลำดับ"),
+    ("B2:B3", "ที่มา"),
+    ("C2:C3", "เลขที่คำร้อง"),
+    ("D2:D3", "วันที่แจ้งเรื่อง"),
+    ("E2:G2", "รายละเอียดคำร้อง"),
+    ("H2:U2", "ผู้ประสบปัญหาทางสังคมยื่นคำขอด้วยตนเอง"),
+    ("V2:AA2", "ข้อมูลเศรษฐกิจครอบครัว"),
+    ("AB2:AD2", "ข้อมูลสมาชิกและการอุปการะ"),
+    ("AE2:AH2", "สิทธิสวัสดิการที่เคยได้รับ"),
+    ("AI2:AM2", "สภาพปัญหาและความช่วยเหลือที่ต้องการ"),
+    ("AN2:AQ2", "การพิจารณาให้ความช่วยเหลือ"),
+    ("AR2:AY2", "ข้อมูลการจ่ายเงิน"),
+    ("AZ2:BB2", "นักสังคมสงเคราะห์"),
+]
+
+PROVINCIAL_EXPORT_HEADERS = [
+    "ลำดับ",
+    "ที่มา",
+    "เลขที่คำร้อง",
+    "วันที่แจ้งเรื่อง",
+    "กรณีฉุกเฉิน",
+    "ประเภทเคส",
+    "แหล่งข้อมูลเคสเดิม",
+    "เลขประจำตัวประชาชน",
+    "ชื่อ-นามสกุล",
+    "วันเดือนปีเกิด",
+    "อายุ",
+    "เพศ",
+    "ความสัมพันธ์",
+    "สถานภาพ",
+    "โทรศัพท์",
+    "โทรสาร",
+    "โทรศัพท์มือถือ",
+    "อีเมล",
+    "เป็นเจ้าหน้าที่รัฐ",
+    "ที่อยู่ปัจจุบัน",
+    "พิกัด",
+    "อาชีพ",
+    "อาชีพหลักของครอบครัว",
+    "รายได้เฉลี่ย/เดือน",
+    "ที่มาของรายได้",
+    "สภาพที่อยู่อาศัย",
+    "ค่าเช่า/เดือน",
+    "การอุปการะ",
+    "จำนวนสมาชิกครอบครัว",
+    "รายละเอียดสมาชิกครอบครัว",
+    "สถานะการรับสวัสดิการ",
+    "จำนวนครั้ง",
+    "จำนวนเงินรวม",
+    "ประเภทสวัสดิการ",
+    "สภาพปัญหาความเดือดร้อน",
+    "ความช่วยเหลือที่ต้องการ",
+    "จำนวนเงิน",
+    "รายละเอียดสิ่งของ",
+    "รายละเอียดความช่วยเหลืออื่น",
+    "ความเห็นวินิจฉัย",
+    "จำนวนเงินที่วินิจฉัย",
+    "ระเบียบ/หลักเกณฑ์",
+    "ประเภทเงิน",
+    "วิธีการจ่ายเงิน",
+    "ชื่อผู้รับเงิน",
+    "เลขบัตรผู้รับเงิน",
+    "โทรศัพท์ผู้รับเงิน",
+    "ธนาคาร",
+    "เลขที่บัญชี",
+    "ชื่อบัญชี",
+    "สาขา",
+    "นักสังคมสงเคราะห์",
+    "ตำแหน่ง",
+    "เลขใบอนุญาต",
+]
 
 
 def _clean_ids(ids: list[int] | None) -> list[int] | None:
@@ -239,6 +330,287 @@ async def _validate_province_ids(
     return unique_ids
 
 
+def _fmt_date(value) -> str:
+    if value is None:
+        return ""
+    try:
+        return value.strftime("%d/%m/%Y")
+    except AttributeError:
+        return str(value)
+
+
+def _fmt_money(value) -> str:
+    if value is None:
+        return ""
+    return float(value)
+
+
+def _yes_no(value) -> str:
+    return "ใช่" if value else "ไม่ใช่"
+
+
+def _existing_case_label(value) -> str:
+    if value is True:
+        return "รายเดิม"
+    if value is False:
+        return "รายใหม่"
+    return "ไม่มีข้อมูล"
+
+
+def _join_address(row: dict) -> str:
+    parts = [
+        row.get("house_number"),
+        f"หมู่ {row.get('house_moo')}" if row.get("house_moo") else None,
+        row.get("house_name"),
+        f"ตรอก{row.get('alley')}" if row.get("alley") else None,
+        f"ซอย{row.get('sub_lane')}" if row.get("sub_lane") else None,
+        f"ถนน{row.get('road')}" if row.get("road") else None,
+        f"ต.{row.get('sub_district_name')}" if row.get("sub_district_name") else None,
+        f"อ.{row.get('district_name')}" if row.get("district_name") else None,
+        f"จ.{row.get('province_name')}" if row.get("province_name") else None,
+        row.get("postcode"),
+        row.get("nearby_landmark"),
+    ]
+    return " ".join(str(part) for part in parts if part)
+
+
+def _coordinate(row: dict) -> str:
+    lat = row.get("latitude")
+    lng = row.get("longitude")
+    return f"{lat}, {lng}" if lat and lng else ""
+
+
+def _existing_case_source(row: dict) -> str:
+    source_labels = {
+        "vcare_main": "พม.CARE",
+        "vsmart_main": "vSmart",
+        "mso_logbook": "สปสช. (Welfare)",
+    }
+    sources = row.get("existing_case_detected_sources")
+    if isinstance(sources, list) and sources:
+        return ", ".join(source_labels.get(str(item), str(item)) for item in sources)
+    source = row.get("existing_case_source")
+    return source_labels.get(str(source), str(source)) if source else "ไม่มีข้อมูล"
+
+
+def _responsible_person(row: dict) -> str:
+    return (
+        row.get("responsible_person")
+        or row.get("latest_status_update_by")
+        or row.get("sw_user_sdshv")
+        or row.get("sw_explorer_sdshv")
+        or row.get("social_worker_name")
+        or ""
+    )
+
+
+def _make_bangkok_workbook(rows: list[dict]):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ตัวอย่าง"
+    ws.append(BANGKOK_EXPORT_HEADERS)
+    for row in rows:
+        ws.append(
+            [
+                row.get("case_number") or "",
+                row.get("first_name") or "",
+                row.get("last_name") or "",
+                row.get("type_money_category_acronym") or "",
+                row.get("type_money_category_name") or "",
+                row.get("current_status_id") or "",
+                row.get("current_status_label") or "",
+                row.get("current_status_business_step")
+                or row.get("current_status_public_label")
+                or "",
+                _responsible_person(row),
+                _fmt_date(row.get("created_at")),
+            ]
+        )
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    alternate_fill = PatternFill("solid", fgColor="F4F8FB")
+    thin = Side(style="thin", color="D9E2F3")
+    border = Border(bottom=thin)
+    for cell in ws[1]:
+        cell.font = Font(name="TH SarabunPSK", size=16, bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        for cell in row:
+            cell.font = Font(name="TH SarabunPSK", size=16)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = border
+            if row_idx % 2 == 0:
+                cell.fill = alternate_fill
+    for col_idx, col in enumerate(ws.columns, start=1):
+        width = min(max(len(str(cell.value or "")) for cell in col) + 2, 35)
+        ws.column_dimensions[col[0].column_letter].width = max(width, 10)
+    ws.row_dimensions[1].height = 32
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = "1:1"
+    return wb
+
+
+def _provincial_export_title(
+    rows: list[dict],
+    province_ids: list[int] | None,
+    province_names: list[str] | None,
+) -> str:
+    names = province_names or sorted({row.get("province_name") for row in rows if row.get("province_name")})
+    if len(names) == 1:
+        return f"สำนักงานพัฒนาสังคมและความมั่นคงของมนุษย์จังหวัด{names[0]}"
+    if province_ids:
+        return "รายงานข้อมูลคำร้อง พม.CARE"
+    return "รายงานข้อมูลคำร้อง พม.CARE ทุกจังหวัด"
+
+
+def _provincial_row_values(index: int, row: dict) -> list:
+    full_name = " ".join(part for part in [row.get("first_name"), row.get("last_name")] if part)
+    welfare_status = "เคยได้รับ" if row.get("has_received_welfare") else "ไม่เคยได้รับ"
+    distress = row.get("family_distress") or row.get("problem_details") or ""
+    phone = row.get("home_phone") or row.get("address_mobile_phone") or ""
+    mobile = row.get("mobile_phone") or row.get("address_mobile_phone") or ""
+    return [
+        index,
+        "พม.CARE",
+        row.get("case_number") or "",
+        _fmt_date(row.get("created_at")),
+        _yes_no(row.get("is_emergency")),
+        _existing_case_label(row.get("is_existing_case")),
+        _existing_case_source(row),
+        row.get("cid") or "",
+        full_name,
+        _fmt_date(row.get("birth_date")),
+        row.get("applicant_age") or "",
+        row.get("gender") or "",
+        row.get("requester_relation_name") or "",
+        row.get("marital_status_name") or "",
+        phone,
+        row.get("fax_number") or "",
+        mobile,
+        row.get("email_address") or "",
+        _yes_no(row.get("is_government_officer")),
+        _join_address(row),
+        _coordinate(row),
+        row.get("occupation_name") or "",
+        row.get("family_occupation_name") or "",
+        _fmt_money(row.get("monthly_income")),
+        row.get("income_source_names") or "",
+        row.get("housing_shelter") or row.get("housing_type_name") or "",
+        _fmt_money(row.get("housing_types_rent")),
+        row.get("dependency_names") or "",
+        row.get("household_members_count") or "",
+        row.get("household_member_details") or "",
+        welfare_status,
+        row.get("received_count") or "",
+        _fmt_money(row.get("total_received_amount")),
+        row.get("received_welfare_type_names") or "",
+        distress,
+        row.get("request_type_names") or "",
+        "",
+        row.get("request_in_kind_text") or "",
+        row.get("request_other_text") or "",
+        row.get("diagnosis_text") or row.get("regulation_comment") or "",
+        _fmt_money(row.get("approved_money_amount")),
+        row.get("regulation_name") or "",
+        row.get("type_money_name") or row.get("type_money_category_name") or "",
+        row.get("payment_method_name") or "",
+        row.get("payee_name") or full_name,
+        row.get("payee_cid") or row.get("cid") or "",
+        mobile,
+        row.get("payment_bank_name") or "",
+        row.get("account_number") or "",
+        row.get("account_name") or "",
+        row.get("bank_branch") or "",
+        row.get("social_worker_name") or row.get("sw_user_sdshv") or row.get("sw_explorer_sdshv") or "",
+        row.get("social_worker_position") or "",
+        "",
+    ]
+
+
+def _make_provincial_workbook(
+    rows: list[dict],
+    province_ids: list[int] | None,
+    province_names: list[str] | None = None,
+):
+    import xlsxwriter
+
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    worksheet = workbook.add_worksheet()
+    merge_format = workbook.add_format(
+        {
+            "bold": 1,
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter",
+            "font_name": "TH SarabunPSK",
+            "font_size": 18,
+        }
+    )
+    text_cell_format = workbook.add_format(
+        {
+            "border": 1,
+            "valign": "vcenter",
+            "num_format": "@",
+            "font_name": "TH SarabunPSK",
+            "font_size": 16,
+        }
+    )
+
+    worksheet.merge_range(
+        "A1:BB1",
+        _provincial_export_title(rows, province_ids, province_names),
+        merge_format,
+    )
+    for merged_range, label in PROVINCIAL_EXPORT_GROUPS:
+        worksheet.merge_range(merged_range, label, merge_format)
+    for col_idx, label in enumerate(PROVINCIAL_EXPORT_HEADERS):
+        if col_idx >= 4:
+            worksheet.write(2, col_idx, label, merge_format)
+
+    for row_idx, row in enumerate(rows, start=3):
+        values = _provincial_row_values(row_idx - 2, row)
+        for col_idx, value in enumerate(values):
+            worksheet.write_string(row_idx, col_idx, "" if value is None else str(value), text_cell_format)
+
+    worksheet.autofit()
+    worksheet.set_column("A:A", 6)
+    workbook.close()
+    output.seek(0)
+    return output
+
+
+def _workbook_response(wb, *, safe_filename: str, utf8_filename: str) -> StreamingResponse:
+    from urllib.parse import quote
+
+    if isinstance(wb, io.BytesIO):
+        buf = wb
+    else:
+        buf = io.BytesIO()
+        wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{quote(utf8_filename)}'
+            )
+        },
+    )
+
+
 @router.get("/national/overview", response_model=DashboardNationalOverviewRead)
 async def get_national_overview(
     province_id: list[int] | None = Query(
@@ -414,6 +786,131 @@ async def export_provinces(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{safe}"; filename*=UTF-8\'\'{utf8}'},
+    )
+
+
+@router.get("/cases")
+async def get_dashboard_cases(
+    province_id: list[int] | None = Query(None),
+    district_id: int | None = Query(None, ge=1),
+    current_status_id: list[int] | None = Query(None),
+    type_money_id: list[int] | None = Query(None),
+    search: str | None = Query(None, max_length=100),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """รายการเคสรายบุคคลระดับประเทศ จังหวัด หรืออำเภอสำหรับ Modal แผนที่."""
+    province_ids = _clean_ids(province_id)
+    for selected_province_id in province_ids or []:
+        await _require_province(session, selected_province_id)
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from ต้องไม่มากกว่า date_to")
+    result = await fetch_dashboard_case_list(
+        session,
+        province_ids=province_ids,
+        district_id=district_id,
+        current_status_ids=_clean_ids(current_status_id),
+        type_money_ids=_clean_ids(type_money_id),
+        search=(search or "").strip() or None,
+        date_from=date_from,
+        date_to=date_to,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+    )
+    total_items = result["total_items"]
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": max(1, (total_items + page_size - 1) // page_size),
+        "items": result["items"],
+    }
+
+
+@router.get("/status/export")
+async def export_status(
+    level: Literal["provinces", "districts"] = Query(
+        ..., description="provinces = Excel รายคำร้องระดับประเทศ, districts = Excel รายคำร้องในจังหวัด"
+    ),
+    report_type: Literal["situation", "case"] = Query(
+        "case", description="situation = รูปแบบ 10 คอลัมน์, case = รูปแบบรายงานเคส 54 คอลัมน์"
+    ),
+    province_id: list[int] | None = Query(
+        None, description="provinces ส่งซ้ำได้หลายจังหวัด; districts ต้องส่ง 1 จังหวัด"
+    ),
+    district_id: list[int] | None = Query(None),
+    sub_district_id: list[int] | None = Query(None),
+    current_status_id: list[int] | None = Query(None),
+    type_money_id: list[int] | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Excel จาก dashboard — กรุงเทพฯ ใช้ layout 10 คอลัมน์, จังหวัดอื่นใช้ layout 76 จังหวัด."""
+    province_ids: list[int] | None
+    if level == "provinces":
+        province_ids = await _validate_province_ids(session, province_id)
+    else:
+        ids = _clean_ids(province_id)
+        if not ids or len(ids) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="districts_export_requires_one_province_id",
+            )
+        province_ids = await _validate_province_ids(session, ids)
+
+    current_status_ids = _clean_ids(current_status_id)
+    type_money_ids = _clean_ids(type_money_id)
+    district_ids = _clean_ids(district_id)
+    sub_district_ids = _clean_ids(sub_district_id)
+    if report_type == "situation":
+        rows = await fetch_dashboard_situation_export_rows(
+            session,
+            province_ids=province_ids,
+            district_ids=district_ids,
+            sub_district_ids=sub_district_ids,
+            current_status_ids=current_status_ids,
+            type_money_ids=type_money_ids,
+        )
+    else:
+        rows = await fetch_dashboard_case_export_rows(
+            session,
+            province_ids=province_ids,
+            district_ids=district_ids,
+            sub_district_ids=sub_district_ids,
+            current_status_ids=current_status_ids,
+            type_money_ids=type_money_ids,
+            exclude_province_ids=None,
+        )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="dashboard_export_no_data",
+        )
+    if report_type == "situation":
+        wb = _make_bangkok_workbook(rows)
+        return _workbook_response(
+            wb,
+            safe_filename="dashboard-situation-report.xlsx",
+            utf8_filename="dashboard-รายงานสถานการณ์.xlsx",
+        )
+
+    province_names = None
+    if province_ids:
+        province_names = []
+        for province_id in province_ids:
+            province = await fetch_province(session, province_id)
+            if province and province.get("name"):
+                province_names.append(province["name"])
+
+    wb = _make_provincial_workbook(rows, province_ids, province_names)
+    safe_scope = "selected-area" if province_ids else "all-provinces"
+    thai_scope = "พื้นที่ที่เลือก" if province_ids else "ทุกจังหวัด"
+    return _workbook_response(
+        wb,
+        safe_filename=f"dashboard-{safe_scope}-cases.xlsx",
+        utf8_filename=f"dashboard-{thai_scope}-รายคำร้อง.xlsx",
     )
 
 
