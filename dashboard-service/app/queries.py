@@ -545,6 +545,7 @@ async def fetch_dashboard_situation_export_rows(
     session: AsyncSession,
     *,
     province_ids: list[int] | None,
+    applicant_ids: list[int] | None,
     district_ids: list[int] | None,
     sub_district_ids: list[int] | None,
     current_status_ids: list[int] | None,
@@ -617,6 +618,10 @@ async def fetch_dashboard_situation_export_rows(
                 OR d.province_id = ANY(CAST(:province_ids AS int[]))
             )
               AND (
+                CAST(:applicant_ids AS int[]) IS NULL
+                OR ap.id = ANY(CAST(:applicant_ids AS int[]))
+              )
+              AND (
                 CAST(:district_ids AS int[]) IS NULL
                 OR d.id = ANY(CAST(:district_ids AS int[]))
               )
@@ -686,6 +691,7 @@ async def fetch_dashboard_situation_export_rows(
             sql,
             {
                 "province_ids": province_ids,
+                "applicant_ids": applicant_ids,
                 "district_ids": district_ids,
                 "sub_district_ids": sub_district_ids,
                 "current_status_ids": current_status_ids,

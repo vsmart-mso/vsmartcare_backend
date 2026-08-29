@@ -841,6 +841,9 @@ async def export_status(
     province_id: list[int] | None = Query(
         None, description="provinces ส่งซ้ำได้หลายจังหวัด; districts ต้องส่ง 1 จังหวัด"
     ),
+    applicant_id: list[int] | None = Query(
+        None, description="กรองเฉพาะ applicant ที่เลือกจากหน้าเอกสารประชุม"
+    ),
     district_id: list[int] | None = Query(None),
     sub_district_id: list[int] | None = Query(None),
     current_status_id: list[int] | None = Query(None),
@@ -862,12 +865,14 @@ async def export_status(
 
     current_status_ids = _clean_ids(current_status_id)
     type_money_ids = _clean_ids(type_money_id)
+    applicant_ids = _clean_ids(applicant_id)
     district_ids = _clean_ids(district_id)
     sub_district_ids = _clean_ids(sub_district_id)
     if report_type == "situation":
         rows = await fetch_dashboard_situation_export_rows(
             session,
             province_ids=province_ids,
+            applicant_ids=applicant_ids,
             district_ids=district_ids,
             sub_district_ids=sub_district_ids,
             current_status_ids=current_status_ids,
