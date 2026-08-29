@@ -18,7 +18,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-bff
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -53,7 +53,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-case-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -99,7 +99,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-notification-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -134,7 +134,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-ocr-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -170,7 +170,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-thaid-auth-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -205,7 +205,7 @@ spec:
         - name: staggingbackcred
       containers:
         - name: vcare-dashboard-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000

@@ -41,7 +41,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-bff
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -78,7 +78,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-case-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -126,7 +126,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-notification-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -163,7 +163,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-ocr-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -201,7 +201,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-thaid-auth-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -238,7 +238,7 @@ spec:
         - name: betabackcred
       containers:
         - name: vcare-dashboard-service
-          image: staging-registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-beta-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000

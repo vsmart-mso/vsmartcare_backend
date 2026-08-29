@@ -20,27 +20,16 @@ pipeline {
     }
 
     environment {
-        // REGISTRY/BASE_IMAGE — using staging-registry-vs (root/vcare-backend) for
-        // np too, on purpose, for now. np cannot actually pull from it until the
-        // 2026-08-31 cutover (dev-np-quickstart.md item 38: the registry's
-        // token-issuer realm still points at the OLD gitlab-vs host, so the JWT
-        // exchange 401s from inside np). Until then, Push Images succeeds but
-        // every np rollout below sits at ImagePullBackOff — expected, not a bug
-        // here.
-        //
-        // WHAT TO CHANGE, AND WHEN: nothing, once the cutover lands —
-        // REGISTRY/BASE_IMAGE already point at the correct long-term target, no
-        // edit needed here. If you need np working BEFORE 2026-08-31, there is
-        // no registry value that fixes it: our CI never pushes to the vendor
-        // path np can currently pull from (registry-vs.m-society.go.th/kitsune-cop/*),
-        // so pointing REGISTRY back there would just 404 on a nonexistent tag
-        // instead of ImagePullBackOff. That path is only useful to confirm the
-        // deploy mechanism itself (see ci/Jenkinsfile.np-smoke in the ops repo),
-        // not to test a real build.
-        REGISTRY   = "staging-registry-vs.m-society.go.th"
+        // REGISTRY/BASE_IMAGE — "registry-vs" (no "staging-" prefix). The
+        // 2026-08-31 cutover happened: that name is now the permanent one for
+        // the new estate (dev-np-quickstart.md item 38 is resolved — the
+        // registry's token-issuer realm now matches, so np can pull from here
+        // directly). "staging-registry-vs" was the pre-cutover name; don't
+        // revert to it.
+        REGISTRY   = "registry-vs.m-society.go.th"
         PROJECT    = "root"
         REPO       = "vcare-backend"
-        BASE_IMAGE = "staging-registry-vs.m-society.go.th/root/vcare-backend"
+        BASE_IMAGE = "registry-vs.m-society.go.th/root/vcare-backend"
         IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
 
         // beta pushes every image under a "-beta" suffixed tag so it never
