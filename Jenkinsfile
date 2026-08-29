@@ -782,14 +782,14 @@ pipeline {
         success {
             echo "======================================"
             echo " Deploy Success"
-            echo " Tag : ${IMAGE_TAG}"
+            echo " Tag : ${env.IMAGE_TAG}"
             echo "======================================"
         }
 
         failure {
             echo "======================================"
             echo " Deploy Failed"
-            echo " Tag : ${IMAGE_TAG}"
+            echo " Tag : ${env.IMAGE_TAG}"
             echo "======================================"
         }
     }
