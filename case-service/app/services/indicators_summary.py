@@ -19,6 +19,7 @@ from ..constants.current_status import (
     CURRENT_STATUS_WITHDRAWING,
 )
 from ..constants.staff_digest import CURRENT_STATUS_WITHDRAWING_IDS
+from ..constants.type_send import TYPE_SEND_MINISTRY
 from ..models.address import Address
 from ..models.applicant import Applicant
 from ..models.applicant_submission_audit import ApplicantSubmissionAudit
@@ -48,7 +49,8 @@ from ..models.lookup import (
     TypeMoney,
     TypeMoneyCategory,
 )
-from ..models.payment import ApproveCase
+from ..models.mso_send import SendData
+from ..models.payment import ApproveCase, WelfarePayment
 from ..models.person import Person
 from ..models.status_log import WelfareRequestStatus
 from ..models.welfare import WelfareHistory, WelfareHistoryDetail, WelfareRequestType
@@ -73,11 +75,17 @@ from ..schemas.indicators import (
     IndicatorsProvinceOverviewResponse,
 )
 from ..utils.budget_year import thai_fiscal_year_bounds_from_be
-from .dwf_scope import SOR_KOR_TYPE_MONEY_ID, dwf_groups
+from ..utils.datetime_th import format_thai_date
+from .dwf_scope import SOR_KOR_TYPE_MONEY_ID, division_name_for_id, dwf_groups
 
 INDICATOR_TYPE_MONEY_CATEGORY_IDS: tuple[int, ...] = (1, 2, 3, 4, 5, 6)
 # ดย. / DCY — เงินสงเคราะห์เด็กในครอบครัวยากจน
 DCY_TYPE_MONEY_ID = 2
+PHYSICAL_CONDITION_TH: dict[str, str] = {
+    "normal": "ปกติ",
+    "disabled": "พิการ",
+    "chronic_illness": "เจ็บป่วยเรื้อรัง",
+}
 EXPORT_CASE_CHANNEL = "พม.CARE"
 EXPORT_AGG_SEP = "; "
 
@@ -391,6 +399,62 @@ def _to_decimal(value: object) -> Decimal:
     return Decimal(str(value))
 
 
+def _parse_export_money(value: object | None) -> Decimal:
+    """แปลงจำนวนเงินในแถว export (Decimal หรือข้อความมี comma) เป็น Decimal สำหรับบวกยอด."""
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    raw = str(value).replace(",", "").strip()
+    if not raw:
+        return Decimal("0")
+    return Decimal(raw)
+
+
+def _format_money(value: object | None) -> str | None:
+    """จำนวนเงินสำหรับ Excel เช่น 5,000.00 — null ถ้าว่าง."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    amount = _parse_export_money(value)
+    return f"{amount:,.2f}"
+
+
+def _physical_condition_th(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return PHYSICAL_CONDITION_TH.get(raw, raw)
+
+
+def _self_care_th(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("ได้", "ไม่ได้"):
+            return value.strip()
+        if lowered in ("true", "1", "yes"):
+            return "ได้"
+        if lowered in ("false", "0", "no"):
+            return "ไม่ได้"
+    return "ได้" if value else "ไม่ได้"
+
+
+def _household_member_cid(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    return raw or None
+
+
+def _blank_to_none(value: object) -> str | None:
+    return _household_member_cid(value)
+
+
 def _fiscal_naive_bounds(budget_year: int) -> tuple:
     fiscal_start, fiscal_end = thai_fiscal_year_bounds_from_be(budget_year)
     # DB columns (esp. welfare_request_status.created_at) are timestamp without time zone;
@@ -475,7 +539,6 @@ def _export_economic_subquery():
             EconomicInfo.occupation.label("occupation"),
             EconomicInfo.monthly_income.label("monthly_income"),
             EconomicInfo.family_occupation.label("family_occupation"),
-            EconomicInfo.household_members.label("household_member_count"),
             EconomicInfo.housing_shelter.label("housing_shelter"),
             EconomicInfo.housing_types_rent.label("housing_rent"),
             EconomicInfo.housing_types_id.label("housing_types_id"),
@@ -510,10 +573,46 @@ def _latest_diagnosis_subquery():
             CaseDiagnosis.owner_name.label("owner_name"),
             CaseDiagnosis.owner_position.label("owner_position"),
             CaseDiagnosis.owner_sdshv.label("owner_sdshv"),
+            CaseDiagnosis.owner_organization.label("owner_organization"),
             func.row_number()
             .over(
                 partition_by=CaseDiagnosis.applicant_id,
                 order_by=[CaseDiagnosis.id.desc()],
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
+
+def _latest_forward_send_subquery():
+    """แถว send_data ส่งต่อกระทรวงล่าสุดต่อ applicant → send_by_sdshv."""
+    return (
+        select(
+            SendData.applicant_id.label("applicant_id"),
+            SendData.send_by_sdshv.label("send_by_sdshv"),
+            func.row_number()
+            .over(
+                partition_by=SendData.applicant_id,
+                order_by=[SendData.id.desc()],
+            )
+            .label("rn"),
+        )
+        .where(SendData.type_send_id == TYPE_SEND_MINISTRY)
+        .subquery()
+    )
+
+
+def _latest_disburse_payment_subquery():
+    """แถว welfare_payment ล่าสุดต่อ applicant → user_sdshv ผู้เบิกจ่าย."""
+    return (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            WelfarePayment.user_sdshv.label("user_sdshv"),
+            func.row_number()
+            .over(
+                partition_by=WelfarePayment.applicant_id,
+                order_by=[WelfarePayment.id.desc()],
             )
             .label("rn"),
         )
@@ -598,6 +697,8 @@ def _export_household_members_agg_subquery():
         HouseholdMember.first_name,
         "last_name",
         HouseholdMember.last_name,
+        "cid",
+        HouseholdMember.national_id,
         "date_of_birth",
         HouseholdMember.date_of_birth,
         "age",
@@ -674,15 +775,16 @@ def _map_household_members(raw: object) -> list[IndicatorExportHouseholdMemberIt
                 prefix_name=entry.get("prefix_name"),
                 first_name=entry["first_name"],
                 last_name=entry["last_name"],
-                date_of_birth=entry.get("date_of_birth"),
+                cid=_household_member_cid(entry.get("cid")),
+                date_of_birth=format_thai_date(entry.get("date_of_birth")),
                 age=int(age_raw) if age_raw is not None else None,
                 relation_name=entry.get("relation_name"),
                 occupation=entry.get("occupation"),
-                monthly_income=(
-                    _to_decimal(monthly_raw) if monthly_raw is not None else None
+                monthly_income=_format_money(monthly_raw),
+                physical_condition=_physical_condition_th(
+                    entry.get("physical_condition")
                 ),
-                physical_condition=entry.get("physical_condition"),
-                self_care=entry.get("self_care"),
+                self_care=_self_care_th(entry.get("self_care")),
             )
         )
     return items
@@ -820,7 +922,7 @@ def _build_export_totals(items: list[IndicatorExportCaseItem]) -> IndicatorTotal
     return IndicatorTotals(
         case_count=len(items),
         total_money_amount=sum(
-            (i.money_amount if i.money_amount is not None else Decimal("0") for i in items),
+            (_parse_export_money(i.money_amount) for i in items),
             start=Decimal("0"),
         ),
     )
@@ -1244,6 +1346,8 @@ async def fetch_indicators_export(
     address_detail_sq = _export_address_detail_subquery()
     economic_sq = _export_economic_subquery()
     diagnosis_sq = _latest_diagnosis_subquery()
+    forward_sq = _latest_forward_send_subquery()
+    disburse_sq = _latest_disburse_payment_subquery()
     income_agg_sq = _export_income_sources_agg_subquery()
     dependency_agg_sq = _export_dependency_agg_subquery()
     household_agg_sq = _export_household_members_agg_subquery()
@@ -1252,6 +1356,7 @@ async def fetch_indicators_export(
 
     payee_person = aliased(Person, name="payee_person")
     agent_person = aliased(Person, name="agent_person")
+    person_prefix = aliased(PrefixType, name="person_prefix")
     payment_bank = aliased(BankName, name="payment_bank")
     applicant_bank = aliased(BankName, name="applicant_bank")
 
@@ -1284,6 +1389,7 @@ async def fetch_indicators_export(
         Applicant.is_emergency.label("is_emergency"),
         Applicant.is_existing_case.label("is_existing_case"),
         ApplicantSubmissionAudit.existing_case_source.label("existing_case_source"),
+        person_prefix.name.label("prefix_name"),
         Person.first_name.label("first_name"),
         Person.last_name.label("last_name"),
         Person.cid.label("cid"),
@@ -1310,7 +1416,6 @@ async def fetch_indicators_export(
         economic_sq.c.occupation.label("occupation"),
         economic_sq.c.monthly_income.label("monthly_income"),
         economic_sq.c.family_occupation.label("family_occupation"),
-        economic_sq.c.household_member_count.label("household_member_count"),
         HousingType.name.label("housing_type_name"),
         economic_sq.c.housing_shelter.label("housing_shelter"),
         economic_sq.c.housing_rent.label("housing_rent"),
@@ -1355,6 +1460,11 @@ async def fetch_indicators_export(
         diagnosis_sq.c.owner_name.label("sw_name"),
         diagnosis_sq.c.owner_position.label("sw_position"),
         sw_license.label("sw_license_sdshv"),
+        diagnosis_sq.c.owner_sdshv.label("aided_org_sdshv"),
+        diagnosis_sq.c.owner_organization.label("aided_org_name"),
+        forward_sq.c.send_by_sdshv.label("forward_sdshv"),
+        disburse_sq.c.user_sdshv.label("disburse_sdshv"),
+        CaseHandling.responsible_division_id.label("responsible_division_id"),
     )
     stmt = _apply_eligible_filters(
         stmt,
@@ -1365,6 +1475,10 @@ async def fetch_indicators_export(
     )
     stmt = (
         stmt.join(Person, Person.id == Applicant.persons_id)
+        .outerjoin(
+            person_prefix,
+            person_prefix.id == Person.prefix_id,
+        )
         .outerjoin(
             RequesterRelationType,
             RequesterRelationType.id == Applicant.requester_relation_id,
@@ -1449,6 +1563,20 @@ async def fetch_indicators_export(
             ),
         )
         .outerjoin(
+            forward_sq,
+            and_(
+                forward_sq.c.applicant_id == Applicant.id,
+                forward_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            disburse_sq,
+            and_(
+                disburse_sq.c.applicant_id == Applicant.id,
+                disburse_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
             income_agg_sq,
             income_agg_sq.c.applicant_id == Applicant.id,
         )
@@ -1502,20 +1630,10 @@ async def fetch_indicators_export(
             address_province_id,
             str(address_province_id),
         )
-        money_amount = (
-            _to_decimal(row.money_amount) if row.money_amount is not None else None
-        )
-        monthly_income = (
-            _to_decimal(row.monthly_income) if row.monthly_income is not None else None
-        )
-        housing_rent = (
-            _to_decimal(row.housing_rent) if row.housing_rent is not None else None
-        )
-        total_received_amount = (
-            _to_decimal(row.total_received_amount)
-            if row.total_received_amount is not None
-            else None
-        )
+        money_amount = _format_money(row.money_amount)
+        monthly_income = _format_money(row.monthly_income)
+        housing_rent = _format_money(row.housing_rent)
+        total_received_amount = _format_money(row.total_received_amount)
         payee_full_name, payee_cid, payee_mobile = _resolve_export_payee(
             receive_mode=row.receive_mode,
             applicant_first_name=row.first_name,
@@ -1529,20 +1647,22 @@ async def fetch_indicators_export(
             agent_last_name=row.agent_last_name,
             agent_cid=row.agent_cid,
         )
+        household_members = _map_household_members(row.household_members)
         items.append(
             IndicatorExportCaseItem(
                 applicant_id=int(row.applicant_id),
                 case_channel=EXPORT_CASE_CHANNEL,
                 case_number=row.case_number,
-                notified_at=row.notified_at,
+                notified_at=format_thai_date(row.notified_at),
                 is_emergency=row.is_emergency,
                 is_existing_case=row.is_existing_case,
                 existing_case_source=row.existing_case_source,
+                prefix_name=row.prefix_name,
                 first_name=row.first_name,
                 last_name=row.last_name,
                 cid=row.cid,
                 gender=row.gender,
-                birth_date=row.birth_date,
+                birth_date=format_thai_date(row.birth_date) or "",
                 age=row.age,
                 mobile_phone=row.mobile_phone,
                 home_phone=row.home_phone,
@@ -1578,13 +1698,13 @@ async def fetch_indicators_export(
                 occupation=row.occupation,
                 monthly_income=monthly_income,
                 family_occupation=row.family_occupation,
-                household_member_count=row.household_member_count,
+                household_member_count=len(household_members),
                 housing_type_name=row.housing_type_name,
                 housing_shelter=row.housing_shelter,
                 housing_rent=housing_rent,
                 income_source_names=row.income_source_names,
                 dependency_summary=row.dependency_summary,
-                household_members=_map_household_members(row.household_members),
+                household_members=household_members,
                 has_received_welfare=row.has_received_welfare,
                 received_count=row.received_count,
                 total_received_amount=total_received_amount,
@@ -1618,6 +1738,18 @@ async def fetch_indicators_export(
                 sw_name=row.sw_name,
                 sw_position=row.sw_position,
                 sw_license_sdshv=row.sw_license_sdshv,
+                aided_org_sdshv=_blank_to_none(row.aided_org_sdshv),
+                aided_org_name=_blank_to_none(row.aided_org_name),
+                forward_sdshv=_blank_to_none(row.forward_sdshv),
+                disburse_sdshv=_blank_to_none(row.disburse_sdshv),
+                responsible_division_id=(
+                    int(row.responsible_division_id)
+                    if row.responsible_division_id is not None
+                    else None
+                ),
+                responsible_division_name=division_name_for_id(
+                    row.responsible_division_id
+                ),
             )
         )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -117,7 +117,14 @@ class IndicatorExportHouseholdMemberItem(BaseModel):
     )
     first_name: str
     last_name: str
-    date_of_birth: date | None = None
+    cid: str | None = Field(
+        None,
+        description="เลขบัตรประจำตัวประชาชนจาก household_members.national_id",
+    )
+    date_of_birth: str | None = Field(
+        None,
+        description="วันเกิดข้อความไทย เช่น 5 ก.พ. 2569 (ปี พ.ศ. = ค.ศ. + 543)",
+    )
     age: int | None = Field(
         None,
         description="ปีจาก date_part('year', age(date_of_birth)) — null ถ้าว่าง",
@@ -127,12 +134,18 @@ class IndicatorExportHouseholdMemberItem(BaseModel):
         None,
         description="coalesce(occupation, occupation_types.name)",
     )
-    monthly_income: Decimal | None = None
+    monthly_income: str | None = Field(
+        None,
+        description="รายได้/เดือน รูปแบบ 5,000.00",
+    )
     physical_condition: str | None = Field(
         None,
-        description="normal | disabled | chronic_illness",
+        description="ปกติ | พิการ | เจ็บป่วยเรื้อรัง (จาก normal/disabled/chronic_illness)",
     )
-    self_care: bool | None = None
+    self_care: str | None = Field(
+        None,
+        description="ได้ | ไม่ได้ (จาก self_care true/false)",
+    )
 
 
 class IndicatorExportCaseItem(BaseModel):
@@ -148,9 +161,9 @@ class IndicatorExportCaseItem(BaseModel):
         description="ที่มาคำร้อง — ค่าคงที่",
     )
     case_number: str | None = None
-    notified_at: datetime | None = Field(
+    notified_at: str | None = Field(
         None,
-        description="วันรับแจ้ง = applicants.created_at",
+        description="วันรับแจ้งข้อความไทย เช่น 5 ก.พ. 2569 จาก applicants.created_at (เวลาไทย)",
     )
 
     # --- 2. รายละเอียดคำร้อง ---
@@ -159,11 +172,18 @@ class IndicatorExportCaseItem(BaseModel):
     existing_case_source: str | None = None
 
     # --- 3. ผู้ประสบปัญหา ---
+    prefix_name: str | None = Field(
+        None,
+        description="คำนำหน้าจาก prefix_type.name",
+    )
     first_name: str
     last_name: str
     cid: str
     gender: str | None = None
-    birth_date: date
+    birth_date: str = Field(
+        ...,
+        description="วันเกิดข้อความไทย เช่น 5 ก.พ. 2569 (ปี พ.ศ. = ค.ศ. + 543)",
+    )
     age: int | None = None
     mobile_phone: str | None = None
     home_phone: str | None = None
@@ -191,12 +211,22 @@ class IndicatorExportCaseItem(BaseModel):
 
     # --- 4. เศรษฐกิจ ---
     occupation: str | None = None
-    monthly_income: Decimal | None = None
+    monthly_income: str | None = Field(
+        None,
+        description="รายได้ผู้ประสบปัญหา/เดือน รูปแบบ 5,000.00",
+    )
     family_occupation: str | None = None
-    household_member_count: int | None = None
+    household_member_count: int | None = Field(
+        None,
+        ge=0,
+        description="จำนวนสมาชิกครัวเรือน ไม่รวมผู้ประสบปัญหา (= len(household_members))",
+    )
     housing_type_name: str | None = None
     housing_shelter: str | None = None
-    housing_rent: Decimal | None = None
+    housing_rent: str | None = Field(
+        None,
+        description="ค่าเช่า/เดือน รูปแบบ 5,000.00",
+    )
     income_source_names: str | None = Field(
         None,
         description="string_agg ชื่อแหล่งรายได้ (+ other_details) คั่น '; '",
@@ -219,7 +249,10 @@ class IndicatorExportCaseItem(BaseModel):
     # --- 6. สวัสดิการเคยได้รับ ---
     has_received_welfare: bool | None = None
     received_count: int | None = None
-    total_received_amount: Decimal | None = None
+    total_received_amount: str | None = Field(
+        None,
+        description="รวมสวัสดิการที่เคยได้รับ รูปแบบ 5,000.00",
+    )
     received_welfare_type_names: str | None = None
 
     # --- 7. ปัญหา / ความต้องการ ---
@@ -241,7 +274,10 @@ class IndicatorExportCaseItem(BaseModel):
     regulation_name: str | None = None
     regulation_short_name: str | None = None
     help_kind: str | None = None
-    money_amount: Decimal | None = None
+    money_amount: str | None = Field(
+        None,
+        description="จำนวนเงินที่ช่วยเหลือ รูปแบบ 5,000.00",
+    )
     diagnosis_text: str | None = None
     aided_at: datetime | None = None
 
@@ -263,6 +299,32 @@ class IndicatorExportCaseItem(BaseModel):
     sw_license_sdshv: str | None = Field(
         None,
         description="coalesce(diagnosis.owner_sdshv, case_handling.sw_user_sdshv)",
+    )
+
+    # --- 11. หน่วยงาน (ตัวกรอง พม Smart) ---
+    aided_org_sdshv: str | None = Field(
+        None,
+        description="SDSHV ผู้วินิจฉัยล่าสุด (หน่วยงานที่ช่วยเหลือ)",
+    )
+    aided_org_name: str | None = Field(
+        None,
+        description="ชื่อหน่วยงาน snapshot จาก case_diagnosis.owner_organization",
+    )
+    forward_sdshv: str | None = Field(
+        None,
+        description="SDSHV คนกดส่งต่อกระทรวงล่าสุด (send_data.send_by_sdshv)",
+    )
+    disburse_sdshv: str | None = Field(
+        None,
+        description="SDSHV ผู้เบิกจ่ายล่าสุด (welfare_payment.user_sdshv)",
+    )
+    responsible_division_id: int | None = Field(
+        None,
+        description="หน่วยงานที่รับผิดชอบ จาก case_handling.responsible_division_id",
+    )
+    responsible_division_name: str | None = Field(
+        None,
+        description="ชื่อหน่วยงานรับผิดชอบ จาก DWF division master",
     )
 
 

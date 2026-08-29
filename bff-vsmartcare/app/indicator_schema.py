@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -75,13 +75,14 @@ class IndicatorExportHouseholdMemberItem(BaseModel):
     prefix_name: str | None = None
     first_name: str
     last_name: str
-    date_of_birth: date | None = None
+    cid: str | None = None
+    date_of_birth: str | None = None
     age: int | None = None
     relation_name: str | None = None
     occupation: str | None = None
-    monthly_income: Decimal | None = None
+    monthly_income: str | None = None
     physical_condition: str | None = None
-    self_care: bool | None = None
+    self_care: str | None = None
 
 
 class IndicatorExportCaseItem(BaseModel):
@@ -90,15 +91,16 @@ class IndicatorExportCaseItem(BaseModel):
     applicant_id: int
     case_channel: str = "พม.CARE"
     case_number: str | None = None
-    notified_at: datetime | None = None
+    notified_at: str | None = None
     is_emergency: bool | None = None
     is_existing_case: bool | None = None
     existing_case_source: str | None = None
+    prefix_name: str | None = None
     first_name: str
     last_name: str
     cid: str
     gender: str | None = None
-    birth_date: date
+    birth_date: str
     age: int | None = None
     mobile_phone: str | None = None
     home_phone: str | None = None
@@ -121,12 +123,12 @@ class IndicatorExportCaseItem(BaseModel):
     longitude: str | None = None
     address_full: str | None = None
     occupation: str | None = None
-    monthly_income: Decimal | None = None
+    monthly_income: str | None = None
     family_occupation: str | None = None
     household_member_count: int | None = None
     housing_type_name: str | None = None
     housing_shelter: str | None = None
-    housing_rent: Decimal | None = None
+    housing_rent: str | None = None
     income_source_names: str | None = None
     dependency_summary: str | None = None
     household_members: list[IndicatorExportHouseholdMemberItem] = Field(
@@ -134,7 +136,7 @@ class IndicatorExportCaseItem(BaseModel):
     )
     has_received_welfare: bool | None = None
     received_count: int | None = None
-    total_received_amount: Decimal | None = None
+    total_received_amount: str | None = None
     received_welfare_type_names: str | None = None
     family_distress: str | None = None
     problem_details: str | None = None
@@ -149,7 +151,7 @@ class IndicatorExportCaseItem(BaseModel):
     regulation_name: str | None = None
     regulation_short_name: str | None = None
     help_kind: str | None = None
-    money_amount: Decimal | None = None
+    money_amount: str | None = None
     diagnosis_text: str | None = None
     aided_at: datetime | None = None
     payment_method_name: str | None = None
@@ -165,6 +167,12 @@ class IndicatorExportCaseItem(BaseModel):
     sw_name: str | None = None
     sw_position: str | None = None
     sw_license_sdshv: str | None = None
+    aided_org_sdshv: str | None = None
+    aided_org_name: str | None = None
+    forward_sdshv: str | None = None
+    disburse_sdshv: str | None = None
+    responsible_division_id: int | None = None
+    responsible_division_name: str | None = None
 
 
 class IndicatorsByProvinceResponse(BaseModel):

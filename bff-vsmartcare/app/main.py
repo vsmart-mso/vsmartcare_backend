@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .case_for_staff_schema import (
     ArticleCreateBody,
@@ -271,6 +271,56 @@ def _http_error_detail_from_response(r: httpx.Response) -> Any:
         except json.JSONDecodeError:
             pass
     return d
+
+
+_SERVER_UA_MARKERS = (
+    "python-requests",
+    "python-httpx",
+    "httpx/",
+    "aiohttp/",
+    "curl/",
+    "wget/",
+    "go-http-client",
+    "okhttp",
+)
+
+
+def _is_server_user_agent(ua: Optional[str]) -> bool:
+    if not ua or not ua.strip():
+        return True
+    lower = ua.lower()
+    return any(marker in lower for marker in _SERVER_UA_MARKERS)
+
+
+def _client_user_agent(request: Request, body_ua: Optional[str]) -> Optional[str]:
+    """UA จากเบราว์เซอร์เท่านั้น — ไม่ใช้ header User-Agent ของ hop ฝั่ง server."""
+    candidates = (
+        body_ua,
+        request.headers.get("x-client-user-agent"),
+        request.headers.get("x-original-user-agent"),
+    )
+    for value in candidates:
+        if value and not _is_server_user_agent(value):
+            return value.strip()
+    return None
+
+
+def _client_request_url(request: Request, body_url: Optional[str]) -> Optional[str]:
+    """URL หน้าจอ — ทิ้ง URL ของ API mso-forward."""
+    candidates = (
+        body_url,
+        request.headers.get("x-client-request-url"),
+        request.headers.get("referer"),
+    )
+    for value in candidates:
+        if not value or not value.strip():
+            continue
+        cleaned = value.strip()
+        path = cleaned.split("?", 1)[0].rstrip("/").lower()
+        if path.endswith("/mso-forward") or path.endswith("/send-data"):
+            continue
+        return cleaned
+    return None
 
 
 def _json_safe_payload(payload: Any) -> Any:
@@ -659,6 +709,22 @@ class WelfareEditRequestCreateBody(BaseModel):
 
 
 class MsoForwardCreateBody(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "send_channel": "ministry",
+                "send_by_sdshv": "user-12345",
+                "json_case": {"case_number": "case-202605-000001"},
+                "response_code": "200",
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "request_url": "https://vsmart.example/cases/512",
+            }
+        }
+    )
+
     send_channel: Literal["ministry", "logbook"] = Field(
         ...,
         description="`ministry` = ส่งต่อเข้าหระทรวง, `logbook` = ส่งต่อ MSO logbook",
@@ -666,7 +732,29 @@ class MsoForwardCreateBody(BaseModel):
     send_by_sdshv: Optional[str] = Field(None, max_length=255)
     json_case: Optional[dict[str, Any]] = None
     response_code: Optional[str] = Field(None, max_length=255)
-    response_text: Optional[str] = None
+    response_text: Optional[str] = Field(
+        None,
+        description='ไม่ต้องส่ง — ระบบเขียน `{status: "OK", id, applicant_id}` เองหลังได้ send_data.id',
+    )
+    ip_address: Optional[str] = Field(
+        None,
+        max_length=45,
+        description="ไม่ต้องส่งจาก frontend — BFF ใส่จาก X-Forwarded-For",
+    )
+    user_agent: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="navigator.userAgent จากเบราว์เซอร์ — BFF ไม่ทับค่านี้",
+        examples=[
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ],
+    )
+    request_url: Optional[str] = Field(
+        None,
+        max_length=2048,
+        description="URL หน้าจอ (window.location.href) ไม่ใช่ URL ของ API",
+        examples=["https://vsmart.example/cases/512"],
+    )
 
 
 class MoreMsoUpsertBody(BaseModel):
@@ -1830,16 +1918,110 @@ async def get_mso_forward_status_for_staff(applicant_id: int) -> Any:
     summary="บันทึกการส่งต่อ (กระทรวง หรือ MSO logbook)",
     description=(
         "ส่งต่อ `POST …/v1/case_for_staff/applicant/{applicant_id}/mso-forward` — "
-        "body ใช้ `send_channel`: `ministry` | `logbook`"
+        "body ใช้ `send_channel`: `ministry` | `logbook` "
+        "และส่ง `user_agent` (navigator.userAgent) + `request_url` (window.location.href) จากเบราว์เซอร์"
     ),
 )
 async def create_mso_forward_for_staff(
+    request: Request,
     applicant_id: int,
-    body: MsoForwardCreateBody = Body(...),
+    body: MsoForwardCreateBody = Body(
+        ...,
+        openapi_examples={
+            "from_browser": {
+                "summary": "Frontend ส่ง UA + URL หน้าจอ",
+                "value": {
+                    "send_channel": "ministry",
+                    "send_by_sdshv": "user-12345",
+                    "json_case": {"case_number": "case-202605-000001"},
+                    "response_code": "200",
+                    "user_agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "request_url": "https://vsmart.example/cases/512",
+                },
+            }
+        },
+    ),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
     payload = body.model_dump(mode="json")
+    # IP รู้ได้จาก request จริง — UA/URL ต้องมาจากเบราว์เซอร์ ห้ามใช้ User-Agent ของ hop (python-requests)
+    payload["ip_address"] = forwarded or (request.client.host if request.client else None)
+    payload["user_agent"] = _client_user_agent(request, body.user_agent)
+    payload["request_url"] = _client_request_url(request, body.request_url)
     return await _post(f"{base}/v1/case_for_staff/applicant/{applicant_id}/mso-forward", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/mso-forward-logs",
+    tags=["case_for_staff"],
+    summary="รายการ log การส่งต่อ MSO แบบตาราง",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff/mso-forward-logs` — "
+        "`province_id` ไม่บังคับและส่งซ้ำได้หลายค่า"
+    ),
+)
+async def get_mso_forward_logs_for_staff(
+    province_id: Optional[list[int]] = Query(None, ge=1),
+    case_number: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    send_channel: Optional[Literal["ministry", "logbook"]] = Query(None),
+    type_money_id: Optional[int] = Query(None, ge=1),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    response_code: Optional[str] = Query(None),
+    ip_address: Optional[str] = Query(None),
+    user_agent: Optional[str] = Query(None),
+    device: Optional[str] = Query(None),
+    browser: Optional[str] = Query(None),
+    browser_version: Optional[str] = Query(None),
+    os: Optional[str] = Query(None),
+    os_version: Optional[str] = Query(None),
+    request_url: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("skip", skip), ("limit", limit)]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    optional: dict[str, Any] = {
+        "case_number": case_number,
+        "cid": cid,
+        "send_channel": send_channel,
+        "type_money_id": type_money_id,
+        "date_from": date_from.isoformat() if date_from is not None else None,
+        "date_to": date_to.isoformat() if date_to is not None else None,
+        "response_code": response_code,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "device": device,
+        "browser": browser,
+        "browser_version": browser_version,
+        "os": os,
+        "os_version": os_version,
+        "request_url": request_url,
+    }
+    for key, value in optional.items():
+        if value is not None:
+            pairs.append((key, value))
+    query_string = urlencode(pairs)
+    return await _get(f"{base}/v1/case_for_staff/mso-forward-logs?{query_string}")
+
+
+@router.get(
+    "/v1/case_for_staff/mso-forward-logs/{send_data_id}",
+    tags=["case_for_staff"],
+    summary="ดึง json_case ของ log การส่งต่อ MSO ตาม send_data.id",
+    description="ส่งต่อ `GET …/v1/case_for_staff/mso-forward-logs/{send_data_id}`",
+)
+async def get_mso_forward_json_log_for_staff(send_data_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/mso-forward-logs/{send_data_id}")
 
 
 @router.get(

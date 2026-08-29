@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -192,6 +193,8 @@ from ...schemas.case_for_staff import (
     PorKor1ReturnEditSection,
     ReturnEditCommentItem,
     MsoForwardCreate,
+    MsoForwardJsonLogRead,
+    MsoForwardLogListResponse,
     MsoForwardRead,
     MsoForwardStatusRead,
     SendDataCreate,
@@ -199,7 +202,8 @@ from ...schemas.case_for_staff import (
     TypeSendRead,
 )
 from ...constants.type_send import TYPE_SEND_ID_TO_CHANNEL
-from ...services.mso_forward import fetch_mso_forward_status, record_mso_forward
+from ...services.mso_forward import fetch_mso_forward_status, record_mso_forward, record_send_data
+from ...services.mso_forward_logs import get_mso_forward_json_log, list_mso_forward_logs
 from ...schemas.case_welfare import WelfareCaseRead
 from ...schemas.dependency import DependencyLoadRead
 from ...schemas.economic import EconomicInfoRead, HouseholdMemberRead
@@ -221,7 +225,7 @@ from ...schemas.welfare import (
 )
 
 
-from ...core.staff_security import StaffClaims, require_staff
+from ...core.staff_security import StaffClaims, assert_province_scope, require_staff
 
 router = APIRouter(
     prefix="/v1/case_for_staff",
@@ -3451,14 +3455,18 @@ async def create_send_data(
     body: SendDataCreate = Body(...),
     session: AsyncSession = Depends(get_session),
 ) -> SendDataRead:
-    applicant = await session.get(Applicant, applicant_id)
-    if applicant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="applicant_not_found")
-    type_send = await session.get(TypeSend, body.type_send_id)
-    if type_send is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="type_send_not_found")
-    row = SendData(applicant_id=applicant_id, **body.model_dump())
-    session.add(row)
+    row = await record_send_data(
+        session,
+        applicant_id=applicant_id,
+        type_send_id=body.type_send_id,
+        send_by_sdshv=body.send_by_sdshv,
+        json_case=body.json_case,
+        response_code=body.response_code,
+        response_text=body.response_text,
+        ip_address=body.ip_address,
+        user_agent=body.user_agent,
+        request_url=body.request_url,
+    )
     await session.commit()
     await session.refresh(row)
     return SendDataRead.model_validate(row)
@@ -3480,6 +3488,23 @@ def _mso_forward_read_from_row(row: SendData) -> MsoForwardRead:
         json_case=row.json_case,
         response_code=row.response_code,
         response_text=row.response_text,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        ip_address=row.ip_address,
+        user_agent=row.user_agent,
+        request_url=row.request_url,
+        device=row.device,
+        browser=row.browser,
+        browser_version=row.browser_version,
+        os=row.os,
+        os_version=row.os_version,
+        type_money_category_id=row.type_money_category_id,
+        type_money_name=row.type_money_name,
+        type_money_acronym=row.type_money_acronym,
+        province_id=row.province_id,
+        province_name=row.province_name,
+        affected_person_name=row.affected_person_name,
+        affected_person_cid=row.affected_person_cid,
     )
 
 
@@ -3504,7 +3529,25 @@ async def get_mso_forward_status(
 )
 async def create_mso_forward(
     applicant_id: int,
-    body: MsoForwardCreate = Body(...),
+    body: MsoForwardCreate = Body(
+        ...,
+        openapi_examples={
+            "from_browser": {
+                "summary": "Frontend ส่ง UA + URL หน้าจอ",
+                "value": {
+                    "send_channel": "ministry",
+                    "send_by_sdshv": "user-12345",
+                    "json_case": {"case_number": "case-202605-000001"},
+                    "response_code": "200",
+                    "user_agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "request_url": "https://vsmart.example/cases/512",
+                },
+            }
+        },
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> MsoForwardRead:
     row = await record_mso_forward(
@@ -3515,6 +3558,9 @@ async def create_mso_forward(
         json_case=body.json_case,
         response_code=body.response_code,
         response_text=body.response_text,
+        ip_address=body.ip_address,
+        user_agent=body.user_agent,
+        request_url=body.request_url,
     )
 
     status_log: WelfareRequestStatus | None = None
@@ -3559,6 +3605,117 @@ async def create_mso_forward(
         )
 
     return _mso_forward_read_from_row(row)
+
+
+def _scoped_mso_log_province_ids(
+    staff: StaffClaims,
+    requested: list[int] | None,
+) -> list[int]:
+    unique = list(dict.fromkeys(requested or []))
+    if staff.is_internal:
+        return unique
+    if not unique:
+        return [staff.province_id]
+    for pid in unique:
+        assert_province_scope(staff, pid)
+    return unique
+
+
+async def _assert_provinces_exist(session: AsyncSession, province_ids: list[int]) -> None:
+    if not province_ids:
+        return
+    found = set(
+        (await session.scalars(select(Province.id).where(Province.id.in_(province_ids)))).all()
+    )
+    if found != set(province_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
+
+
+@router.get(
+    "/mso-forward-logs",
+    response_model=MsoForwardLogListResponse,
+    summary="รายการ log การส่งต่อ MSO แบบตาราง",
+)
+async def get_mso_forward_logs(
+    province_id: list[int] | None = Query(
+        None,
+        ge=1,
+        description="รหัสจังหวัด (ไม่บังคับ, ส่งซ้ำได้หลายค่า)",
+    ),
+    case_number: str | None = Query(None, description="ค้นหาเลข case บางส่วน"),
+    cid: str | None = Query(None, description="เลขบัตรผู้ประสบปัญหา"),
+    send_channel: Literal["ministry", "logbook"] | None = Query(
+        None,
+        description="กรองช่องทางส่งต่อ",
+    ),
+    type_money_id: int | None = Query(None, ge=1, description="กรอง type_money_category.id"),
+    date_from: date | None = Query(None, description="ช่วงวันที่เริ่ม (created_at)"),
+    date_to: date | None = Query(None, description="ช่วงวันที่สิ้นสุด (created_at)"),
+    response_code: str | None = Query(None, description="กรอง response_code"),
+    ip_address: str | None = Query(None, description="กรอง IP (ILIKE บางส่วน, ค่าใน DB)"),
+    user_agent: str | None = Query(None, description="กรอง user_agent (ILIKE บางส่วน, ค่าใน DB)"),
+    device: str | None = Query(None, description="กรอง device (ILIKE บางส่วน, ค่าใน DB)"),
+    browser: str | None = Query(None, description="กรอง browser (ILIKE บางส่วน, ค่าใน DB)"),
+    browser_version: str | None = Query(None, description="กรอง browser_version (ILIKE บางส่วน, ค่าใน DB)"),
+    os: str | None = Query(None, description="กรอง OS (ILIKE บางส่วน, ค่าใน DB)"),
+    os_version: str | None = Query(None, description="กรอง os_version (ILIKE บางส่วน, ค่าใน DB)"),
+    request_url: str | None = Query(None, description="กรอง request_url (ILIKE บางส่วน, ค่าใน DB)"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
+) -> MsoForwardLogListResponse:
+    scoped_province_ids = _scoped_mso_log_province_ids(staff, province_id)
+    await _assert_provinces_exist(session, scoped_province_ids)
+    return await list_mso_forward_logs(
+        session,
+        province_ids=scoped_province_ids,
+        case_number=case_number,
+        cid=cid,
+        send_channel=send_channel,
+        type_money_id=type_money_id,
+        date_from=date_from,
+        date_to=date_to,
+        response_code=response_code,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        device=device,
+        browser=browser,
+        browser_version=browser_version,
+        os=os,
+        os_version=os_version,
+        request_url=request_url,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/mso-forward-logs/{send_data_id}",
+    response_model=MsoForwardJsonLogRead,
+    summary="ดึง json_case ของ log การส่งต่อ MSO ตาม send_data.id",
+)
+async def get_mso_forward_json_log_by_id(
+    send_data_id: int,
+    session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
+) -> MsoForwardJsonLogRead:
+    found = await get_mso_forward_json_log(session, send_data_id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="send_data_not_found")
+    row, effective_province_id = found
+    if not staff.is_internal:
+        if effective_province_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="province_scope_denied",
+            )
+        assert_province_scope(staff, effective_province_id)
+    return MsoForwardJsonLogRead(
+        id=row.id,
+        applicant_id=row.applicant_id,
+        json_case=row.json_case,
+    )
 
 
 @router.post(

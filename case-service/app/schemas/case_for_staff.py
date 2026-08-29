@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
+import json
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from ..utils.datetime_th import to_bangkok
 
@@ -680,6 +681,24 @@ class MoreMsoUpsert(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+MsoResponseText = dict[str, Any] | str | None
+
+
+def decode_mso_response_text(raw: Any) -> MsoResponseText:
+    """Parse ack JSON `{status, id, applicant_id}`; leave legacy plain strings."""
+    if raw is None or isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return raw
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(data, dict) and "status" in data:
+        return data
+    return raw
+
+
 class SendDataRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -690,7 +709,32 @@ class SendDataRead(BaseModel):
     send_by_sdshv: str | None = None
     json_case: dict[str, Any] | None = None
     response_code: str | None = None
-    response_text: str | None = None
+    response_text: MsoResponseText = Field(
+        None,
+        description='หลังบันทึกสำเร็จเป็น `{status: "OK", id, applicant_id}` — แถวเก่ายังเป็น string ได้',
+    )
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    request_url: str | None = None
+    device: str | None = None
+    browser: str | None = None
+    browser_version: str | None = None
+    os: str | None = None
+    os_version: str | None = None
+    type_money_category_id: int | None = None
+    type_money_name: str | None = None
+    type_money_acronym: str | None = None
+    province_id: int | None = None
+    province_name: str | None = None
+    affected_person_name: str | None = None
+    affected_person_cid: str | None = None
+
+    @field_validator("response_text", mode="before")
+    @classmethod
+    def _decode_response_text(cls, value: Any) -> MsoResponseText:
+        return decode_mso_response_text(value)
 
 
 class SendDataCreate(BaseModel):
@@ -698,7 +742,13 @@ class SendDataCreate(BaseModel):
     send_by_sdshv: str | None = Field(None, max_length=255)
     json_case: dict[str, Any] | None = None
     response_code: str | None = Field(None, max_length=255)
-    response_text: str | None = None
+    response_text: str | None = Field(
+        None,
+        description="ไม่ต้องส่ง — ระบบเขียน `{status, id, applicant_id}` เองหลังได้ id",
+    )
+    ip_address: str | None = Field(None, max_length=45)
+    user_agent: str | None = Field(None, max_length=500)
+    request_url: str | None = Field(None, max_length=2048)
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +761,22 @@ MsoForwardChannelLiteral = Literal["ministry", "logbook"]
 class MsoForwardCreate(BaseModel):
     """บันทึกการส่งต่อ — ใช้ send_channel แทน type_send_id."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "send_channel": "ministry",
+                "send_by_sdshv": "user-12345",
+                "json_case": {"case_number": "case-202605-000001"},
+                "response_code": "200",
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "request_url": "https://vsmart.example/cases/512",
+            }
+        }
+    )
+
     send_channel: MsoForwardChannelLiteral = Field(
         ...,
         description="`ministry` = ส่งต่อเข้าหระทรวง (type_send_id=1), `logbook` = ส่งต่อ MSO logbook (type_send_id=2)",
@@ -721,7 +787,25 @@ class MsoForwardCreate(BaseModel):
         description="payload ที่ส่งออก (เก็บ audit)",
     )
     response_code: str | None = Field(None, max_length=255)
-    response_text: str | None = None
+    response_text: str | None = Field(
+        None,
+        description="ไม่ต้องส่ง — ระบบเขียน `{status: \"OK\", id, applicant_id}` เองหลังได้ send_data.id",
+    )
+    ip_address: str | None = Field(None, max_length=45)
+    user_agent: str | None = Field(
+        None,
+        max_length=500,
+        description="navigator.userAgent จากเบราว์เซอร์ — ห้ามส่ง UA ของ HTTP client ฝั่ง server",
+        examples=[
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ],
+    )
+    request_url: str | None = Field(
+        None,
+        max_length=2048,
+        description="URL หน้าจอที่ผู้ใช้กดส่งต่อ (window.location.href) ไม่ใช่ URL ของ API",
+        examples=["https://vsmart.example/cases/512"],
+    )
 
 
 class MsoForwardChannelStatus(BaseModel):
@@ -749,7 +833,80 @@ class MsoForwardRead(BaseModel):
     send_by_sdshv: str | None = None
     json_case: dict[str, Any] | None = None
     response_code: str | None = None
-    response_text: str | None = None
+    response_text: MsoResponseText = Field(
+        None,
+        description='หลังบันทึกสำเร็จเป็น `{status: "OK", id, applicant_id}` — แถวเก่ายังเป็น string ได้',
+    )
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    request_url: str | None = None
+    device: str | None = None
+    browser: str | None = None
+    browser_version: str | None = None
+    os: str | None = None
+    os_version: str | None = None
+    type_money_category_id: int | None = None
+    type_money_name: str | None = None
+    type_money_acronym: str | None = None
+    province_id: int | None = None
+    province_name: str | None = None
+    affected_person_name: str | None = None
+    affected_person_cid: str | None = None
+
+    @field_validator("response_text", mode="before")
+    @classmethod
+    def _decode_response_text(cls, value: Any) -> MsoResponseText:
+        return decode_mso_response_text(value)
+
+
+class MsoForwardLogItem(BaseModel):
+    id: int
+    case_number: str | None = None
+    type_money_name: str | None = None
+    type_money_acronym: str | None = None
+    target_group_label: str | None = None
+    timestamp: datetime
+    response_code: str | None = None
+    response_text: MsoResponseText = None
+    sender_sdshv: str | None = None
+    sender_phone: None = None
+    affected_person_name: str | None = None
+    affected_person_cid: str | None = None
+    province_name: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    device: str | None = None
+    browser: str | None = None
+    browser_version: str | None = None
+    os: str | None = None
+    os_version: str | None = None
+    url: str | None = None
+    send_channel: MsoForwardChannelLiteral | None = None
+    applicant_id: int
+
+    @field_validator("response_text", mode="before")
+    @classmethod
+    def _decode_response_text(cls, value: Any) -> MsoResponseText:
+        return decode_mso_response_text(value)
+
+
+class MsoForwardLogListResponse(BaseModel):
+    province_ids: list[int] = Field(
+        default_factory=list,
+        description="จังหวัดที่กรอง — ว่างเมื่อไม่ได้กรอง / ดูทั้งหมดตามสิทธิ์",
+    )
+    total: int
+    items: list[MsoForwardLogItem]
+
+
+class MsoForwardJsonLogRead(BaseModel):
+    """json_case ของแถว send_data ตาม id."""
+
+    id: int
+    applicant_id: int
+    json_case: dict[str, Any] | None = None
 
 
 class ApplicantBriefRead(BaseModel):

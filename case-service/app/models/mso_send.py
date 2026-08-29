@@ -7,10 +7,10 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..core.base import Base
@@ -85,6 +85,38 @@ class SendData(Base):
     json_case: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     response_code: Mapped[str | None] = mapped_column(String(255))
     response_text: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(String(500))
+    request_url: Mapped[str | None] = mapped_column(String(2048))
+    device: Mapped[str | None] = mapped_column(String(64))
+    browser: Mapped[str | None] = mapped_column(String(64))
+    browser_version: Mapped[str | None] = mapped_column(String(32))
+    os: Mapped[str | None] = mapped_column(String(64))
+    os_version: Mapped[str | None] = mapped_column(String(32))
+    type_money_category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("type_money_category.id"),
+        nullable=True,
+    )
+    type_money_name: Mapped[str | None] = mapped_column(String(255))
+    type_money_acronym: Mapped[str | None] = mapped_column(String(255))
+    province_id: Mapped[int | None] = mapped_column(
+        ForeignKey("province.id"),
+        nullable=True,
+    )
+    province_name: Mapped[str | None] = mapped_column(String(255))
+    affected_person_name: Mapped[str | None] = mapped_column(String(511))
+    affected_person_cid: Mapped[str | None] = mapped_column(String(13))
 
     applicant: Mapped["Applicant"] = relationship(back_populates="send_data_rows")
     type_send: Mapped["TypeSend"] = relationship(

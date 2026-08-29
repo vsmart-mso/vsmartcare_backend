@@ -25,8 +25,12 @@ from app.services.indicators_summary import (
     _effective_province_id,
     _filter_meta,
     _latest_status_ids_for,
+    _map_household_members,
     _nest_regulation_sdshv_rows,
     _normalize_id_list,
+    _physical_condition_th,
+    _format_money,
+    _self_care_th,
     _sor_kor_mother_province_map,
 )
 from app.schemas.indicators import (
@@ -40,6 +44,7 @@ from app.utils.budget_year import (
     thai_fiscal_year_bounds,
     thai_fiscal_year_bounds_from_be,
 )
+from app.utils.datetime_th import format_thai_date
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 
@@ -351,19 +356,19 @@ class TestIndicatorsExportHelpers(unittest.TestCase):
                 first_name="A",
                 last_name="B",
                 cid="1234567890123",
-                birth_date=datetime(1990, 1, 1).date(),
+                birth_date="1 ม.ค. 2533",
                 address_province_id=_PHICHIT_CHILD,
                 address_province_name="พิจิตร",
                 effective_province_id=_PHITSANULOK_MOTHER,
                 effective_province_name="พิษณุโลก",
-                money_amount=Decimal("5000.00"),
+                money_amount="5,000.00",
             ),
             IndicatorExportCaseItem(
                 applicant_id=2,
                 first_name="C",
                 last_name="D",
                 cid="1234567890124",
-                birth_date=datetime(1991, 2, 2).date(),
+                birth_date="2 ก.พ. 2534",
                 address_province_id=_PHITSANULOK_MOTHER,
                 address_province_name="พิษณุโลก",
                 effective_province_id=_PHITSANULOK_MOTHER,
@@ -386,20 +391,118 @@ class TestIndicatorsExportHelpers(unittest.TestCase):
             first_name="สค",
             last_name="ลูก",
             cid="1234567890199",
-            birth_date=datetime(1985, 5, 5).date(),
+            birth_date="5 พ.ค. 2528",
             address_province_id=address_province_id,
             address_province_name="พิจิตร",
             effective_province_id=effective,
             effective_province_name="พิษณุโลก",
             type_money_category_id=type_money_category_id,
             type_money_name_acronym="สค.",
-            money_amount=Decimal("3000.00"),
+            money_amount="3,000.00",
         )
         self.assertEqual(item.address_province_id, _PHICHIT_CHILD)
         self.assertEqual(item.effective_province_id, _PHITSANULOK_MOTHER)
         totals = _build_export_totals([item])
         self.assertEqual(totals.case_count, 1)
         self.assertEqual(totals.total_money_amount, Decimal("3000.00"))
+
+    def test_export_agency_fields_optional_for_smart_filter(self) -> None:
+        item = IndicatorExportCaseItem(
+            applicant_id=1,
+            first_name="A",
+            last_name="B",
+            cid="1234567890123",
+            birth_date="1 ม.ค. 2533",
+            address_province_id=_PHICHIT_CHILD,
+            address_province_name="พิจิตร",
+            effective_province_id=_PHITSANULOK_MOTHER,
+            effective_province_name="พิษณุโลก",
+            aided_org_sdshv="sw.diag",
+            aided_org_name="พมจ.พิษณุโลก",
+            forward_sdshv="sw.forward",
+            disburse_sdshv="sw.pay",
+            responsible_division_id=65,
+        )
+        self.assertEqual(item.aided_org_sdshv, "sw.diag")
+        self.assertEqual(item.forward_sdshv, "sw.forward")
+        self.assertEqual(item.disburse_sdshv, "sw.pay")
+        self.assertEqual(item.responsible_division_id, 65)
+
+
+class TestIndicatorsExportThaiLabels(unittest.TestCase):
+    def test_format_thai_date_be_year_and_month_abbr(self) -> None:
+        self.assertEqual(format_thai_date(datetime(2026, 2, 5).date()), "5 ก.พ. 2569")
+        self.assertEqual(format_thai_date("1990-01-01"), "1 ม.ค. 2533")
+        self.assertIsNone(format_thai_date(None))
+
+    def test_format_thai_date_notified_at_uses_bangkok_calendar_day(self) -> None:
+        utc_evening = datetime(2026, 2, 4, 20, 0, 0)
+        self.assertEqual(format_thai_date(utc_evening), "5 ก.พ. 2569")
+        self.assertEqual(format_thai_date(datetime(2026, 2, 5, 1, 0, 0)), "5 ก.พ. 2569")
+
+    def test_physical_condition_and_self_care_thai(self) -> None:
+        self.assertEqual(_physical_condition_th("normal"), "ปกติ")
+        self.assertEqual(_physical_condition_th("disabled"), "พิการ")
+        self.assertEqual(_physical_condition_th("chronic_illness"), "เจ็บป่วยเรื้อรัง")
+        self.assertEqual(_self_care_th(True), "ได้")
+        self.assertEqual(_self_care_th(False), "ไม่ได้")
+
+    def test_map_household_members_formats_labels(self) -> None:
+        mapped = _map_household_members(
+            [
+                {
+                    "seq": 1,
+                    "prefix_name": "เด็กชาย",
+                    "first_name": "สมชาย",
+                    "last_name": "ใจดี",
+                    "cid": "1234567890123",
+                    "date_of_birth": "2015-03-01",
+                    "age": 10,
+                    "relation_name": "บุตร",
+                    "occupation": "นักเรียน",
+                    "monthly_income": "1500.5",
+                    "physical_condition": "normal",
+                    "self_care": True,
+                }
+            ]
+        )
+        self.assertEqual(len(mapped), 1)
+        member = mapped[0]
+        self.assertEqual(member.cid, "1234567890123")
+        self.assertEqual(member.date_of_birth, "1 มี.ค. 2558")
+        self.assertEqual(member.monthly_income, "1,500.50")
+        self.assertEqual(member.physical_condition, "ปกติ")
+        self.assertEqual(member.self_care, "ได้")
+
+    def test_format_money_thousand_separator(self) -> None:
+        self.assertEqual(_format_money(Decimal("5000")), "5,000.00")
+        self.assertEqual(_format_money("1500.5"), "1,500.50")
+        self.assertIsNone(_format_money(None))
+
+    def test_household_member_count_excludes_applicant(self) -> None:
+        mapped = _map_household_members(
+            [
+                {
+                    "seq": 1,
+                    "first_name": "ก",
+                    "last_name": "ข",
+                    "cid": "1111111111111",
+                    "physical_condition": "normal",
+                    "self_care": True,
+                },
+                {
+                    "seq": 2,
+                    "first_name": "ค",
+                    "last_name": "ง",
+                    "cid": "",
+                    "physical_condition": "disabled",
+                    "self_care": False,
+                },
+            ]
+        )
+        self.assertEqual(len(mapped), 2)
+        self.assertEqual(mapped[0].cid, "1111111111111")
+        self.assertIsNone(mapped[1].cid)
 
 
 if __name__ == "__main__":
