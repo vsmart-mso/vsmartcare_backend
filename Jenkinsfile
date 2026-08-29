@@ -24,7 +24,7 @@ pipeline {
         PROJECT    = "root"
         REPO       = "vcare-backend"
         BASE_IMAGE = "registry-vs.m-society.go.th/root/vcare-backend"
-        IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
+        IMAGE_TAG  = "${env.GIT_COMMIT?.take(8) ?: 'nogit'}-${env.BUILD_NUMBER}"
         NAMESPACE  = "vcare"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
