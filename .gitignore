@@ -46,3 +46,6 @@ env/
 docker-compose-beta.yml
 docker-compose-prod.yml
 docker-compose.dev.yml
+
+### k8s secrets (never commit real credentials)
+k8s/secrets-beta.yml
