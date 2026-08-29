@@ -3375,6 +3375,87 @@ async def get_dashboard_provinces_export(
 
 
 @router.get(
+    "/v1/dashboard/status/export",
+    tags=["dashboard"],
+    summary="ดาวน์โหลด Excel จากการ์ดสถานะ dashboard",
+    description=(
+        "ส่งต่อ `GET …/v1/dashboard/status/export` ใน dashboard-service — "
+        "ดาวน์โหลดรายละเอียดรายคำร้อง; กรุงเทพฯ ใช้ layout เฉพาะ, จังหวัดอื่นใช้ layout 76 จังหวัด"
+    ),
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_status_export(
+    level: Literal["provinces", "districts"] = Query(
+        ..., description="provinces = ระดับประเทศ/สสว., districts = จังหวัดที่ระบุ"
+    ),
+    report_type: Literal["situation", "case"] = Query(
+        "case", description="situation = รูปแบบรายงานสถานการณ์, case = รูปแบบรายงานเคส"
+    ),
+    province_id: Optional[list[int]] = Query(None),
+    district_id: Optional[list[int]] = Query(None),
+    sub_district_id: Optional[list[int]] = Query(None),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+) -> Response:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("level", level), ("report_type", report_type)]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "district_id", district_id)
+    pairs = _multi_query_pairs(pairs, "sub_district_id", sub_district_id)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    r = await _get_raw(f"{base}/v1/dashboard/status/export?{urlencode(pairs)}", timeout=120.0)
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get(
+            "content-type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        headers=out_headers,
+    )
+
+
+@router.get(
+    "/v1/dashboard/cases",
+    tags=["dashboard"],
+    summary="รายการเคสรายบุคคลตามพื้นที่บนแผนที่",
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_cases(
+    province_id: Optional[list[int]] = Query(None),
+    district_id: Optional[int] = Query(None, ge=1),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+    search: Optional[str] = Query(None, max_length=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+) -> Dict[str, Any]:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("page", page),
+        ("page_size", page_size),
+    ]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if search:
+        pairs.append(("search", search))
+    if date_from:
+        pairs.append(("date_from", date_from.isoformat()))
+    if date_to:
+        pairs.append(("date_to", date_to.isoformat()))
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    return await _get(f"{base}/v1/dashboard/cases?{urlencode(pairs)}")
+
+
+@router.get(
     "/v1/dashboard/overview",
     tags=["dashboard"],
     summary="สรุปจำนวนคำร้องตามสถานะของจังหวัด (สำหรับ donut chart)",
