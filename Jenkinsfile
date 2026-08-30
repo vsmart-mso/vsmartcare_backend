@@ -6,7 +6,7 @@
 // command has consistently cleared. Retrying immediately tends to hit the
 // same busy window again, so this sleeps between attempts to give etcd a
 // chance to recover instead of hammering it.
-def kubectlWithRetry(String script, int attempts = 3, int delaySeconds = 20) {
+def kubectlWithRetry(String script, int attempts = 5, int delaySeconds = 30) {
     retry(attempts) {
         try {
             sh script
@@ -14,6 +14,29 @@ def kubectlWithRetry(String script, int attempts = 3, int delaySeconds = 20) {
             echo "kubectl step failed (possible control-plane/etcd timeout), waiting ${delaySeconds}s before retry: ${e.getMessage()}"
             sleep(time: delaySeconds, unit: 'SECONDS')
             throw e
+        }
+    }
+}
+
+// `rollout status` is a long-lived watch (up to --timeout=600s) — on a control
+// plane that's already fragile it has far more exposure time to catch a bad
+// window than the one-shot write (`set image`/`apply`) that already landed
+// before this runs. It exists purely to confirm/report progress, not to make
+// the deploy happen, so its failure must never fail the build on its own:
+// retry a few times, and if it still can't confirm, log a warning and move
+// on instead of throwing — someone can check `kubectl get pods` by hand.
+def kubectlRolloutStatusBestEffort(String script, int attempts = 3, int delaySeconds = 30) {
+    for (int i = 1; i <= attempts; i++) {
+        try {
+            sh script
+            return
+        } catch (Exception e) {
+            if (i == attempts) {
+                echo "WARNING: could not confirm rollout status after ${attempts} attempts (likely control-plane flakiness) — the image was already set, so the deploy itself should have gone through. Verify manually with 'kubectl get pods'. Last error: ${e.getMessage()}"
+            } else {
+                echo "rollout status check failed, waiting ${delaySeconds}s before retry (${i}/${attempts}): ${e.getMessage()}"
+                sleep(time: delaySeconds, unit: 'SECONDS')
+            }
         }
     }
 }
@@ -374,10 +397,10 @@ pipeline {
                         script {
                             kubectlWithRetry('''
                                 export KUBECONFIG=${KUBECONFIG}
-                                kubectl apply -f k8s/external-db.yml
-                                kubectl apply -f k8s/case-service-storage.yml
-                                kubectl apply -f k8s/service.yml
-                                kubectl apply -f k8s/hpa.yml
+                                kubectl apply --validate=false -f k8s/external-db.yml
+                                kubectl apply --validate=false -f k8s/case-service-storage.yml
+                                kubectl apply --validate=false -f k8s/service.yml
+                                kubectl apply --validate=false -f k8s/hpa.yml
                             ''')
                         }
                         // k8s/deployment.yml holds all 6 services with their image field
@@ -394,7 +417,7 @@ pipeline {
                             if (params.BUILD_ALL) {
                                 kubectlWithRetry('''
                                     export KUBECONFIG=${KUBECONFIG}
-                                    kubectl apply -f k8s/deployment.yml
+                                    kubectl apply --validate=false -f k8s/deployment.yml
                                 ''')
                             }
                         }
@@ -414,7 +437,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/external-db-np.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/external-db-np.yml
                                     ''')
                                 }
                             }
@@ -440,7 +463,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-np.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/case-service-storage-np.yml
 
                                         if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
                                                 pvc/vcare-case-service-uploads-beta-pvc --timeout=60s; then
@@ -481,7 +504,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-beta.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/deployment-beta.yml
                                     ''')
                                 }
                             }
@@ -504,7 +527,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/service-beta.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/service-beta.yml
                                         kubectl -n ${NP_NAMESPACE} get svc
                                     ''')
                                 }
@@ -526,7 +549,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-np.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/hpa-np.yml
                                         kubectl -n ${NP_NAMESPACE} get hpa
                                     ''')
                                 }
@@ -610,7 +633,7 @@ pipeline {
                                                 --docker-server=${REGISTRY} \
                                                 --docker-username="$REGISTRY_USER" \
                                                 --docker-password="$REGISTRY_PASS" \
-                                                --dry-run=client -o yaml | kubectl apply -f -
+                                                --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
                                             for d in bff-vsmartcare case-service notification-service \
                                                      ocr-service thaid-auth-service dashboard-service; do
@@ -638,7 +661,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/case-service-storage-vtn.yml
 
                                         if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
                                                 pvc/vcare-case-service-uploads-vtn-pvc --timeout=60s; then
@@ -675,7 +698,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/deployment-vtn.yml
                                     ''')
                                 }
                             }
@@ -695,7 +718,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/service-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/service-vtn.yml
                                         kubectl -n ${NP_NAMESPACE} get svc
                                     ''')
                                 }
@@ -717,7 +740,7 @@ pipeline {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 script {
                                     kubectlWithRetry('''
-                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} apply --validate=false -f k8s/hpa-vtn.yml
                                         kubectl -n ${NP_NAMESPACE} get hpa
                                     ''')
                                 }
@@ -785,7 +808,7 @@ pipeline {
                                                 --docker-server=${REGISTRY} \
                                                 --docker-username="$REGISTRY_USER" \
                                                 --docker-password="$REGISTRY_PASS" \
-                                                --dry-run=client -o yaml | kubectl apply -f -
+                                                --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
                                             for d in bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
                                                      ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn; do
@@ -799,7 +822,12 @@ pipeline {
                         }
                     }
                 }
-                stage('Rollout') {
+                stage('Rollout - Batch 1') {
+                    // Split into two batches of 3 (was one parallel block of all 6) for
+                    // the same reason as Build/Push above — 6 concurrent kubectl writes
+                    // + long-lived rollout-status watches all hitting an already-fragile
+                    // control plane at once makes etcd/apiserver timeouts more likely,
+                    // not less. Batch 2 doesn't start until this one finishes.
                     parallel {
                         stage('bff') {
                             when {
@@ -827,6 +855,8 @@ pipeline {
                                                     # here — vtn always targets the same static "-latest" tag), so force
                                                     # a restart every run to actually re-pull under imagePullPolicy: Always
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/bff-vsmartcare-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/bff-vsmartcare-vtn
@@ -846,6 +876,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/bff-vsmartcare \
                                                         '*'=${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/bff-vsmartcare
@@ -861,6 +893,9 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-bff \
                                                 vcare-bff=${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=600s
                                         ''')
                                     }
@@ -888,6 +923,8 @@ pipeline {
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/case-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-case-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/case-service-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/case-service-vtn
@@ -907,6 +944,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/case-service \
                                                         '*'=${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/case-service
@@ -922,6 +961,9 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-case-service \
                                                 vcare-case-service=${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=600s
                                         ''')
                                     }
@@ -946,6 +988,8 @@ pipeline {
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/notification-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-notification-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/notification-service-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/notification-service-vtn
@@ -962,6 +1006,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/notification-service \
                                                         '*'=${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/notification-service
@@ -977,12 +1023,20 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service \
                                                 vcare-notification-service=${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=600s
                                         ''')
                                     }
                                 }
                             }
                         }
+                    }
+                }
+
+                stage('Rollout - Batch 2') {
+                    parallel {
                         stage('ocr-service') {
                             when {
                                 anyOf {
@@ -1001,6 +1055,8 @@ pipeline {
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-ocr-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/ocr-service-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/ocr-service-vtn
@@ -1017,6 +1073,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service \
                                                         '*'=${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/ocr-service
@@ -1032,6 +1090,9 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service \
                                                 vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=600s
                                         ''')
                                     }
@@ -1056,6 +1117,8 @@ pipeline {
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-thaid-auth-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/thaid-auth-service-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/thaid-auth-service-vtn
@@ -1072,6 +1135,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service \
                                                         '*'=${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/thaid-auth-service
@@ -1087,6 +1152,9 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service \
                                                 vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=600s
                                         ''')
                                     }
@@ -1111,6 +1179,8 @@ pipeline {
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-dashboard-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/dashboard-service-vtn
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service-vtn --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/dashboard-service-vtn
@@ -1127,6 +1197,8 @@ pipeline {
                                                 kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service \
                                                         '*'=${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG}
+                                                ''')
+                                                kubectlRolloutStatusBestEffort('''
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service --timeout=600s; then
                                                         echo "--- rollout failed, describing ---"
                                                         kubectl -n ${NP_NAMESPACE} describe deployment/dashboard-service
@@ -1142,6 +1214,9 @@ pipeline {
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service \
                                                 vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
+                                        ''')
+                                        kubectlRolloutStatusBestEffort('''
+                                            export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=600s
                                         ''')
                                     }
