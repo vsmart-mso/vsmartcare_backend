@@ -1,12 +1,8 @@
-# HPA for vtn (ns staging, np cluster) — mirrors hpa-np.yml but targets
-# the "-vtn" suffixed Deployments so it never collides with beta's.
-# Applied by the Jenkinsfile on every vtn run (see "Ensure vtn HPA (vtn
-# only)").
-#
-# case-service-vtn is DELIBERATELY EXCLUDED — same reason as hpa-np.yml:
-# its container runs `alembic upgrade head` on start, so a second replica
-# would race the migration against the same database. Do not add it here
-# without first removing that constraint.
+# HPA for vtn (ns staging, np cluster) — mirrors hpa-np.yml (now including
+# case-service, see that file's header for the accepted migration-race
+# tradeoff this carries) but targets the "-vtn" suffixed Deployments so it
+# never collides with beta's. Applied by the Jenkinsfile on every vtn run
+# (see "Ensure vtn HPA (vtn only)").
 #
 # Requires metrics-server (or equivalent) in the cluster — same caveat as
 # hpa-np.yml. If HPA shows "unknown" for CPU/memory targets via
@@ -22,6 +18,32 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: bff-vsmartcare-vtn
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: case-service-vtn
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: case-service-vtn
   minReplicas: 2
   maxReplicas: 3
   metrics:
