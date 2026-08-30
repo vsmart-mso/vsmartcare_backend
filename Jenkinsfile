@@ -96,6 +96,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-latest \
                                 bff-vsmartcare/
@@ -112,6 +113,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-latest \
                                 case-service/
@@ -128,6 +130,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-latest \
                                 notification-service/
@@ -144,6 +147,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-latest \
                                 ocr-service/
@@ -160,6 +164,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-latest \
                                 thaid-auth-service/
@@ -176,6 +181,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build \
+                                --provenance=false --sbom=false \
                                 -t ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG} \
                                 -t ${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-latest \
                                 dashboard-service/
