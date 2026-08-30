@@ -74,7 +74,7 @@ pipeline {
                 }
             }
             steps {
-                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml,k8s/hpa-np.yml,k8s/service-beta.yml,k8s/deployment-beta.yml,k8s/case-service-storage-vtn.yml,k8s/service-vtn.yml,k8s/deployment-vtn.yml'
+                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml,k8s/hpa-np.yml,k8s/service-beta.yml,k8s/deployment-beta.yml,k8s/case-service-storage-vtn.yml,k8s/service-vtn.yml,k8s/deployment-vtn.yml,k8s/hpa-vtn.yml'
             }
         }
 
@@ -622,6 +622,26 @@ pipeline {
                                 sh '''
                                     kubectl -n ${NP_NAMESPACE} apply -f k8s/service-vtn.yml
                                     kubectl -n ${NP_NAMESPACE} get svc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure vtn HPA (vtn only)') {
+                    // Applies k8s/hpa-vtn.yml — same idempotent pattern as
+                    // "Ensure np HPA (beta only)". case-service-vtn is excluded,
+                    // same reason as everywhere else in this repo (migration on
+                    // start, must stay at 1 replica).
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-vtn.yml
+                                    kubectl -n ${NP_NAMESPACE} get hpa
                                 '''
                             }
                         }
