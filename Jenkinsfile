@@ -78,10 +78,18 @@ pipeline {
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Build Docker Images - Batch 1') {
             // vtn never builds — it always deploys whatever tag is currently
             // running in production (see Rollout below), so there is nothing
             // for this stage to do on that branch.
+            //
+            // Split into two batches of 3 (was one parallel block of all 6) —
+            // 6 concurrent `docker build` were saturating the host's CPU/disk
+            // I/O badly enough that even trivial steps (transferring a 2-byte
+            // .dockerignore) took 30-80s, and one run hit BuildKit's internal
+            // commit deadline on the containerd content store entirely
+            // (context deadline exceeded). Batch 2 doesn't start until this
+            // one finishes, capping concurrency at 3.
             when {
                 expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
             }
@@ -137,6 +145,14 @@ pipeline {
                         '''
                     }
                 }
+            }
+        }
+
+        stage('Build Docker Images - Batch 2') {
+            when {
+                expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+            }
+            parallel {
                 stage('ocr-service') {
                     when {
                         anyOf {
@@ -213,8 +229,12 @@ pipeline {
             }
         }
 
-        stage('Push Images') {
+        stage('Push Images - Batch 1') {
             // vtn never builds, so there is nothing new to push either.
+            // Same batching rationale as "Build Docker Images" above — 6
+            // concurrent `docker push` saturate the host's outbound network/
+            // disk I/O the same way 6 concurrent builds did. Batch 2 doesn't
+            // start until this one finishes, capping concurrency at 3.
             when {
                 expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
             }
@@ -261,6 +281,14 @@ pipeline {
                         '''
                     }
                 }
+            }
+        }
+
+        stage('Push Images - Batch 2') {
+            when {
+                expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+            }
+            parallel {
                 stage('ocr-service') {
                     when {
                         anyOf {
