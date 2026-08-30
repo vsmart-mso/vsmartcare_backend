@@ -629,9 +629,9 @@ pipeline {
                 }
                 stage('Ensure vtn HPA (vtn only)') {
                     // Applies k8s/hpa-vtn.yml — same idempotent pattern as
-                    // "Ensure np HPA (beta only)". case-service-vtn is excluded,
-                    // same reason as everywhere else in this repo (migration on
-                    // start, must stay at 1 replica).
+                    // "Ensure np HPA (beta only)". Includes case-service-vtn at
+                    // parity with prod's hpa.yml — see hpa-vtn.yml's header for
+                    // the accepted migration-race tradeoff that comes with it.
                     when {
                         expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                     }
@@ -797,7 +797,9 @@ pipeline {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
                                     if (branchName.contains('vtn')) {
-                                        // Same 1-replica / Alembic-on-start constraint as beta below
+                                        // case-service-vtn now scales 2→3 via hpa-vtn.yml, at parity
+                                        // with prod — rollout restart here rolls each replica in turn
+                                        // the same way a normal Deployment update would.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''
@@ -815,8 +817,9 @@ pipeline {
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
-                                        // case-service must stay at 1 replica on np — its
-                                        // container runs the Alembic migration on start
+                                        // case-service now scales 2→3 via hpa-np.yml, at parity with
+                                        // prod — see that file's header for the accepted migration-race
+                                        // tradeoff.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''

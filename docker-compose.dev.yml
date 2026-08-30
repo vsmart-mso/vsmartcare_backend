@@ -84,7 +84,7 @@ services:
     environment:
       - PYTHONPATH=/app
       # กัน merge compose ทำให้ค่าจาก docker-compose.yml หาย — ต้องตรงกับ case-service / postgres
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
     volumes:
       - ./thaid-auth-service/app:/app/app
     command:
@@ -103,7 +103,7 @@ services:
   ocr-service:
     environment:
       - PYTHONPATH=/app
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
     volumes:
       - ./ocr-service/app:/app/app
     command:
@@ -122,7 +122,7 @@ services:
   dashboard-service:
     environment:
       - PYTHONPATH=/app
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/case_service_beta
     volumes:
       - ./dashboard-service/app:/app/app
     command:

@@ -1,13 +1,17 @@
-# HPA for np (ns staging) — mirrors k8s/hpa.yml (ns vcare) but with np's real
-# Deployment names (no "vcare-" prefix, no "-beta" suffix) and np-specific
-# replica bounds.
+# HPA for np (ns staging) — mirrors k8s/hpa.yml (ns vcare), now including
+# case-service, with np's real Deployment names (no "vcare-" prefix, no
+# "-beta" suffix) and np-specific replica bounds.
 #
-# case-service is DELIBERATELY EXCLUDED — no HPA object for it at all.
-# dev-np-quickstart.md is explicit and repeated on this: "case-service must
-# stay at 1 replica" — its container runs `alembic upgrade head` on start and
-# the Deployment uses `strategy: Recreate`; a second replica (or a
-# RollingUpdate surge) would race the migration against the same database.
-# Do not add case-service here without first removing that constraint.
+# case-service now gets the same 2→3 scaling as k8s/hpa.yml (ns vcare) —
+# deliberately matched to prod's existing behavior on request. Accepted
+# risk: case-service's container runs `alembic upgrade head` on every
+# start (see case-service/Dockerfile), with no explicit locking beyond
+# whatever Alembic's own version table does — if a scale-up or rolling
+# restart brings up multiple replicas at once right after a deploy that
+# ships a new migration, they could race running that migration
+# concurrently. Production already runs this same image at 2-3 replicas
+# under this exact constraint, so beta is intentionally kept at parity
+# rather than treated as more cautious than prod.
 #
 # The other five backend services (bff-vsmartcare, notification-service,
 # ocr-service, thaid-auth-service, dashboard-service) are the ones
@@ -31,6 +35,32 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: bff-vsmartcare
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  namespace: staging
+  name: case-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: case-service
   minReplicas: 2
   maxReplicas: 3
   metrics:

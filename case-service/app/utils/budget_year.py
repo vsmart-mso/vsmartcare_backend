@@ -31,6 +31,17 @@ def thai_fiscal_year_bounds(reference: datetime) -> tuple[datetime, datetime]:
     return start, end
 
 
+def thai_fiscal_year_bounds_from_be(budget_year: int) -> tuple[datetime, datetime]:
+    """คืน (start inclusive, end inclusive) ของปีงบ พ.ศ. — TZ Asia/Bangkok.
+
+    ตัวอย่าง: 2568 → 2024-10-01 00:00:00+07 … 2025-09-30 23:59:59.999999+07
+    """
+    start_ce = budget_year - 544
+    start = datetime(start_ce, 10, 1, 0, 0, 0, tzinfo=_BANGKOK)
+    end = datetime(start_ce + 1, 9, 30, 23, 59, 59, 999999, tzinfo=_BANGKOK)
+    return start, end
+
+
 def is_same_thai_fiscal_year(a: datetime, b: datetime) -> bool:
     """True เมื่อ a และ b อยู่ในปีงบประมาณเดียวกัน."""
     return thai_fiscal_year(a) == thai_fiscal_year(b)
