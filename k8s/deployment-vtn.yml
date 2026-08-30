@@ -1,53 +1,57 @@
-# Applied by the Jenkinsfile beta path on every run (see "Ensure np
-# Deployments (beta only)") — idempotent, so this is also the reference copy
-# of what's live on np (ns staging). Manual apply is only needed for a fresh
-# cluster/namespace that's never run the beta pipeline yet.
+# vtn — training environment ("อบรม"), same np cluster/ns staging as beta
+# (see deployment-beta.yml), but its own Deployments so it never collides
+# with beta's or prod's. Applied by the Jenkinsfile on every vtn run (see
+# "Ensure vtn Deployments (vtn only)") — idempotent, so this is also the
+# reference copy of what's live. Manual apply is only needed for a fresh
+# cluster/namespace that's never run the vtn pipeline yet:
 #
-# Names match np's real Deployments exactly — no "vcare-" prefix, no "-beta"
-# suffix (np and ns vcare are different clusters, so no suffix is needed here
-# to avoid colliding with production's own vcare-* Deployments in ns vcare —
-# see deployment.yml). imagePullSecrets list all three that Jenkinsfile
-# patches in at deploy time (regcred, regcred-staging, betabackcred).
+#   kubectl -n staging apply -f k8s/deployment-vtn.yml
 #
-# The per-service Secret names (envFrom) DO keep "-beta" — those are ours
-# (k8s/secrets-beta.yml), not np's, so there's no name to match and no
-# ambiguity risk from dropping the suffix there.
+# Differences from deployment-beta.yml:
+# - Every Deployment/Service name is suffixed "-vtn" instead of no suffix,
+#   so it can coexist with beta's un-suffixed np resources in the same ns.
+# - image starts at "vcare-<svc>-latest" — the current PRODUCTION tag, no
+#   "-beta" marker. vtn always tracks whatever's live in prod (see Rollout
+#   in the Jenkinsfile) rather than building its own image.
+# - envFrom points at vcare-<svc>-secret-vtn (own Secret, own DB/ThaiD
+#   config — see k8s/secrets-vtn.yml, gitignored, applied by hand).
+# - imagePullSecrets uses "vtnbackcred" instead of "betabackcred" — its own
+#   pull secret so a vtn deploy doesn't depend on beta having run first.
+# - case-service's uploads volume uses vcare-case-service-uploads-vtn-pvc
+#   (k8s/case-service-storage-vtn.yml), its own uploads folder.
 #
-# case-service's uploads volume (vcare-case-service-uploads-beta-pvc) is
-# provided by k8s/case-service-storage-np.yml, NOT case-service-storage-beta.yml
-# — that one points at 172.21.103.131, unreachable from np. The np version
-# points at np-store01 (192.168.10.22, same host as MinIO) — see that file for
-# the ⚠️ caveat: the NFS export there isn't confirmed to exist yet.
+# case-service stays at 1 replica — same Alembic-migration-on-start
+# constraint as everywhere else in this repo.
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: bff-vsmartcare
+  name: bff-vsmartcare-vtn
   labels:
-    app: bff-vsmartcare
+    app: bff-vsmartcare-vtn
 spec:
   selector:
     matchLabels:
-      app: bff-vsmartcare
+      app: bff-vsmartcare-vtn
   template:
     metadata:
       labels:
-        app: bff-vsmartcare
+        app: bff-vsmartcare-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-bff
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-bff-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-bff-secret-beta
+                name: vcare-bff-secret-vtn
           resources:
             requests:
               cpu: "100m"
@@ -60,31 +64,32 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: case-service
+  name: case-service-vtn
   labels:
-    app: case-service
+    app: case-service-vtn
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: case-service
+      app: case-service-vtn
   template:
     metadata:
       labels:
-        app: case-service
+        app: case-service-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-case-service
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-case-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-case-service-secret-beta
+                name: vcare-case-service-secret-vtn
           volumeMounts:
             - name: uploads
               mountPath: /app/uploads/welfare-evidence
@@ -102,37 +107,37 @@ spec:
       volumes:
         - name: uploads
           persistentVolumeClaim:
-            claimName: vcare-case-service-uploads-beta-pvc
+            claimName: vcare-case-service-uploads-vtn-pvc
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: notification-service
+  name: notification-service-vtn
   labels:
-    app: notification-service
+    app: notification-service-vtn
 spec:
   selector:
     matchLabels:
-      app: notification-service
+      app: notification-service-vtn
   template:
     metadata:
       labels:
-        app: notification-service
+        app: notification-service-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-notification-service
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-notification-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-notification-service-secret-beta
+                name: vcare-notification-service-secret-vtn
           resources:
             requests:
               cpu: "100m"
@@ -145,31 +150,31 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: ocr-service
+  name: ocr-service-vtn
   labels:
-    app: ocr-service
+    app: ocr-service-vtn
 spec:
   selector:
     matchLabels:
-      app: ocr-service
+      app: ocr-service-vtn
   template:
     metadata:
       labels:
-        app: ocr-service
+        app: ocr-service-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-ocr-service
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-ocr-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-ocr-service-secret-beta
+                name: vcare-ocr-service-secret-vtn
           resources:
             requests:
               cpu: "500m"
@@ -182,32 +187,32 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: thaid-auth-service
+  name: thaid-auth-service-vtn
   labels:
-    app: thaid-auth-service
+    app: thaid-auth-service-vtn
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: thaid-auth-service
+      app: thaid-auth-service-vtn
   template:
     metadata:
       labels:
-        app: thaid-auth-service
+        app: thaid-auth-service-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-thaid-auth-service
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-thaid-auth-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-thaid-auth-service-secret-beta
+                name: vcare-thaid-auth-service-secret-vtn
           resources:
             requests:
               cpu: "100m"
@@ -220,31 +225,31 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: staging
-  name: dashboard-service
+  name: dashboard-service-vtn
   labels:
-    app: dashboard-service
+    app: dashboard-service-vtn
 spec:
   selector:
     matchLabels:
-      app: dashboard-service
+      app: dashboard-service-vtn
   template:
     metadata:
       labels:
-        app: dashboard-service
+        app: dashboard-service-vtn
     spec:
       imagePullSecrets:
         - name: regcred
         - name: regcred-staging
-        - name: betabackcred
+        - name: vtnbackcred
       containers:
         - name: vcare-dashboard-service
-          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-beta-latest
+          image: registry-vs.m-society.go.th/root/vcare-backend:vcare-dashboard-service-latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: vcare-dashboard-service-secret-beta
+                name: vcare-dashboard-service-secret-vtn
           resources:
             requests:
               cpu: "100m"

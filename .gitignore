@@ -50,3 +50,4 @@ docker-compose.dev.yml
 ### k8s secrets (contain real credentials, never commit)
 k8s/secrets.yml
 k8s/secrets-beta.yml
+k8s/secrets-vtn.yml

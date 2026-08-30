@@ -1,0 +1,113 @@
+# vtn — applied by the Jenkinsfile (same as service-beta.yml, see that
+# file's header for why: ocr-service's NodePort doesn't pre-exist on np).
+# Every name is suffixed "-vtn" so these coexist with beta's un-suffixed
+# Services in the same ns staging.
+#
+# NodePorts 31984 (bff) and 31985 (ocr) are UNCONFIRMED GUESSES, same
+# caveat as service-beta.yml's 31982 — verify nothing else already claims
+# them before relying on this:
+#   kubectl -n staging get svc -o wide
+# Known taken so far: 31968 (frontend beta), 31980 (bff beta), 31981
+# (ess-regis), 31982 (ocr beta guess).
+#
+# ⚠️ A NodePort here alone does not make bff/ocr reachable from a browser —
+# np-edge01 needs its own location block for the vtn domain/path, same as
+# noted in service-beta.yml. That's an edge/nginx change outside this repo.
+
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: bff-vsmartcare-vtn
+  labels:
+    app: bff-vsmartcare-vtn
+spec:
+  selector:
+    app: bff-vsmartcare-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+      nodePort: 31984
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: case-service-vtn
+  labels:
+    app: case-service-vtn
+spec:
+  selector:
+    app: case-service-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: notification-service-vtn
+  labels:
+    app: notification-service-vtn
+spec:
+  selector:
+    app: notification-service-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: ocr-service-vtn
+  labels:
+    app: ocr-service-vtn
+spec:
+  selector:
+    app: ocr-service-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+      nodePort: 31985
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: thaid-auth-service-vtn
+  labels:
+    app: thaid-auth-service-vtn
+spec:
+  selector:
+    app: thaid-auth-service-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: staging
+  name: dashboard-service-vtn
+  labels:
+    app: dashboard-service-vtn
+spec:
+  selector:
+    app: dashboard-service-vtn
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

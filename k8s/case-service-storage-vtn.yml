@@ -1,0 +1,52 @@
+# case-service uploads storage for vtn (ns staging, np cluster) — same NFS
+# server as beta's (case-service-storage-np.yml, np-store01 192.168.10.22),
+# but its own export path/PV/PVC so training uploads never land in beta's
+# or prod's folder. Applied by the Jenkinsfile (see "Ensure vtn
+# Case-Service Storage (vtn only)").
+#
+# ⚠️ Same provisioning caveat as case-service-storage-np.yml: this export
+# is not known to exist yet on np-store01. Provision it before relying on
+# case-service-vtn coming up, e.g.:
+#
+#   ssh webmaster@192.168.10.22
+#   sudo mkdir -p /srv/nfs/vcare-vtn/case-service/uploads/welfare-evidence
+#   sudo mkdir -p /srv/nfs/vcare-vtn/case-service/uploads/file-payments
+#   sudo chown -R nobody:nogroup /srv/nfs/vcare-vtn
+#   sudo chmod -R 0770 /srv/nfs/vcare-vtn
+#   echo "/srv/nfs/vcare-vtn/case-service/uploads 192.168.10.0/24(rw,sync,no_subtree_check,no_root_squash)" \
+#     | sudo tee -a /etc/exports
+#   sudo exportfs -ra
+#
+# (nfs-kernel-server is already installed on np-store01 for beta's export —
+# no need to reinstall, just add the new export line and re-run exportfs.)
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vcare-case-service-uploads-vtn-pv
+  labels:
+    app: case-service-vtn
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-manual
+  nfs:
+    server: 192.168.10.22
+    path: /srv/nfs/vcare-vtn/case-service/uploads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vcare-case-service-uploads-vtn-pvc
+  namespace: staging
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-manual
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: vcare-case-service-uploads-vtn-pv

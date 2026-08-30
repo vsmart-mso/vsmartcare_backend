@@ -61,15 +61,30 @@ pipeline {
             // Checkout just cloned into on the default agent — files aren't
             // shared between them automatically. Stash here once, unstash in
             // every node('nonprod') block that needs a k8s/*.yml file.
+            //
+            // vtn (training env) shares this same np cluster/ns staging with
+            // beta (same server, see Jenkinsfile header decision) — its own
+            // manifests are stashed alongside beta's rather than in a
+            // separate stage, since both branches need this stage's stash
+            // name in later node('nonprod') blocks.
             when {
-                expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                anyOf {
+                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                }
             }
             steps {
-                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml,k8s/hpa-np.yml,k8s/service-beta.yml'
+                stash name: 'np-manifests', includes: 'k8s/external-db-np.yml,k8s/case-service-storage-np.yml,k8s/hpa-np.yml,k8s/service-beta.yml,k8s/deployment-beta.yml,k8s/case-service-storage-vtn.yml,k8s/service-vtn.yml,k8s/deployment-vtn.yml'
             }
         }
 
         stage('Build Docker Images') {
+            // vtn never builds — it always deploys whatever tag is currently
+            // running in production (see Rollout below), so there is nothing
+            // for this stage to do on that branch.
+            when {
+                expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+            }
             parallel {
                 stage('bff') {
                     when {
@@ -171,6 +186,10 @@ pipeline {
         }
 
         stage('Login Registry') {
+            // Only needed ahead of Push Images below — vtn never pushes.
+            when {
+                expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -189,6 +208,10 @@ pipeline {
         }
 
         stage('Push Images') {
+            // vtn never builds, so there is nothing new to push either.
+            when {
+                expression { return !(env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+            }
             parallel {
                 stage('bff') {
                     when {
@@ -280,11 +303,18 @@ pipeline {
         stage('Deploy Kubernetes') {
             stages {
                 stage('Apply Manifests (prod only)') {
-                    // np's Deployments/Services already exist on the cluster, created and
-                    // managed by ops (see dev-np-quickstart.md) — beta never applies
-                    // manifests here, it only updates images on the Rollout stage below.
+                    // Prod's np's Deployments/Services already exist on the cluster,
+                    // created and managed by ops (see dev-np-quickstart.md) — this
+                    // stage is for ns vcare (prod) only. beta and vtn apply their own
+                    // Deployments/Services on np further down ("Ensure np/vtn
+                    // Deployments" etc.), not through this stage.
                     when {
-                        not { expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') } }
+                        not {
+                            anyOf {
+                                expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                                expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                            }
+                        }
                     }
                     steps {
                         sh '''
@@ -362,6 +392,35 @@ pipeline {
                                     fi
 
                                     kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-beta-pvc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure np Deployments (beta only)') {
+                    // Jenkins now owns these Deployments instead of requiring a
+                    // one-time hand-applied `kubectl apply -f k8s/deployment-beta.yml`
+                    // — idempotent, safe to re-apply every beta run. Must run before
+                    // "Ensure np Env Secret"/"Ensure np Pull Secret" below, which
+                    // patch these Deployments and would fail if they didn't exist yet.
+                    //
+                    // Note: deployment-beta.yml's image field is the static
+                    // "vcare-<svc>-beta-latest" tag, not the per-build tag Rollout
+                    // sets further down — so this apply briefly reverts each
+                    // service's image to "-latest" before Rollout's `set image`
+                    // overwrites it with the real build tag seconds later, same
+                    // documented tradeoff as prod's BUILD_ALL resync of
+                    // k8s/deployment.yml. Acceptable here since beta only builds on
+                    // a push to that branch, not continuously like prod.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('beta') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-beta.yml
                                 '''
                             }
                         }
@@ -495,6 +554,149 @@ pipeline {
                         }
                     }
                 }
+                stage('Ensure vtn Case-Service Storage (vtn only)') {
+                    // Training env, same np cluster/ns staging as beta, but its own
+                    // uploads folder — "-vtn" suffix on both the PV path and the PVC
+                    // name so training uploads never land in beta's or prod's folder.
+                    // See k8s/case-service-storage-vtn.yml.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-vtn.yml
+
+                                    if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
+                                            pvc/vcare-case-service-uploads-vtn-pvc --timeout=60s; then
+                                        echo "--- PVC not Bound, describing ---"
+                                        kubectl -n ${NP_NAMESPACE} describe pvc vcare-case-service-uploads-vtn-pvc
+                                        kubectl -n ${NP_NAMESPACE} describe pv vcare-case-service-uploads-vtn-pv
+                                        exit 1
+                                    fi
+
+                                    kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-vtn-pvc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure vtn Deployments (vtn only)') {
+                    // Jenkins now owns these Deployments instead of requiring a
+                    // one-time hand-applied `kubectl apply -f k8s/deployment-vtn.yml`
+                    // — idempotent, safe to re-apply every vtn run. Must run before
+                    // "Ensure vtn Env Secret"/"Ensure vtn Pull Secret" below, which
+                    // patch these Deployments and would fail if they didn't exist yet.
+                    //
+                    // Unlike beta, this apply writes the exact same static
+                    // "vcare-<svc>-latest" tag that Rollout's `set image` below also
+                    // writes — no double-write/temporary-downgrade issue here, both
+                    // steps agree on the same string.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-vtn.yml
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure vtn Services (vtn only)') {
+                    // Applies k8s/service-vtn.yml — same idempotent pattern as
+                    // "Ensure np Services (beta only)", separate Service objects
+                    // named "<svc>-vtn" so they don't collide with beta's.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            unstash 'np-manifests'
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/service-vtn.yml
+                                    kubectl -n ${NP_NAMESPACE} get svc
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure vtn Env Secret (vtn only)') {
+                    // Self-healing, same pattern as "Ensure np Env Secret (beta
+                    // only)" but pointed at each service's own vcare-<svc>-secret-vtn
+                    // (separate DB/ThaiD config from both prod and beta — see
+                    // k8s/secrets-vtn.yml, gitignored, applied by hand once:
+                    //   kubectl -n staging apply -f k8s/secrets-vtn.yml
+                    // If that Secret is missing, this patch still succeeds (only the
+                    // reference changes) but the pod fails to start with "Secret ...
+                    // not found" — that's the signal to go apply it by hand.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    for pair in \
+                                        "bff-vsmartcare-vtn:vcare-bff-secret-vtn" \
+                                        "case-service-vtn:vcare-case-service-secret-vtn" \
+                                        "notification-service-vtn:vcare-notification-service-secret-vtn" \
+                                        "ocr-service-vtn:vcare-ocr-service-secret-vtn" \
+                                        "thaid-auth-service-vtn:vcare-thaid-auth-service-secret-vtn" \
+                                        "dashboard-service-vtn:vcare-dashboard-service-secret-vtn"; do
+                                        d="${pair%%:*}"
+                                        s="${pair##*:}"
+                                        kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                            "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
+                                    done
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ensure vtn Pull Secret (vtn only)') {
+                    // Own pull secret rather than reusing beta's "betabackcred" —
+                    // vtn must be able to deploy standalone even if a beta build has
+                    // never run on this Jenkins instance. Same devop-bot credential,
+                    // same registry, just a separate secret object + name so neither
+                    // branch's pipeline run depends on the other having executed first.
+                    when {
+                        expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
+                    }
+                    steps {
+                        node('nonprod') {
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                withCredentials([
+                                    usernamePassword(
+                                        credentialsId: 'devop-bot',
+                                        usernameVariable: 'REGISTRY_USER',
+                                        passwordVariable: 'REGISTRY_PASS'
+                                    )
+                                ]) {
+                                    sh '''
+                                        kubectl -n ${NP_NAMESPACE} create secret docker-registry vtnbackcred \
+                                            --docker-server=${REGISTRY} \
+                                            --docker-username="$REGISTRY_USER" \
+                                            --docker-password="$REGISTRY_PASS" \
+                                            --dry-run=client -o yaml | kubectl apply -f -
+
+                                        for d in bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
+                                                 ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn; do
+                                            kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                                '[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"},{"name":"regcred-staging"},{"name":"vtnbackcred"}]}]'
+                                        done
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                }
                 stage('Rollout') {
                     parallel {
                         stage('bff') {
@@ -502,12 +704,38 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "bff-vsmartcare/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        // Always the current production tag — vtn never builds its
+                                        // own image (see Build Docker Images), it just tracks whatever
+                                        // is live in prod. imagePullPolicy: Always on the Deployment
+                                        // means even an unchanged tag re-pulls if prod pushed a new
+                                        // ":latest" since the last vtn rollout.
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/bff-vsmartcare-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-bff-latest
+                                                    # set image is a no-op when the tag string is unchanged (always true
+                                                    # here — vtn always targets the same static "-latest" tag), so force
+                                                    # a restart every run to actually re-pull under imagePullPolicy: Always
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/bff-vsmartcare-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/bff-vsmartcare-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=bff-vsmartcare-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         // np's Deployment for this service is "bff-vsmartcare",
                                         // not "vcare-bff" — see dev-np-quickstart.md §4. '*'
                                         // sidesteps needing the exact container name.
@@ -542,12 +770,31 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "case-service/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        // Same 1-replica / Alembic-on-start constraint as beta below
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/case-service-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-case-service-latest
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/case-service-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/case-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=case-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         // case-service must stay at 1 replica on np — its
                                         // container runs the Alembic migration on start
                                         node('nonprod') {
@@ -581,12 +828,30 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "notification-service/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/notification-service-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-notification-service-latest
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/notification-service-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/notification-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=notification-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''
@@ -618,12 +883,30 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "ocr-service/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-ocr-service-latest
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/ocr-service-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/ocr-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=ocr-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''
@@ -655,12 +938,30 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "thaid-auth-service/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-thaid-auth-service-latest
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/thaid-auth-service-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/thaid-auth-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=thaid-auth-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''
@@ -692,12 +993,30 @@ pipeline {
                                 anyOf {
                                     expression { return params.BUILD_ALL }
                                     changeset "dashboard-service/**"
+                                    expression { return (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '').contains('vtn') }
                                 }
                             }
                             steps {
                                 script {
                                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                                    if (branchName.contains('beta')) {
+                                    if (branchName.contains('vtn')) {
+                                        node('nonprod') {
+                                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                                sh '''
+                                                    kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service-vtn \
+                                                        '*'=${BASE_IMAGE}:vcare-dashboard-service-latest
+                                                    kubectl -n ${NP_NAMESPACE} rollout restart deployment/dashboard-service-vtn
+                                                    if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service-vtn --timeout=600s; then
+                                                        echo "--- rollout failed, describing ---"
+                                                        kubectl -n ${NP_NAMESPACE} describe deployment/dashboard-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=dashboard-service-vtn
+                                                        kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
+                                                        exit 1
+                                                    fi
+                                                '''
+                                            }
+                                        }
+                                    } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                                 sh '''
@@ -733,7 +1052,28 @@ pipeline {
             steps {
                 script {
                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
-                    if (branchName.contains('beta')) {
+                    if (branchName.contains('vtn')) {
+                        node('nonprod') {
+                            withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
+                                sh '''
+                                    kubectl -n ${NP_NAMESPACE} get deployment \
+                                        bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
+                                        ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn
+                                    kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=bff-vsmartcare-vtn
+                                    kubectl -n ${NP_NAMESPACE} get pods -o wide -l app=case-service-vtn
+
+                                    echo "--- envFrom secret per Deployment ---"
+                                    for d in bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
+                                             ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn; do
+                                        echo -n "$d: "
+                                        kubectl -n ${NP_NAMESPACE} get deploy "$d" \
+                                            -o jsonpath='{.spec.template.spec.containers[0].envFrom}'
+                                        echo
+                                    done
+                                '''
+                            }
+                        }
+                    } else if (branchName.contains('beta')) {
                         node('nonprod') {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
                                 sh '''
