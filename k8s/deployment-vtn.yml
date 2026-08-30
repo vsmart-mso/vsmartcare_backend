@@ -20,8 +20,10 @@
 # - case-service's uploads volume uses vcare-case-service-uploads-vtn-pvc
 #   (k8s/case-service-storage-vtn.yml), its own uploads folder.
 #
-# case-service stays at 1 replica — same Alembic-migration-on-start
-# constraint as everywhere else in this repo.
+# case-service-vtn has no explicit `replicas:` here (same as
+# deployment-beta.yml) so re-applying this file every vtn run doesn't fight
+# with hpa-vtn.yml, which now scales it 2→3 at parity with prod — see that
+# file's header for the accepted migration-race tradeoff.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -68,7 +70,6 @@ metadata:
   labels:
     app: case-service-vtn
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: case-service-vtn

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .case_for_staff_schema import (
     ArticleCreateBody,
@@ -32,6 +32,13 @@ from .case_for_staff_schema import (
     CaseForStaffListResponse,
     CaseForStaffRead as CaseForStaffListItem,
     CaseForStaffStatusSummaryResponse,
+)
+from .indicator_schema import (
+    IndicatorCaseStatus,
+    IndicatorsByProvinceResponse,
+    IndicatorsExportResponse,
+    IndicatorsNationwideResponse,
+    IndicatorsProvinceOverviewResponse,
 )
 from .services.staff_digest_dispatch import (
     StaffDigestDispatchResult,
@@ -161,6 +168,7 @@ _TAGS = [
     {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
     {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
+    {"name": "indicators", "description": "ตัวชี้วัดเงินช่วยเหลือ พม Care — รายจังหวัดแยก 6 ประเภท / ทุกจังหวัดไม่แยกหมวด / export JSON แถวแบน dossier / province-overview สรุป 4 ตัวเลข (สค. นับที่จังหวัดแม่ตาม DWF)"},
 ]
 
 _api_prefix = settings.bff_api_prefix
@@ -264,6 +272,56 @@ def _http_error_detail_from_response(r: httpx.Response) -> Any:
         except json.JSONDecodeError:
             pass
     return d
+
+
+_SERVER_UA_MARKERS = (
+    "python-requests",
+    "python-httpx",
+    "httpx/",
+    "aiohttp/",
+    "curl/",
+    "wget/",
+    "go-http-client",
+    "okhttp",
+)
+
+
+def _is_server_user_agent(ua: Optional[str]) -> bool:
+    if not ua or not ua.strip():
+        return True
+    lower = ua.lower()
+    return any(marker in lower for marker in _SERVER_UA_MARKERS)
+
+
+def _client_user_agent(request: Request, body_ua: Optional[str]) -> Optional[str]:
+    """UA จากเบราว์เซอร์เท่านั้น — ไม่ใช้ header User-Agent ของ hop ฝั่ง server."""
+    candidates = (
+        body_ua,
+        request.headers.get("x-client-user-agent"),
+        request.headers.get("x-original-user-agent"),
+    )
+    for value in candidates:
+        if value and not _is_server_user_agent(value):
+            return value.strip()
+    return None
+
+
+def _client_request_url(request: Request, body_url: Optional[str]) -> Optional[str]:
+    """URL หน้าจอ — ทิ้ง URL ของ API mso-forward."""
+    candidates = (
+        body_url,
+        request.headers.get("x-client-request-url"),
+        request.headers.get("referer"),
+    )
+    for value in candidates:
+        if not value or not value.strip():
+            continue
+        cleaned = value.strip()
+        path = cleaned.split("?", 1)[0].rstrip("/").lower()
+        if path.endswith("/mso-forward") or path.endswith("/send-data"):
+            continue
+        return cleaned
+    return None
 
 
 def _json_safe_payload(payload: Any) -> Any:
@@ -652,6 +710,22 @@ class WelfareEditRequestCreateBody(BaseModel):
 
 
 class MsoForwardCreateBody(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "send_channel": "ministry",
+                "send_by_sdshv": "user-12345",
+                "json_case": {"case_number": "case-202605-000001"},
+                "response_code": "200",
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "request_url": "https://vsmart.example/cases/512",
+            }
+        }
+    )
+
     send_channel: Literal["ministry", "logbook"] = Field(
         ...,
         description="`ministry` = ส่งต่อเข้าหระทรวง, `logbook` = ส่งต่อ MSO logbook",
@@ -659,7 +733,29 @@ class MsoForwardCreateBody(BaseModel):
     send_by_sdshv: Optional[str] = Field(None, max_length=255)
     json_case: Optional[dict[str, Any]] = None
     response_code: Optional[str] = Field(None, max_length=255)
-    response_text: Optional[str] = None
+    response_text: Optional[str] = Field(
+        None,
+        description='ไม่ต้องส่ง — ระบบเขียน `{status: "OK", id, applicant_id}` เองหลังได้ send_data.id',
+    )
+    ip_address: Optional[str] = Field(
+        None,
+        max_length=45,
+        description="ไม่ต้องส่งจาก frontend — BFF ใส่จาก X-Forwarded-For",
+    )
+    user_agent: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="navigator.userAgent จากเบราว์เซอร์ — BFF ไม่ทับค่านี้",
+        examples=[
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ],
+    )
+    request_url: Optional[str] = Field(
+        None,
+        max_length=2048,
+        description="URL หน้าจอ (window.location.href) ไม่ใช่ URL ของ API",
+        examples=["https://vsmart.example/cases/512"],
+    )
 
 
 class MoreMsoUpsertBody(BaseModel):
@@ -1823,16 +1919,110 @@ async def get_mso_forward_status_for_staff(applicant_id: int) -> Any:
     summary="บันทึกการส่งต่อ (กระทรวง หรือ MSO logbook)",
     description=(
         "ส่งต่อ `POST …/v1/case_for_staff/applicant/{applicant_id}/mso-forward` — "
-        "body ใช้ `send_channel`: `ministry` | `logbook`"
+        "body ใช้ `send_channel`: `ministry` | `logbook` "
+        "และส่ง `user_agent` (navigator.userAgent) + `request_url` (window.location.href) จากเบราว์เซอร์"
     ),
 )
 async def create_mso_forward_for_staff(
+    request: Request,
     applicant_id: int,
-    body: MsoForwardCreateBody = Body(...),
+    body: MsoForwardCreateBody = Body(
+        ...,
+        openapi_examples={
+            "from_browser": {
+                "summary": "Frontend ส่ง UA + URL หน้าจอ",
+                "value": {
+                    "send_channel": "ministry",
+                    "send_by_sdshv": "user-12345",
+                    "json_case": {"case_number": "case-202605-000001"},
+                    "response_code": "200",
+                    "user_agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "request_url": "https://vsmart.example/cases/512",
+                },
+            }
+        },
+    ),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
     payload = body.model_dump(mode="json")
+    # IP รู้ได้จาก request จริง — UA/URL ต้องมาจากเบราว์เซอร์ ห้ามใช้ User-Agent ของ hop (python-requests)
+    payload["ip_address"] = forwarded or (request.client.host if request.client else None)
+    payload["user_agent"] = _client_user_agent(request, body.user_agent)
+    payload["request_url"] = _client_request_url(request, body.request_url)
     return await _post(f"{base}/v1/case_for_staff/applicant/{applicant_id}/mso-forward", json=payload)
+
+
+@router.get(
+    "/v1/case_for_staff/mso-forward-logs",
+    tags=["case_for_staff"],
+    summary="รายการ log การส่งต่อ MSO แบบตาราง",
+    description=(
+        "ส่งต่อ `GET …/v1/case_for_staff/mso-forward-logs` — "
+        "`province_id` ไม่บังคับและส่งซ้ำได้หลายค่า"
+    ),
+)
+async def get_mso_forward_logs_for_staff(
+    province_id: Optional[list[int]] = Query(None, ge=1),
+    case_number: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    send_channel: Optional[Literal["ministry", "logbook"]] = Query(None),
+    type_money_id: Optional[int] = Query(None, ge=1),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    response_code: Optional[str] = Query(None),
+    ip_address: Optional[str] = Query(None),
+    user_agent: Optional[str] = Query(None),
+    device: Optional[str] = Query(None),
+    browser: Optional[str] = Query(None),
+    browser_version: Optional[str] = Query(None),
+    os: Optional[str] = Query(None),
+    os_version: Optional[str] = Query(None),
+    request_url: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("skip", skip), ("limit", limit)]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    optional: dict[str, Any] = {
+        "case_number": case_number,
+        "cid": cid,
+        "send_channel": send_channel,
+        "type_money_id": type_money_id,
+        "date_from": date_from.isoformat() if date_from is not None else None,
+        "date_to": date_to.isoformat() if date_to is not None else None,
+        "response_code": response_code,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "device": device,
+        "browser": browser,
+        "browser_version": browser_version,
+        "os": os,
+        "os_version": os_version,
+        "request_url": request_url,
+    }
+    for key, value in optional.items():
+        if value is not None:
+            pairs.append((key, value))
+    query_string = urlencode(pairs)
+    return await _get(f"{base}/v1/case_for_staff/mso-forward-logs?{query_string}")
+
+
+@router.get(
+    "/v1/case_for_staff/mso-forward-logs/{send_data_id}",
+    tags=["case_for_staff"],
+    summary="ดึง json_case ของ log การส่งต่อ MSO ตาม send_data.id",
+    description="ส่งต่อ `GET …/v1/case_for_staff/mso-forward-logs/{send_data_id}`",
+)
+async def get_mso_forward_json_log_for_staff(send_data_id: int) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _get(f"{base}/v1/case_for_staff/mso-forward-logs/{send_data_id}")
 
 
 @router.get(
@@ -2870,6 +3060,191 @@ async def get_case_for_staff_status_summary(
     return CaseForStaffStatusSummaryResponse.model_validate(data)
 
 
+@router.get(
+    "/v1/indicators/by-province",
+    tags=["indicators"],
+    summary="ตัวชี้วัดเงินช่วยเหลือรายจังหวัด ตามประเภทเงินพม Care",
+    description=(
+        "ส่งต่อ `GET …/v1/indicators/by-province` ใน case-service — "
+        "แยกระเบียบเงิน + approve_case.user_sdshv ต่อประเภท; "
+        "สค. นับที่จังหวัดแม่ตาม DWF; ประเภท 1–5 นับตามที่อยู่เคส"
+    ),
+    response_model=IndicatorsByProvinceResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_indicators_by_province(
+    province_id: int = Query(..., ge=1, description="รหัสจังหวัด"),
+    budget_year: int = Query(
+        ...,
+        ge=2500,
+        le=2700,
+        description="ปีงบประมาณ พ.ศ. (เช่น 2568)",
+    ),
+    case_status: IndicatorCaseStatus = Query(
+        IndicatorCaseStatus.aided,
+        description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11)",
+    ),
+) -> IndicatorsByProvinceResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs = [
+        ("province_id", province_id),
+        ("budget_year", budget_year),
+        ("case_status", case_status.value),
+    ]
+    data = await _get(f"{base}/v1/indicators/by-province?{urlencode(pairs)}")
+    return IndicatorsByProvinceResponse.model_validate(data)
+
+
+@router.get(
+    "/v1/indicators/nationwide",
+    tags=["indicators"],
+    summary="ตัวชี้วัดเงินช่วยเหลือครบทุกจังหวัด (ไม่แยกประเภทเงิน)",
+    description=(
+        "ส่งต่อ `GET …/v1/indicators/nationwide` ใน case-service — "
+        "กรอง `type_money_category_id` ได้ (ไม่ส่ง = 1–6); "
+        "สค. จัดเข้าจังหวัดแม่ตาม DWF; จังหวัดลูกได้ สค. = 0 ในหมวดนี้"
+    ),
+    response_model=IndicatorsNationwideResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_indicators_nationwide(
+    budget_year: int = Query(
+        ...,
+        ge=2500,
+        le=2700,
+        description="ปีงบประมาณ พ.ศ. (เช่น 2568)",
+    ),
+    province_id: Optional[list[int]] = Query(
+        None,
+        description="กรองเฉพาะจังหวัดที่ระบุ — ส่งซ้ำได้หลายค่า; ไม่ส่ง = ครบทุกจังหวัด",
+    ),
+    type_money_category_id: Optional[list[int]] = Query(
+        None,
+        description="กรองประเภทเงิน — ส่งซ้ำได้; ไม่ส่ง = 1–6",
+    ),
+    case_status: IndicatorCaseStatus = Query(
+        IndicatorCaseStatus.aided,
+        description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11)",
+    ),
+) -> IndicatorsNationwideResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("budget_year", budget_year),
+        ("case_status", case_status.value),
+    ]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    if type_money_category_id:
+        for tid in type_money_category_id:
+            pairs.append(("type_money_category_id", tid))
+    data = await _get(f"{base}/v1/indicators/nationwide?{urlencode(pairs)}")
+    return IndicatorsNationwideResponse.model_validate(data)
+
+
+@router.get(
+    "/v1/indicators/export",
+    tags=["indicators"],
+    summary="Export ตัวชี้วัดเงินช่วยเหลือเป็น JSON แถวแบนต่อเคส (dossier)",
+    description=(
+        "ส่งต่อ `GET …/v1/indicators/export` ใน case-service — "
+        "JSON แถวแบนครบ 10 กลุ่มให้ FE map เข้าเทมเพลต Excel; "
+        "สค. นับที่จังหวัดแม่ตาม DWF; ไม่ส่งลำดับ / จำนวนเงินที่ขอ; "
+        "ไม่รวมรหัสหน่วยงาน/เลขที่รับ"
+    ),
+    response_model=IndicatorsExportResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_indicators_export(
+    budget_year: int = Query(
+        ...,
+        ge=2500,
+        le=2700,
+        description="ปีงบประมาณ พ.ศ. (เช่น 2568)",
+    ),
+    province_id: Optional[list[int]] = Query(
+        None,
+        description="กรองด้วย effective_province — ส่งซ้ำได้หลายค่า",
+    ),
+    type_money_category_id: Optional[list[int]] = Query(
+        None,
+        description="กรองประเภทเงิน — ส่งซ้ำได้; ไม่ส่ง = 1–6",
+    ),
+    regulation_id: Optional[list[int]] = Query(
+        None,
+        description="กรองระเบียบ — ส่งซ้ำได้; ไม่ส่ง = ทุกระเบียบ",
+    ),
+    case_status: IndicatorCaseStatus = Query(
+        IndicatorCaseStatus.aided,
+        description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11)",
+    ),
+) -> IndicatorsExportResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("budget_year", budget_year),
+        ("case_status", case_status.value),
+    ]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    if type_money_category_id:
+        for tid in type_money_category_id:
+            pairs.append(("type_money_category_id", tid))
+    if regulation_id:
+        for rid in regulation_id:
+            pairs.append(("regulation_id", rid))
+    data = await _get(f"{base}/v1/indicators/export?{urlencode(pairs)}")
+    return IndicatorsExportResponse.model_validate(data)
+
+
+@router.get(
+    "/v1/indicators/province-overview",
+    tags=["indicators"],
+    summary="สรุป 4 ตัวเลขรายจังหวัด (รอรับเรื่อง / รอเบิกจ่าย / ให้ความช่วยเหลือ / ยอดเงิน)",
+    description=(
+        "ส่งต่อ `GET …/v1/indicators/province-overview` ใน case-service — "
+        "นับเคสเป็น snapshot สถานะปัจจุบัน; "
+        "`budget_year` + `case_status` มีผลเฉพาะยอดเงิน (aided=4 / forwarded=11); "
+        "สค. นับที่จังหวัดแม่ตาม DWF"
+    ),
+    response_model=IndicatorsProvinceOverviewResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_indicators_province_overview(
+    budget_year: int = Query(
+        ...,
+        ge=2500,
+        le=2700,
+        description="ปีงบประมาณ พ.ศ. (เช่น 2568) — มีผลเฉพาะยอดเงิน",
+    ),
+    province_id: Optional[list[int]] = Query(
+        None,
+        description="กรองด้วย effective_province — ส่งซ้ำได้หลายค่า; ไม่ส่ง = ครบทุกจังหวัด",
+    ),
+    regulation_id: Optional[list[int]] = Query(
+        None,
+        description="กรองระเบียบ — ส่งซ้ำได้; ไม่ส่ง = ทุกระเบียบ",
+    ),
+    case_status: IndicatorCaseStatus = Query(
+        IndicatorCaseStatus.aided,
+        description="aided=ช่วยเหลือแล้ว (4) / forwarded=ส่งต่อแล้ว (11) — มีผลเฉพาะยอดเงิน",
+    ),
+) -> IndicatorsProvinceOverviewResponse:
+    base = settings.case_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("budget_year", budget_year),
+        ("case_status", case_status.value),
+    ]
+    if province_id:
+        for pid in province_id:
+            pairs.append(("province_id", pid))
+    if regulation_id:
+        for rid in regulation_id:
+            pairs.append(("regulation_id", rid))
+    data = await _get(f"{base}/v1/indicators/province-overview?{urlencode(pairs)}")
+    return IndicatorsProvinceOverviewResponse.model_validate(data)
+
+
 @router.post(
     "/v1/notifications/staff-digest",
     tags=["notifications"],
@@ -3375,6 +3750,89 @@ async def get_dashboard_provinces_export(
 
 
 @router.get(
+    "/v1/dashboard/status/export",
+    tags=["dashboard"],
+    summary="ดาวน์โหลด Excel จากการ์ดสถานะ dashboard",
+    description=(
+        "ส่งต่อ `GET …/v1/dashboard/status/export` ใน dashboard-service — "
+        "ดาวน์โหลดรายละเอียดรายคำร้อง; กรุงเทพฯ ใช้ layout เฉพาะ, จังหวัดอื่นใช้ layout 76 จังหวัด"
+    ),
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_status_export(
+    level: Literal["provinces", "districts"] = Query(
+        ..., description="provinces = ระดับประเทศ/สสว., districts = จังหวัดที่ระบุ"
+    ),
+    report_type: Literal["situation", "case"] = Query(
+        "case", description="situation = รูปแบบรายงานสถานการณ์, case = รูปแบบรายงานเคส"
+    ),
+    province_id: Optional[list[int]] = Query(None),
+    applicant_id: Optional[list[int]] = Query(None),
+    district_id: Optional[list[int]] = Query(None),
+    sub_district_id: Optional[list[int]] = Query(None),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+) -> Response:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("level", level), ("report_type", report_type)]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    pairs = _multi_query_pairs(pairs, "applicant_id", applicant_id)
+    pairs = _multi_query_pairs(pairs, "district_id", district_id)
+    pairs = _multi_query_pairs(pairs, "sub_district_id", sub_district_id)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    r = await _get_raw(f"{base}/v1/dashboard/status/export?{urlencode(pairs)}", timeout=120.0)
+    out_headers: Dict[str, str] = {}
+    if cd := r.headers.get("content-disposition"):
+        out_headers["content-disposition"] = cd
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get(
+            "content-type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        headers=out_headers,
+    )
+
+
+@router.get(
+    "/v1/dashboard/cases",
+    tags=["dashboard"],
+    summary="รายการเคสรายบุคคลตามพื้นที่บนแผนที่",
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_cases(
+    province_id: Optional[list[int]] = Query(None),
+    district_id: Optional[int] = Query(None, ge=1),
+    current_status_id: Optional[list[int]] = Query(None),
+    type_money_id: Optional[list[int]] = Query(None),
+    search: Optional[str] = Query(None, max_length=100),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+) -> Dict[str, Any]:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [
+        ("page", page),
+        ("page_size", page_size),
+    ]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id)
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if search:
+        pairs.append(("search", search))
+    if date_from:
+        pairs.append(("date_from", date_from.isoformat()))
+    if date_to:
+        pairs.append(("date_to", date_to.isoformat()))
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id)
+    return await _get(f"{base}/v1/dashboard/cases?{urlencode(pairs)}")
+
+
+@router.get(
     "/v1/dashboard/overview",
     tags=["dashboard"],
     summary="สรุปจำนวนคำร้องตามสถานะของจังหวัด (สำหรับ donut chart)",
@@ -3552,6 +4010,82 @@ async def get_dashboard_cases(
     if postcode is not None:
         pairs.append(("postcode", postcode))
     data = await _get(f"{base}/v1/dashboard/cases?{urlencode(pairs)}", timeout=60.0)
+    return DashboardCasesRead.model_validate(data)
+
+
+@router.get(
+    "/v1/dashboard/cases_superadmin",
+    tags=["dashboard"],
+    summary="รายการคำร้องแบบตารางสำหรับ superadmin (มี cid)",
+    description=(
+        "ส่งต่อ `GET …/v1/dashboard/cases_superadmin` ใน dashboard-service โดยตรง — "
+        "ฟิลด์แถวสอดคล้อง `/v1/case_for_staff` มี pagination และ cid; "
+        "ไม่ส่ง province_id = ทุกจังหวัด"
+    ),
+    response_model=DashboardCasesRead,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def get_dashboard_cases_superadmin(
+    province_id: list[int] = Query(
+        default=[],
+        description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด",
+    ),
+    current_status_id: list[int] = Query(
+        default=[],
+        description="กรองตาม current_status_id ได้หลายค่า",
+    ),
+    type_money_id: list[int] = Query(
+        default=[],
+        description="กรองตาม type_money_category.id ได้หลายค่า",
+    ),
+    case_number: Optional[str] = Query(None),
+    current_status: Optional[str] = Query(None),
+    firstname: Optional[str] = Query(None),
+    lastname: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    datetime_create: Optional[date] = Query(None),
+    province_name: Optional[str] = Query(None),
+    district_id: Optional[int] = Query(None),
+    district_name: Optional[str] = Query(None),
+    subdistrict_id: Optional[int] = Query(None),
+    subdistrict_name: Optional[str] = Query(None),
+    subdistrict_postcode_id: Optional[int] = Query(None),
+    postcode: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+) -> DashboardCasesRead:
+    base = settings.dashboard_service_url.rstrip("/")
+    pairs: list[tuple[str, Any]] = [("page", page), ("page_size", page_size)]
+    pairs = _multi_query_pairs(pairs, "province_id", province_id or None)
+    pairs = _multi_query_pairs(pairs, "current_status_id", current_status_id or None)
+    pairs = _multi_query_pairs(pairs, "type_money_id", type_money_id or None)
+    if case_number is not None:
+        pairs.append(("case_number", case_number))
+    if current_status is not None:
+        pairs.append(("current_status", current_status))
+    if firstname is not None:
+        pairs.append(("firstname", firstname))
+    if lastname is not None:
+        pairs.append(("lastname", lastname))
+    if cid is not None:
+        pairs.append(("cid", cid))
+    if datetime_create is not None:
+        pairs.append(("datetime_create", datetime_create.isoformat()))
+    if province_name is not None:
+        pairs.append(("province_name", province_name))
+    if district_id is not None:
+        pairs.append(("district_id", district_id))
+    if district_name is not None:
+        pairs.append(("district_name", district_name))
+    if subdistrict_id is not None:
+        pairs.append(("subdistrict_id", subdistrict_id))
+    if subdistrict_name is not None:
+        pairs.append(("subdistrict_name", subdistrict_name))
+    if subdistrict_postcode_id is not None:
+        pairs.append(("subdistrict_postcode_id", subdistrict_postcode_id))
+    if postcode is not None:
+        pairs.append(("postcode", postcode))
+    data = await _get(f"{base}/v1/dashboard/cases_superadmin?{urlencode(pairs)}", timeout=60.0)
     return DashboardCasesRead.model_validate(data)
 
 
