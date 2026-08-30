@@ -1174,16 +1174,20 @@ async def export_districts(
     )
 
 
+@router.get("/cases_superadmin", response_model=DashboardCasesRead)
 @router.get("/cases", response_model=DashboardCasesRead)
 async def get_cases(
-    province_id: list[int] | None = Query(
-        None, description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด"
+    province_id: list[int] = Query(
+        default=[],
+        description="กรองเฉพาะจังหวัดที่ระบุ ส่งซ้ำได้หลายค่า ไม่ส่ง = ทุกจังหวัด",
     ),
-    current_status_id: list[int] | None = Query(
-        None, description="กรองตาม current_status_id ได้หลายค่า"
+    current_status_id: list[int] = Query(
+        default=[],
+        description="กรองตาม current_status_id ได้หลายค่า",
     ),
-    type_money_id: list[int] | None = Query(
-        None, description="กรองตาม type_money_category.id ได้หลายค่า"
+    type_money_id: list[int] = Query(
+        default=[],
+        description="กรองตาม type_money_category.id ได้หลายค่า",
     ),
     case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
     current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
