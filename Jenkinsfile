@@ -1,3 +1,23 @@
+// Wraps a kubectl (or any) shell step with retry + backoff. Deploy-time
+// writes to the cluster (kubectl apply/set image) and even plain reads
+// (kubectl rollout status) have been observed failing with
+// "etcdserver: request timed out" when the control plane's etcd is under
+// I/O pressure — a transient condition that a plain re-run of the same
+// command has consistently cleared. Retrying immediately tends to hit the
+// same busy window again, so this sleeps between attempts to give etcd a
+// chance to recover instead of hammering it.
+def kubectlWithRetry(String script, int attempts = 3, int delaySeconds = 20) {
+    retry(attempts) {
+        try {
+            sh script
+        } catch (Exception e) {
+            echo "kubectl step failed (possible control-plane/etcd timeout), waiting ${delaySeconds}s before retry: ${e.getMessage()}"
+            sleep(time: delaySeconds, unit: 'SECONDS')
+            throw e
+        }
+    }
+}
+
 pipeline {
 
     agent any
@@ -351,13 +371,15 @@ pipeline {
                         }
                     }
                     steps {
-                        sh '''
-                            export KUBECONFIG=${KUBECONFIG}
-                            kubectl apply -f k8s/external-db.yml
-                            kubectl apply -f k8s/case-service-storage.yml
-                            kubectl apply -f k8s/service.yml
-                            kubectl apply -f k8s/hpa.yml
-                        '''
+                        script {
+                            kubectlWithRetry('''
+                                export KUBECONFIG=${KUBECONFIG}
+                                kubectl apply -f k8s/external-db.yml
+                                kubectl apply -f k8s/case-service-storage.yml
+                                kubectl apply -f k8s/service.yml
+                                kubectl apply -f k8s/hpa.yml
+                            ''')
+                        }
                         // k8s/deployment.yml holds all 6 services with their image field
                         // hardcoded to "<svc>-latest". Re-applying it on every build reverts
                         // whichever service is about to be redeployed back to "-latest" first,
@@ -370,10 +392,10 @@ pipeline {
                         // rely on Rollout's set image as the sole write for that Deployment.
                         script {
                             if (params.BUILD_ALL) {
-                                sh '''
+                                kubectlWithRetry('''
                                     export KUBECONFIG=${KUBECONFIG}
                                     kubectl apply -f k8s/deployment.yml
-                                '''
+                                ''')
                             }
                         }
                     }
@@ -390,9 +412,11 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/external-db-np.yml
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/external-db-np.yml
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -414,19 +438,21 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-np.yml
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-np.yml
 
-                                    if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
-                                            pvc/vcare-case-service-uploads-beta-pvc --timeout=60s; then
-                                        echo "--- PVC not Bound, describing ---"
-                                        kubectl -n ${NP_NAMESPACE} describe pvc vcare-case-service-uploads-beta-pvc
-                                        kubectl -n ${NP_NAMESPACE} describe pv vcare-case-service-uploads-np-pv
-                                        exit 1
-                                    fi
+                                        if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
+                                                pvc/vcare-case-service-uploads-beta-pvc --timeout=60s; then
+                                            echo "--- PVC not Bound, describing ---"
+                                            kubectl -n ${NP_NAMESPACE} describe pvc vcare-case-service-uploads-beta-pvc
+                                            kubectl -n ${NP_NAMESPACE} describe pv vcare-case-service-uploads-np-pv
+                                            exit 1
+                                        fi
 
-                                    kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-beta-pvc
-                                '''
+                                        kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-beta-pvc
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -453,9 +479,11 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-beta.yml
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-beta.yml
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -474,10 +502,12 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/service-beta.yml
-                                    kubectl -n ${NP_NAMESPACE} get svc
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/service-beta.yml
+                                        kubectl -n ${NP_NAMESPACE} get svc
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -494,10 +524,12 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-np.yml
-                                    kubectl -n ${NP_NAMESPACE} get hpa
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-np.yml
+                                        kubectl -n ${NP_NAMESPACE} get hpa
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -525,22 +557,24 @@ pipeline {
                     steps {
                         node('nonprod') {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    # deployment name : secret name — "bff-vsmartcare" maps to
-                                    # "vcare-bff-secret-beta", not "vcare-bff-vsmartcare-secret-beta"
-                                    for pair in \
-                                        "bff-vsmartcare:vcare-bff-secret-beta" \
-                                        "case-service:vcare-case-service-secret-beta" \
-                                        "notification-service:vcare-notification-service-secret-beta" \
-                                        "ocr-service:vcare-ocr-service-secret-beta" \
-                                        "thaid-auth-service:vcare-thaid-auth-service-secret-beta" \
-                                        "dashboard-service:vcare-dashboard-service-secret-beta"; do
-                                        d="${pair%%:*}"
-                                        s="${pair##*:}"
-                                        kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
-                                            "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
-                                    done
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        # deployment name : secret name — "bff-vsmartcare" maps to
+                                        # "vcare-bff-secret-beta", not "vcare-bff-vsmartcare-secret-beta"
+                                        for pair in \
+                                            "bff-vsmartcare:vcare-bff-secret-beta" \
+                                            "case-service:vcare-case-service-secret-beta" \
+                                            "notification-service:vcare-notification-service-secret-beta" \
+                                            "ocr-service:vcare-ocr-service-secret-beta" \
+                                            "thaid-auth-service:vcare-thaid-auth-service-secret-beta" \
+                                            "dashboard-service:vcare-dashboard-service-secret-beta"; do
+                                            d="${pair%%:*}"
+                                            s="${pair##*:}"
+                                            kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                                "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
+                                        done
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -570,19 +604,21 @@ pipeline {
                                         passwordVariable: 'REGISTRY_PASS'
                                     )
                                 ]) {
-                                    sh '''
-                                        kubectl -n ${NP_NAMESPACE} create secret docker-registry betabackcred \
-                                            --docker-server=${REGISTRY} \
-                                            --docker-username="$REGISTRY_USER" \
-                                            --docker-password="$REGISTRY_PASS" \
-                                            --dry-run=client -o yaml | kubectl apply -f -
+                                    script {
+                                        kubectlWithRetry('''
+                                            kubectl -n ${NP_NAMESPACE} create secret docker-registry betabackcred \
+                                                --docker-server=${REGISTRY} \
+                                                --docker-username="$REGISTRY_USER" \
+                                                --docker-password="$REGISTRY_PASS" \
+                                                --dry-run=client -o yaml | kubectl apply -f -
 
-                                        for d in bff-vsmartcare case-service notification-service \
-                                                 ocr-service thaid-auth-service dashboard-service; do
-                                            kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
-                                                '[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"},{"name":"regcred-staging"},{"name":"betabackcred"}]}]'
-                                        done
-                                    '''
+                                            for d in bff-vsmartcare case-service notification-service \
+                                                     ocr-service thaid-auth-service dashboard-service; do
+                                                kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                                    '[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"},{"name":"regcred-staging"},{"name":"betabackcred"}]}]'
+                                            done
+                                        ''')
+                                    }
                                 }
                             }
                         }
@@ -600,19 +636,21 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-vtn.yml
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/case-service-storage-vtn.yml
 
-                                    if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
-                                            pvc/vcare-case-service-uploads-vtn-pvc --timeout=60s; then
-                                        echo "--- PVC not Bound, describing ---"
-                                        kubectl -n ${NP_NAMESPACE} describe pvc vcare-case-service-uploads-vtn-pvc
-                                        kubectl -n ${NP_NAMESPACE} describe pv vcare-case-service-uploads-vtn-pv
-                                        exit 1
-                                    fi
+                                        if ! kubectl -n ${NP_NAMESPACE} wait --for=jsonpath='{.status.phase}'=Bound \
+                                                pvc/vcare-case-service-uploads-vtn-pvc --timeout=60s; then
+                                            echo "--- PVC not Bound, describing ---"
+                                            kubectl -n ${NP_NAMESPACE} describe pvc vcare-case-service-uploads-vtn-pvc
+                                            kubectl -n ${NP_NAMESPACE} describe pv vcare-case-service-uploads-vtn-pv
+                                            exit 1
+                                        fi
 
-                                    kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-vtn-pvc
-                                '''
+                                        kubectl -n ${NP_NAMESPACE} get pvc vcare-case-service-uploads-vtn-pvc
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -635,9 +673,11 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-vtn.yml
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/deployment-vtn.yml
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -653,10 +693,12 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/service-vtn.yml
-                                    kubectl -n ${NP_NAMESPACE} get svc
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/service-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} get svc
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -673,10 +715,12 @@ pipeline {
                         node('nonprod') {
                             unstash 'np-manifests'
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-vtn.yml
-                                    kubectl -n ${NP_NAMESPACE} get hpa
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        kubectl -n ${NP_NAMESPACE} apply -f k8s/hpa-vtn.yml
+                                        kubectl -n ${NP_NAMESPACE} get hpa
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -696,20 +740,22 @@ pipeline {
                     steps {
                         node('nonprod') {
                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                sh '''
-                                    for pair in \
-                                        "bff-vsmartcare-vtn:vcare-bff-secret-vtn" \
-                                        "case-service-vtn:vcare-case-service-secret-vtn" \
-                                        "notification-service-vtn:vcare-notification-service-secret-vtn" \
-                                        "ocr-service-vtn:vcare-ocr-service-secret-vtn" \
-                                        "thaid-auth-service-vtn:vcare-thaid-auth-service-secret-vtn" \
-                                        "dashboard-service-vtn:vcare-dashboard-service-secret-vtn"; do
-                                        d="${pair%%:*}"
-                                        s="${pair##*:}"
-                                        kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
-                                            "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
-                                    done
-                                '''
+                                script {
+                                    kubectlWithRetry('''
+                                        for pair in \
+                                            "bff-vsmartcare-vtn:vcare-bff-secret-vtn" \
+                                            "case-service-vtn:vcare-case-service-secret-vtn" \
+                                            "notification-service-vtn:vcare-notification-service-secret-vtn" \
+                                            "ocr-service-vtn:vcare-ocr-service-secret-vtn" \
+                                            "thaid-auth-service-vtn:vcare-thaid-auth-service-secret-vtn" \
+                                            "dashboard-service-vtn:vcare-dashboard-service-secret-vtn"; do
+                                            d="${pair%%:*}"
+                                            s="${pair##*:}"
+                                            kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                                "[{\\"op\\":\\"replace\\",\\"path\\":\\"/spec/template/spec/containers/0/envFrom/0/secretRef/name\\",\\"value\\":\\"$s\\"}]"
+                                        done
+                                    ''')
+                                }
                             }
                         }
                     }
@@ -733,19 +779,21 @@ pipeline {
                                         passwordVariable: 'REGISTRY_PASS'
                                     )
                                 ]) {
-                                    sh '''
-                                        kubectl -n ${NP_NAMESPACE} create secret docker-registry vtnbackcred \
-                                            --docker-server=${REGISTRY} \
-                                            --docker-username="$REGISTRY_USER" \
-                                            --docker-password="$REGISTRY_PASS" \
-                                            --dry-run=client -o yaml | kubectl apply -f -
+                                    script {
+                                        kubectlWithRetry('''
+                                            kubectl -n ${NP_NAMESPACE} create secret docker-registry vtnbackcred \
+                                                --docker-server=${REGISTRY} \
+                                                --docker-username="$REGISTRY_USER" \
+                                                --docker-password="$REGISTRY_PASS" \
+                                                --dry-run=client -o yaml | kubectl apply -f -
 
-                                        for d in bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
-                                                 ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn; do
-                                            kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
-                                                '[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"},{"name":"regcred-staging"},{"name":"vtnbackcred"}]}]'
-                                        done
-                                    '''
+                                            for d in bff-vsmartcare-vtn case-service-vtn notification-service-vtn \
+                                                     ocr-service-vtn thaid-auth-service-vtn dashboard-service-vtn; do
+                                                kubectl -n ${NP_NAMESPACE} patch deployment "$d" --type=json -p \
+                                                    '[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"},{"name":"regcred-staging"},{"name":"vtnbackcred"}]}]'
+                                            done
+                                        ''')
+                                    }
                                 }
                             }
                         }
@@ -772,7 +820,7 @@ pipeline {
                                         // ":latest" since the last vtn rollout.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/bff-vsmartcare-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-bff-latest
                                                     # set image is a no-op when the tag string is unchanged (always true
@@ -786,7 +834,7 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
@@ -795,7 +843,7 @@ pipeline {
                                         // sidesteps needing the exact container name.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/bff-vsmartcare \
                                                         '*'=${BASE_IMAGE}:vcare-bff${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/bff-vsmartcare --timeout=600s; then
@@ -805,16 +853,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-bff \
                                                 vcare-bff=${BASE_IMAGE}:vcare-bff-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-bff --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
@@ -836,7 +884,7 @@ pipeline {
                                         // the same way a normal Deployment update would.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/case-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-case-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/case-service-vtn
@@ -847,7 +895,7 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
@@ -856,7 +904,7 @@ pipeline {
                                         // tradeoff.
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/case-service \
                                                         '*'=${BASE_IMAGE}:vcare-case-service${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/case-service --timeout=600s; then
@@ -866,16 +914,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-case-service \
                                                 vcare-case-service=${BASE_IMAGE}:vcare-case-service-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-case-service --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
@@ -894,7 +942,7 @@ pipeline {
                                     if (branchName.contains('vtn')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/notification-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-notification-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/notification-service-vtn
@@ -905,13 +953,13 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/notification-service \
                                                         '*'=${BASE_IMAGE}:vcare-notification-service${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/notification-service --timeout=600s; then
@@ -921,16 +969,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-notification-service \
                                                 vcare-notification-service=${BASE_IMAGE}:vcare-notification-service-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-notification-service --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
@@ -949,7 +997,7 @@ pipeline {
                                     if (branchName.contains('vtn')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-ocr-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/ocr-service-vtn
@@ -960,13 +1008,13 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/ocr-service \
                                                         '*'=${BASE_IMAGE}:vcare-ocr-service${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/ocr-service --timeout=600s; then
@@ -976,16 +1024,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-ocr-service \
                                                 vcare-ocr-service=${BASE_IMAGE}:vcare-ocr-service-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-ocr-service --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
@@ -1004,7 +1052,7 @@ pipeline {
                                     if (branchName.contains('vtn')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-thaid-auth-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/thaid-auth-service-vtn
@@ -1015,13 +1063,13 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/thaid-auth-service \
                                                         '*'=${BASE_IMAGE}:vcare-thaid-auth-service${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/thaid-auth-service --timeout=600s; then
@@ -1031,16 +1079,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-thaid-auth-service \
                                                 vcare-thaid-auth-service=${BASE_IMAGE}:vcare-thaid-auth-service-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-thaid-auth-service --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
@@ -1059,7 +1107,7 @@ pipeline {
                                     if (branchName.contains('vtn')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service-vtn \
                                                         '*'=${BASE_IMAGE}:vcare-dashboard-service-latest
                                                     kubectl -n ${NP_NAMESPACE} rollout restart deployment/dashboard-service-vtn
@@ -1070,13 +1118,13 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else if (branchName.contains('beta')) {
                                         node('nonprod') {
                                             withEnv(["KUBECONFIG=${NP_KUBECONFIG}"]) {
-                                                sh '''
+                                                kubectlWithRetry('''
                                                     kubectl -n ${NP_NAMESPACE} set image deployment/dashboard-service \
                                                         '*'=${BASE_IMAGE}:vcare-dashboard-service${BRANCH_SUFFIX}-${IMAGE_TAG}
                                                     if ! kubectl -n ${NP_NAMESPACE} rollout status deployment/dashboard-service --timeout=600s; then
@@ -1086,16 +1134,16 @@ pipeline {
                                                         kubectl -n ${NP_NAMESPACE} get events --sort-by=.lastTimestamp | tail -30
                                                         exit 1
                                                     fi
-                                                '''
+                                                ''')
                                             }
                                         }
                                     } else {
-                                        sh '''
+                                        kubectlWithRetry('''
                                             export KUBECONFIG=${KUBECONFIG}
                                             kubectl -n ${NAMESPACE} set image deployment/vcare-dashboard-service \
                                                 vcare-dashboard-service=${BASE_IMAGE}:vcare-dashboard-service-${IMAGE_TAG}
                                             kubectl -n ${NAMESPACE} rollout status deployment/vcare-dashboard-service --timeout=600s
-                                        '''
+                                        ''')
                                     }
                                 }
                             }
