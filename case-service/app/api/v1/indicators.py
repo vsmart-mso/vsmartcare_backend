@@ -51,7 +51,7 @@ CaseStatusParam = Annotated[
     summary="ตัวชี้วัดเงินช่วยเหลือรายจังหวัด ตามประเภทเงินพม Care",
     description=(
         "สรุปเงิน/จำนวนเคสแยก 6 ประเภทเงินของจังหวัดที่เลือก — "
-        "แต่ละประเภทมี by_regulation (ระเบียบเงิน) และ by_approver_sdshv (ผู้อนุมัติจาก approve_case); "
+        "แต่ละประเภทมี by_regulation (ระเบียบเงิน) และ by_disburse_sdshv (ผู้เบิกจ่ายจาก welfare_payment); "
         "เลือก `case_status=aided|forwarded`; "
         "สค. (type 6) นับที่จังหวัดแม่ตาม DWF (`drpod_dwf.json`); ประเภท 1–5 นับตามที่อยู่เคส"
     ),

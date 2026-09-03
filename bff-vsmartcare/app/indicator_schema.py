@@ -31,8 +31,11 @@ class IndicatorExportFilterMeta(IndicatorFilterMeta):
     regulation_ids: list[int] | None = None
 
 
-class IndicatorApproverSdshvItem(BaseModel):
-    user_sdshv: str | None = None
+class IndicatorDisburseSdshvItem(BaseModel):
+    user_sdshv: str | None = Field(
+        None,
+        description="ผู้เบิกจ่ายจาก welfare_payment.user_sdshv แถวล่าสุด — null = ไม่ระบุ",
+    )
     case_count: int = Field(..., ge=0)
     total_money_amount: Decimal = Field(..., ge=0)
 
@@ -43,7 +46,10 @@ class IndicatorRegulationBreakdownItem(BaseModel):
     regulation_short_name: str | None = None
     case_count: int = Field(..., ge=0)
     total_money_amount: Decimal = Field(..., ge=0)
-    by_approver_sdshv: list[IndicatorApproverSdshvItem] = Field(default_factory=list)
+    by_disburse_sdshv: list[IndicatorDisburseSdshvItem] = Field(
+        default_factory=list,
+        description="แยกตามผู้เบิกจ่าย welfare_payment.user_sdshv",
+    )
 
 
 class IndicatorMoneyItem(BaseModel):
@@ -111,16 +117,20 @@ class IndicatorExportCaseItem(BaseModel):
     marital_status_name: str | None = None
     house_number: str | None = None
     house_moo: str | None = None
+    house_name: str | None = None
     alley: str | None = None
+    sub_lane: str | None = None
     road: str | None = None
     sub_district_name: str | None = None
     district_name: str | None = None
+    postcode: str | None = None
     address_province_id: int
     address_province_name: str
     effective_province_id: int
     effective_province_name: str
     latitude: str | None = None
     longitude: str | None = None
+    nearby_landmark: str | None = None
     address_full: str | None = None
     occupation: str | None = None
     monthly_income: str | None = None
@@ -141,8 +151,11 @@ class IndicatorExportCaseItem(BaseModel):
     family_distress: str | None = None
     problem_details: str | None = None
     help_request_summary: str | None = None
-    request_in_kind_text: str | None = None
-    request_other_text: str | None = None
+    help_request_money: bool = False
+    help_request_kind: bool = False
+    help_request_kind_text: str | None = None
+    help_request_other: bool = False
+    help_request_other_text: str | None = None
     type_money_category_id: int | None = None
     type_money_name: str | None = None
     type_money_name_acronym: str | None = None
@@ -160,6 +173,7 @@ class IndicatorExportCaseItem(BaseModel):
     payee_cid: str | None = None
     payee_mobile: str | None = None
     bank_name: str | None = None
+    bank_code: str | None = None
     account_number: str | None = None
     account_name: str | None = None
     bank_branch: str | None = None

@@ -3066,7 +3066,7 @@ async def get_case_for_staff_status_summary(
     summary="ตัวชี้วัดเงินช่วยเหลือรายจังหวัด ตามประเภทเงินพม Care",
     description=(
         "ส่งต่อ `GET …/v1/indicators/by-province` ใน case-service — "
-        "แยกระเบียบเงิน + approve_case.user_sdshv ต่อประเภท; "
+        "แยกระเบียบเงิน + welfare_payment.user_sdshv (ผู้เบิกจ่าย) ต่อประเภท; "
         "สค. นับที่จังหวัดแม่ตาม DWF; ประเภท 1–5 นับตามที่อยู่เคส"
     ),
     response_model=IndicatorsByProvinceResponse,
