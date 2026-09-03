@@ -58,12 +58,12 @@ class IndicatorExportFilterMeta(IndicatorFilterMeta):
     )
 
 
-class IndicatorApproverSdshvItem(BaseModel):
-    """ยอดแยกตามผู้อนุมัติ (approve_case.user_sdshv)."""
+class IndicatorDisburseSdshvItem(BaseModel):
+    """ยอดแยกตามผู้เบิกจ่าย (welfare_payment.user_sdshv แถวล่าสุด)."""
 
     user_sdshv: str | None = Field(
         None,
-        description="ผู้อนุมัติจาก approve_case.user_sdshv — null = ไม่ระบุ",
+        description="ผู้เบิกจ่ายจาก welfare_payment.user_sdshv — null = ไม่ระบุ",
     )
     case_count: int = Field(..., ge=0)
     total_money_amount: Decimal = Field(..., ge=0)
@@ -77,7 +77,10 @@ class IndicatorRegulationBreakdownItem(BaseModel):
     regulation_short_name: str | None = None
     case_count: int = Field(..., ge=0)
     total_money_amount: Decimal = Field(..., ge=0)
-    by_approver_sdshv: list[IndicatorApproverSdshvItem] = Field(default_factory=list)
+    by_disburse_sdshv: list[IndicatorDisburseSdshvItem] = Field(
+        default_factory=list,
+        description="แยกตามผู้เบิกจ่าย welfare_payment.user_sdshv แถวล่าสุด",
+    )
 
 
 class IndicatorMoneyItem(BaseModel):
@@ -89,7 +92,7 @@ class IndicatorMoneyItem(BaseModel):
     total_money_amount: Decimal = Field(..., ge=0)
     by_regulation: list[IndicatorRegulationBreakdownItem] = Field(
         default_factory=list,
-        description="แยกระเบียบเงิน + ผู้อนุมัติ approve_case.user_sdshv",
+        description="แยกระเบียบเงิน + ผู้เบิกจ่าย welfare_payment.user_sdshv",
     )
 
 
@@ -194,16 +197,35 @@ class IndicatorExportCaseItem(BaseModel):
     marital_status_name: str | None = None
     house_number: str | None = None
     house_moo: str | None = None
-    alley: str | None = None
+    house_name: str | None = Field(
+        None,
+        description="ชื่อหมู่บ้านจาก address.house_name",
+    )
+    alley: str | None = Field(
+        None,
+        description="ตรอกจาก address.alley",
+    )
+    sub_lane: str | None = Field(
+        None,
+        description="ซอยจาก address.sub_lane",
+    )
     road: str | None = None
     sub_district_name: str | None = None
     district_name: str | None = None
+    postcode: str | None = Field(
+        None,
+        description="รหัสไปรษณีย์จาก postcode.name",
+    )
     address_province_id: int
     address_province_name: str
     effective_province_id: int
     effective_province_name: str
     latitude: str | None = None
     longitude: str | None = None
+    nearby_landmark: str | None = Field(
+        None,
+        description="สถานที่ตั้งใกล้เคียงที่มองเห็นง่ายจาก address.nearby_landmark",
+    )
     address_full: str | None = Field(
         None,
         description="ที่อยู่รวมจากชิ้นส่วน (คำนวณใน Python สำหรับ Excel)",
@@ -215,14 +237,20 @@ class IndicatorExportCaseItem(BaseModel):
         None,
         description="รายได้ผู้ประสบปัญหา/เดือน รูปแบบ 5,000.00",
     )
-    family_occupation: str | None = None
+    family_occupation: str | None = Field(
+        None,
+        description="อาชีพหลักของครอบครัว: occupation_types.name + (family_occupation)",
+    )
     household_member_count: int | None = Field(
         None,
         ge=0,
         description="จำนวนสมาชิกครัวเรือน ไม่รวมผู้ประสบปัญหา (= len(household_members))",
     )
     housing_type_name: str | None = None
-    housing_shelter: str | None = None
+    housing_shelter: str | None = Field(
+        None,
+        description="สภาพที่อยู่อาศัยจาก economic_infos.housing_shelter",
+    )
     housing_rent: str | None = Field(
         None,
         description="ค่าเช่า/เดือน รูปแบบ 5,000.00",
@@ -258,9 +286,30 @@ class IndicatorExportCaseItem(BaseModel):
     # --- 7. ปัญหา / ความต้องการ ---
     family_distress: str | None = None
     problem_details: str | None = None
-    help_request_summary: str | None = None
-    request_in_kind_text: str | None = None
-    request_other_text: str | None = None
+    help_request_summary: str | None = Field(
+        None,
+        description="ชื่อประเภทที่เลือก คั่น '; ' — เงิน / สิ่งของ / อื่น ๆ",
+    )
+    help_request_money: bool = Field(
+        False,
+        description="เลือกช่วยเหลือเป็นเงิน (request_types.id=1)",
+    )
+    help_request_kind: bool = Field(
+        False,
+        description="เลือกช่วยเหลือเป็นสิ่งของ (request_types.id=2)",
+    )
+    help_request_kind_text: str | None = Field(
+        None,
+        description="รายละเอียดสิ่งของ เมื่อ help_request_kind=true",
+    )
+    help_request_other: bool = Field(
+        False,
+        description="เลือกช่วยเหลือเรื่องอื่นๆ (request_types.id=3)",
+    )
+    help_request_other_text: str | None = Field(
+        None,
+        description="รายละเอียดอื่น ๆ เมื่อ help_request_other=true",
+    )
 
     # --- 8. การพิจารณา ---
     type_money_category_id: int | None = None
@@ -288,6 +337,10 @@ class IndicatorExportCaseItem(BaseModel):
     payee_cid: str | None = None
     payee_mobile: str | None = None
     bank_name: str | None = None
+    bank_code: str | None = Field(
+        None,
+        description="รหัสธนาคารจาก bank_name.bank_code (case_payment แล้วค่อย applicant)",
+    )
     account_number: str | None = None
     account_name: str | None = None
     bank_branch: str | None = None
