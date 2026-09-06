@@ -55,7 +55,7 @@ from ..models.person import Person
 from ..models.status_log import WelfareRequestStatus
 from ..models.welfare import WelfareHistory, WelfareHistoryDetail, WelfareRequestType
 from ..schemas.indicators import (
-    IndicatorApproverSdshvItem,
+    IndicatorDisburseSdshvItem,
     IndicatorCaseStatus,
     IndicatorExportCaseItem,
     IndicatorExportFilterMeta,
@@ -88,6 +88,9 @@ PHYSICAL_CONDITION_TH: dict[str, str] = {
 }
 EXPORT_CASE_CHANNEL = "พม.CARE"
 EXPORT_AGG_SEP = "; "
+REQUEST_TYPE_MONEY_ID = 1
+REQUEST_TYPE_IN_KIND_ID = 2
+REQUEST_TYPE_OTHER_ID = 3
 
 # case_status=aided — ช่วยเหลือแล้วเท่านั้น (4)
 INDICATOR_AIDED_LATEST_STATUS_IDS: tuple[int, ...] = (
@@ -280,28 +283,10 @@ def _build_items(
     return items
 
 
-def _latest_approved_user_sdshv_subquery():
-    """แถว approve_case ล่าสุดที่อนุมัติสำเร็จ ต่อ applicant → user_sdshv."""
-    return (
-        select(
-            ApproveCase.applicant_id.label("applicant_id"),
-            ApproveCase.user_sdshv.label("user_sdshv"),
-            func.row_number()
-            .over(
-                partition_by=ApproveCase.applicant_id,
-                order_by=[ApproveCase.id.desc()],
-            )
-            .label("rn"),
-        )
-        .where(ApproveCase.approve_status.is_(True))
-        .subquery()
-    )
-
-
 def _nest_regulation_sdshv_rows(
     rows: list,
 ) -> dict[int, list[IndicatorRegulationBreakdownItem]]:
-    """จัดแถว GROUP BY type/regulation/approver → nested by_regulation[].by_approver_sdshv[]."""
+    """จัดแถว GROUP BY type/regulation/disburse → nested by_regulation[].by_disburse_sdshv[]."""
     type_map: dict[
         int,
         dict[
@@ -329,7 +314,7 @@ def _nest_regulation_sdshv_rows(
         reg_items: list[IndicatorRegulationBreakdownItem] = []
         for (reg_id, reg_name, reg_short), sdshv_rows in regs.items():
             sdshv_items = [
-                IndicatorApproverSdshvItem(
+                IndicatorDisburseSdshvItem(
                     user_sdshv=sdshv,
                     case_count=cnt,
                     total_money_amount=money,
@@ -349,7 +334,7 @@ def _nest_regulation_sdshv_rows(
                         (i.total_money_amount for i in sdshv_items),
                         start=Decimal("0"),
                     ),
-                    by_approver_sdshv=sdshv_items,
+                    by_disburse_sdshv=sdshv_items,
                 )
             )
         reg_items.sort(
@@ -516,10 +501,13 @@ def _export_address_detail_subquery():
             Address.applicant_id.label("applicant_id"),
             Address.house_number.label("house_number"),
             Address.house_moo.label("house_moo"),
+            Address.house_name.label("house_name"),
             Address.alley.label("alley"),
+            Address.sub_lane.label("sub_lane"),
             Address.road.label("road"),
             Address.latitude.label("latitude"),
             Address.longitude.label("longitude"),
+            Address.nearby_landmark.label("nearby_landmark"),
             Address.sub_district_postcode_id.label("sub_district_postcode_id"),
             func.row_number()
             .over(
@@ -537,8 +525,10 @@ def _export_economic_subquery():
         select(
             EconomicInfo.applicant_id.label("applicant_id"),
             EconomicInfo.occupation.label("occupation"),
+            EconomicInfo.occupation_type_id.label("occupation_type_id"),
             EconomicInfo.monthly_income.label("monthly_income"),
             EconomicInfo.family_occupation.label("family_occupation"),
+            EconomicInfo.family_occupation_type_id.label("family_occupation_type_id"),
             EconomicInfo.housing_shelter.label("housing_shelter"),
             EconomicInfo.housing_types_rent.label("housing_rent"),
             EconomicInfo.housing_types_id.label("housing_types_id"),
@@ -822,11 +812,29 @@ def _export_request_types_agg_subquery():
                 RequestType.name,
                 aggregate_order_by(literal(EXPORT_AGG_SEP), RequestType.id.asc()),
             ).label("help_request_summary"),
+            func.coalesce(
+                func.bool_or(
+                    WelfareRequestType.request_type_id == REQUEST_TYPE_MONEY_ID
+                ),
+                False,
+            ).label("help_request_money"),
+            func.coalesce(
+                func.bool_or(
+                    WelfareRequestType.request_type_id == REQUEST_TYPE_IN_KIND_ID
+                ),
+                False,
+            ).label("help_request_kind"),
             func.max(WelfareRequestType.request_in_kind_text).label(
-                "request_in_kind_text"
+                "help_request_kind_text"
             ),
+            func.coalesce(
+                func.bool_or(
+                    WelfareRequestType.request_type_id == REQUEST_TYPE_OTHER_ID
+                ),
+                False,
+            ).label("help_request_other"),
             func.max(WelfareRequestType.request_other_text).label(
-                "request_other_text"
+                "help_request_other_text"
             ),
         )
         .select_from(WelfareRequestType)
@@ -863,6 +871,9 @@ def _build_address_full(
     sub_district_name: str | None,
     district_name: str | None,
     province_name: str | None,
+    house_name: str | None = None,
+    sub_lane: str | None = None,
+    postcode: str | None = None,
 ) -> str | None:
     """รวมชิ้นส่วนที่อยู่เป็นข้อความเดียวสำหรับ Excel."""
     parts: list[str] = []
@@ -870,8 +881,12 @@ def _build_address_full(
         parts.append(str(house_number).strip())
     if house_moo:
         parts.append(f"ม.{str(house_moo).strip()}")
+    if house_name:
+        parts.append(str(house_name).strip())
     if alley:
         parts.append(str(alley).strip())
+    if sub_lane:
+        parts.append(f"ซ.{str(sub_lane).strip()}")
     if road:
         parts.append(f"ถ.{str(road).strip()}")
     if sub_district_name:
@@ -880,6 +895,8 @@ def _build_address_full(
         parts.append(f"อ.{str(district_name).strip()}")
     if province_name:
         parts.append(f"จ.{str(province_name).strip()}")
+    if postcode:
+        parts.append(str(postcode).strip())
     return " ".join(parts) if parts else None
 
 
@@ -987,16 +1004,16 @@ async def _aggregate_by_type_regulation_sdshv(
     province_ids: list[int] | None,
     case_status: IndicatorCaseStatus,
 ) -> dict[int, list[IndicatorRegulationBreakdownItem]]:
-    """แยกยอดตามประเภทเงิน → ระเบียบ → approve_case.user_sdshv (ผู้อนุมัติล่าสุดที่อนุมัติ)."""
+    """แยกยอดตามประเภทเงิน → ระเบียบ → welfare_payment.user_sdshv (ผู้เบิกจ่ายล่าสุด)."""
     province_sq = _province_applicants_base(province_ids)
-    approve_sq = _latest_approved_user_sdshv_subquery()
+    disburse_sq = _latest_disburse_payment_subquery()
     stmt = _apply_eligible_filters(
         select(
             Applicant.type_money_category_id.label("type_money_category_id"),
             CaseRegulationChoice.regulation_id.label("regulation_id"),
             AnnouncementRegulation.name.label("regulation_name"),
             AnnouncementRegulation.short_name.label("regulation_short_name"),
-            approve_sq.c.user_sdshv.label("user_sdshv"),
+            disburse_sq.c.user_sdshv.label("user_sdshv"),
             func.count().label("case_count"),
             func.coalesce(
                 func.sum(func.coalesce(CaseRegulationChoice.money_amount, 0)),
@@ -1013,10 +1030,10 @@ async def _aggregate_by_type_regulation_sdshv(
             AnnouncementRegulation.id == CaseRegulationChoice.regulation_id,
         )
         .outerjoin(
-            approve_sq,
+            disburse_sq,
             and_(
-                approve_sq.c.applicant_id == Applicant.id,
-                approve_sq.c.rn == 1,
+                disburse_sq.c.applicant_id == Applicant.id,
+                disburse_sq.c.rn == 1,
             ),
         )
         .group_by(
@@ -1024,12 +1041,12 @@ async def _aggregate_by_type_regulation_sdshv(
             CaseRegulationChoice.regulation_id,
             AnnouncementRegulation.name,
             AnnouncementRegulation.short_name,
-            approve_sq.c.user_sdshv,
+            disburse_sq.c.user_sdshv,
         )
         .order_by(
             Applicant.type_money_category_id.asc(),
             CaseRegulationChoice.regulation_id.asc().nulls_last(),
-            approve_sq.c.user_sdshv.asc().nulls_last(),
+            disburse_sq.c.user_sdshv.asc().nulls_last(),
         )
     )
     result = await session.execute(stmt)
@@ -1359,6 +1376,8 @@ async def fetch_indicators_export(
     person_prefix = aliased(PrefixType, name="person_prefix")
     payment_bank = aliased(BankName, name="payment_bank")
     applicant_bank = aliased(BankName, name="applicant_bank")
+    occupation_type = aliased(OccupationType, name="occupation_type")
+    family_occupation_type = aliased(OccupationType, name="family_occupation_type")
 
     effective_aided_at = func.coalesce(
         aided_at_sq.c.aided_at,
@@ -1373,6 +1392,7 @@ async def fetch_indicators_export(
         CaseHandling.sw_user_sdshv,
     )
     bank_name_col = func.coalesce(payment_bank.name, applicant_bank.name)
+    bank_code_col = func.coalesce(payment_bank.bank_code, applicant_bank.bank_code)
     account_number_col = func.coalesce(
         CasePayment.account_number,
         Applicant.bank_account_no,
@@ -1405,16 +1425,22 @@ async def fetch_indicators_export(
         MaritalStatusType.name.label("marital_status_name"),
         address_detail_sq.c.house_number.label("house_number"),
         address_detail_sq.c.house_moo.label("house_moo"),
+        address_detail_sq.c.house_name.label("house_name"),
         address_detail_sq.c.alley.label("alley"),
+        address_detail_sq.c.sub_lane.label("sub_lane"),
         address_detail_sq.c.road.label("road"),
         address_detail_sq.c.latitude.label("latitude"),
         address_detail_sq.c.longitude.label("longitude"),
+        address_detail_sq.c.nearby_landmark.label("nearby_landmark"),
         SubDistrict.name.label("sub_district_name"),
         District.name.label("district_name"),
+        Postcode.name.label("postcode"),
         province_sq.c.address_province_id.label("address_province_id"),
         province_sq.c.effective_province_id.label("effective_province_id"),
+        occupation_type.name.label("occupation_type_name"),
         economic_sq.c.occupation.label("occupation"),
         economic_sq.c.monthly_income.label("monthly_income"),
+        family_occupation_type.name.label("family_occupation_type_name"),
         economic_sq.c.family_occupation.label("family_occupation"),
         HousingType.name.label("housing_type_name"),
         economic_sq.c.housing_shelter.label("housing_shelter"),
@@ -1431,8 +1457,11 @@ async def fetch_indicators_export(
         Applicant.family_distress.label("family_distress"),
         Applicant.problem_details.label("problem_details"),
         request_agg_sq.c.help_request_summary.label("help_request_summary"),
-        request_agg_sq.c.request_in_kind_text.label("request_in_kind_text"),
-        request_agg_sq.c.request_other_text.label("request_other_text"),
+        request_agg_sq.c.help_request_money.label("help_request_money"),
+        request_agg_sq.c.help_request_kind.label("help_request_kind"),
+        request_agg_sq.c.help_request_kind_text.label("help_request_kind_text"),
+        request_agg_sq.c.help_request_other.label("help_request_other"),
+        request_agg_sq.c.help_request_other_text.label("help_request_other_text"),
         Applicant.type_money_category_id.label("type_money_category_id"),
         TypeMoneyCategory.name.label("type_money_name"),
         TypeMoneyCategory.name_acronym.label("type_money_name_acronym"),
@@ -1453,6 +1482,7 @@ async def fetch_indicators_export(
         agent_person.last_name.label("agent_last_name"),
         agent_person.cid.label("agent_cid"),
         bank_name_col.label("bank_name"),
+        bank_code_col.label("bank_code"),
         account_number_col.label("account_number"),
         CasePayment.account_name.label("account_name"),
         bank_branch_col.label("bank_branch"),
@@ -1544,6 +1574,7 @@ async def fetch_indicators_export(
         )
         .outerjoin(SubDistrict, SubDistrict.id == SubDistrictPostcode.sub_district_id)
         .outerjoin(District, District.id == SubDistrict.district_id)
+        .outerjoin(Postcode, Postcode.id == SubDistrictPostcode.postcode_id)
         .outerjoin(
             economic_sq,
             and_(
@@ -1554,6 +1585,14 @@ async def fetch_indicators_export(
         .outerjoin(
             HousingType,
             HousingType.id == economic_sq.c.housing_types_id,
+        )
+        .outerjoin(
+            occupation_type,
+            occupation_type.id == economic_sq.c.occupation_type_id,
+        )
+        .outerjoin(
+            family_occupation_type,
+            family_occupation_type.id == economic_sq.c.family_occupation_type_id,
         )
         .outerjoin(
             diagnosis_sq,
@@ -1673,10 +1712,13 @@ async def fetch_indicators_export(
                 marital_status_name=row.marital_status_name,
                 house_number=row.house_number,
                 house_moo=row.house_moo,
+                house_name=_blank_to_none(row.house_name),
                 alley=row.alley,
+                sub_lane=_blank_to_none(row.sub_lane),
                 road=row.road,
                 sub_district_name=row.sub_district_name,
                 district_name=row.district_name,
+                postcode=_blank_to_none(row.postcode),
                 address_province_id=address_province_id,
                 address_province_name=address_province_name,
                 effective_province_id=effective_province_id,
@@ -1686,21 +1728,31 @@ async def fetch_indicators_export(
                 ),
                 latitude=row.latitude,
                 longitude=row.longitude,
+                nearby_landmark=_blank_to_none(row.nearby_landmark),
                 address_full=_build_address_full(
                     house_number=row.house_number,
                     house_moo=row.house_moo,
+                    house_name=row.house_name,
                     alley=row.alley,
+                    sub_lane=row.sub_lane,
                     road=row.road,
                     sub_district_name=row.sub_district_name,
                     district_name=row.district_name,
                     province_name=address_province_name,
+                    postcode=row.postcode,
                 ),
-                occupation=row.occupation,
+                occupation=_label_with_other(
+                    row.occupation_type_name,
+                    row.occupation,
+                ),
                 monthly_income=monthly_income,
-                family_occupation=row.family_occupation,
+                family_occupation=_label_with_other(
+                    row.family_occupation_type_name,
+                    row.family_occupation,
+                ),
                 household_member_count=len(household_members),
                 housing_type_name=row.housing_type_name,
-                housing_shelter=row.housing_shelter,
+                housing_shelter=_blank_to_none(row.housing_shelter),
                 housing_rent=housing_rent,
                 income_source_names=row.income_source_names,
                 dependency_summary=row.dependency_summary,
@@ -1712,8 +1764,11 @@ async def fetch_indicators_export(
                 family_distress=row.family_distress,
                 problem_details=row.problem_details,
                 help_request_summary=row.help_request_summary,
-                request_in_kind_text=row.request_in_kind_text,
-                request_other_text=row.request_other_text,
+                help_request_money=bool(row.help_request_money),
+                help_request_kind=bool(row.help_request_kind),
+                help_request_kind_text=_blank_to_none(row.help_request_kind_text),
+                help_request_other=bool(row.help_request_other),
+                help_request_other_text=_blank_to_none(row.help_request_other_text),
                 type_money_category_id=row.type_money_category_id,
                 type_money_name=row.type_money_name,
                 type_money_name_acronym=row.type_money_name_acronym,
@@ -1731,6 +1786,7 @@ async def fetch_indicators_export(
                 payee_cid=payee_cid,
                 payee_mobile=payee_mobile,
                 bank_name=row.bank_name,
+                bank_code=_blank_to_none(row.bank_code),
                 account_number=row.account_number,
                 account_name=row.account_name,
                 bank_branch=row.bank_branch,
