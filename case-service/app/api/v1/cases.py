@@ -39,6 +39,7 @@ from ...models.person import Person
 from ...models.status_log import WelfareRequestStatus
 from ...models.review import WelfareReviewComment
 from ...models.payment import ApproveCase, WelfarePayment
+from ...services.liveness_link import link_liveness_to_applicant
 from ...services.payment_round_metrics import applicant_payment_metrics
 from ...services.province_access import is_province_enabled_by_person_id
 from ...models.welfare import (
@@ -444,6 +445,15 @@ async def create_welfare_case(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
     aid = applicant_row.id
+
+    # ด่าน liveness — บันทึกอย่างเดียว ไม่บล็อกการยื่นคำร้องไม่ว่ากรณีใด (รอบนี้ยังไม่ gate)
+    # ไม่มี reference มา / อ้างของคนอื่น / ใช้ซ้ำ → ได้แถว skipped ที่เซิร์ฟเวอร์เขียนเอง
+    await link_liveness_to_applicant(
+        session,
+        applicant_id=aid,
+        persons_id=a.persons_id,
+        reference_id=body.liveness_reference_id,
+    )
 
     session.add(ApplicantSubmissionAudit(applicant_id=aid, **audit_fields))
 
