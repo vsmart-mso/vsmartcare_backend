@@ -1,0 +1,234 @@
+"""Router `/v1/liveness` — ด่านยืนยันตัวตนด้วยใบหน้า ก่อนยื่นคำร้อง (AINU eKYC Web SDK).
+
+ลำดับการเรียกจาก frontend
+    1. POST /session                     → ได้ reference_id + config สำหรับ AinuEkyc.setup()
+    2. POST /{reference_id}/transaction  → เมื่อ onReady() ให้ transactionId มา
+    3. POST /{reference_id}/result       → เมื่อ onEkycResult() ส่งผลกลับ
+       หรือ POST /{reference_id}/skip    → เมื่อ "เรา" สรุปเองว่าระบบใช้ไม่ได้
+
+⚠️ **ยังไม่ใช่ security control** — ผลเดินทางผ่านเบราว์เซอร์ผู้ใช้ แก้ด้วย DevTools ได้
+รอบนี้เก็บสถิติอย่างเดียว ไม่บล็อกการยื่นคำร้องไม่ว่ากรณีใด
+จะเชื่อถือได้ต่อเมื่อ verify `signature` ในผลลัพธ์ฝั่งเซิร์ฟเวอร์ได้ (ยังรอคำตอบจาก AINU)
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Annotated, Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...core.citizen_security import CitizenClaims, require_citizen
+from ...core.database import get_session
+from ...models.liveness_attempt import (
+    CLIENT_SKIP_REASONS,
+    STATUS_PENDING,
+    STATUS_SKIPPED,
+    LivenessAttempt,
+)
+from ...schemas.liveness import (
+    LivenessAttemptRead,
+    LivenessResultRequest,
+    LivenessSdkConfig,
+    LivenessSessionResponse,
+    LivenessSkipRequest,
+    LivenessTransactionRequest,
+)
+from ...services.liveness_payload import (
+    is_mobile_user_agent,
+    parse_result,
+    warn_if_payload_large,
+)
+from ...settings import settings
+
+logger = logging.getLogger("case-service.liveness")
+
+router = APIRouter(prefix="/v1/liveness", tags=["liveness"])
+
+
+def _require_ainu_config() -> None:
+    """ตอบ 503 เมื่อยังไม่ได้ตั้ง credential — frontend แปลงเป็น skip_reason=PROVIDER_UNAVAILABLE"""
+    missing = [
+        name
+        for name, value in (
+            ("AINU_ACCOUNT_ID", settings.ainu_account_id),
+            ("AINU_ACCOUNT_SECRET", settings.ainu_account_secret),
+            ("AINU_FLOW_ID", settings.ainu_flow_id),
+        )
+        if not (value or "").strip()
+    ]
+    if missing:
+        logger.error("AINU config ไม่ครบ: %s", ", ".join(missing))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="liveness_not_configured",
+        )
+
+
+async def _get_owned_attempt(
+    session: AsyncSession,
+    reference_id: str,
+    claims: CitizenClaims,
+) -> LivenessAttempt:
+    """คืนแถวเฉพาะที่เป็นของ person ใน token — ของคนอื่นตอบ 404 เหมือนไม่มี
+
+    แนวเดียวกับ get_owned_applicant() ใน core/citizen_security.py: ไม่แยก 403/404
+    เพื่อไม่ให้เดาได้ว่า reference_id ไหนมีอยู่จริง
+    """
+    row = await session.scalar(
+        select(LivenessAttempt).where(LivenessAttempt.reference_id == reference_id)
+    )
+    if row is None or row.persons_id != claims.person_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="liveness_attempt_not_found",
+        )
+    return row
+
+
+def _assert_not_finalized(row: LivenessAttempt) -> None:
+    """แถวที่จบแล้วห้ามเขียนทับ — ไม่งั้นผลที่ผูกกับคำร้องไปแล้วถูกแก้ย้อนหลังได้"""
+    if row.status != STATUS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="attempt_already_finalized",
+        )
+
+
+@router.post(
+    "/session",
+    response_model=LivenessSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="เปิด session ใหม่ + คืน config ให้ AinuEkyc.setup()",
+)
+async def create_session(
+    claims: Annotated[CitizenClaims, Depends(require_citizen)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_agent: Optional[str] = Header(default=None, alias="User-Agent"),
+) -> LivenessSessionResponse:
+    """สร้าง reference_id ใหม่ทุกครั้งที่เริ่มสแกน
+
+    ปุ่ม "เริ่มใหม่" ต้องเรียกตัวนี้ซ้ำ ไม่ใช่เรียก setup() ด้วย reference เดิม
+    ไม่งั้นการสแกนหลายครั้งจะถูกยุบเป็นแถวเดียวและ reconcile กับ AINU ทีหลังไม่ได้
+    """
+    _require_ainu_config()
+
+    reference_id = str(uuid.uuid4())
+    session.add(
+        LivenessAttempt(
+            persons_id=claims.person_id,
+            reference_id=reference_id,
+            status=STATUS_PENDING,
+            # อ่านจาก UA ตรงนี้ที่เดียว เพราะแถวที่ไม่จบจะไม่มี payload ให้อ่าน device
+            is_mobile=is_mobile_user_agent(user_agent),
+        )
+    )
+    await session.flush()
+
+    return LivenessSessionResponse(
+        reference_id=reference_id,
+        status=STATUS_PENDING,
+        config=LivenessSdkConfig(
+            account_id=settings.ainu_account_id,
+            account_secret=settings.ainu_account_secret,
+            flow_id=settings.ainu_flow_id,
+            language=settings.ainu_language,
+            reference_id=reference_id,
+        ),
+    )
+
+
+@router.post(
+    "/{reference_id}/transaction",
+    response_model=LivenessAttemptRead,
+    summary="บันทึก transaction_id จาก onReady()",
+)
+async def set_transaction(
+    reference_id: str,
+    body: LivenessTransactionRequest,
+    claims: Annotated[CitizenClaims, Depends(require_citizen)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> LivenessAttemptRead:
+    """เก็บทันทีที่ได้มา ไม่รอผลจบ
+
+    ผู้ใช้ที่เลิกกลางคันจะค้างเป็น pending และ transaction_id คือสิ่งเดียวที่ใช้ถาม AINU
+    ได้ว่าเกิดอะไรขึ้นกับเขา
+    """
+    row = await _get_owned_attempt(session, reference_id, claims)
+    _assert_not_finalized(row)
+    row.transaction_id = body.transaction_id
+    await session.flush()
+    return LivenessAttemptRead.model_validate(row)
+
+
+@router.post(
+    "/{reference_id}/result",
+    response_model=LivenessAttemptRead,
+    summary="บันทึกผลจาก onEkycResult()",
+)
+async def set_result(
+    reference_id: str,
+    body: LivenessResultRequest,
+    claims: Annotated[CitizenClaims, Depends(require_citizen)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> LivenessAttemptRead:
+    row = await _get_owned_attempt(session, reference_id, claims)
+    _assert_not_finalized(row)
+
+    warn_if_payload_large(body.payload, reference_id=reference_id)
+    parsed = parse_result(body.payload)
+
+    row.status = parsed.status
+    row.liveness_reason = parsed.liveness_reason
+    row.fail_reason = parsed.fail_reason
+    row.description = parsed.description
+    row.sdk_version = parsed.sdk_version
+    row.device = parsed.device
+    # transaction_id จาก onReady() มาก่อนและเชื่อถือได้กว่า — ทับเฉพาะเมื่อยังว่าง
+    row.transaction_id = row.transaction_id or parsed.transaction_id
+    row.completed_at = parsed.completed_at or datetime.now(timezone.utc)
+    # เก็บดิบทั้งก้อน: signature + keyId ที่อยู่ในนี้คือทางเดียวที่จะ verify ย้อนหลังได้
+    row.raw_payload = body.payload
+
+    await session.flush()
+    return LivenessAttemptRead.model_validate(row)
+
+
+@router.post(
+    "/{reference_id}/skip",
+    response_model=LivenessAttemptRead,
+    summary="บันทึกว่าข้ามด่านนี้เพราะระบบใช้ไม่ได้",
+)
+async def set_skipped(
+    reference_id: str,
+    body: LivenessSkipRequest,
+    claims: Annotated[CitizenClaims, Depends(require_citizen)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> LivenessAttemptRead:
+    """แยก endpoint จาก /result โดยตั้งใจ
+
+    /result คือ "AINU ตอบกลับมา" ส่วน /skip คือ "เราเองสรุปว่าใช้ไม่ได้"
+    เส้นแบ่งเดียวกับที่แยก fail_reason (AINU พูด) ออกจาก skip_reason (เราพูด)
+    ถ้ารวมเป็น endpoint เดียวจะแยกไม่ออกว่าใครเป็นคนสรุป
+    """
+    row = await _get_owned_attempt(session, reference_id, claims)
+    _assert_not_finalized(row)
+
+    if body.skip_reason not in CLIENT_SKIP_REASONS:
+        # NO_ATTEMPT / REPLAYED เป็นรหัสที่เซิร์ฟเวอร์เขียนเอง frontend ส่งมาไม่ได้
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="unknown_skip_reason",
+        )
+
+    row.status = STATUS_SKIPPED
+    row.skip_reason = body.skip_reason
+    row.completed_at = datetime.now(timezone.utc)
+    # raw_payload คงเป็น null — ไม่เคยคุยกับ AINU สำเร็จจึงไม่มีอะไรให้เก็บ
+
+    await session.flush()
+    return LivenessAttemptRead.model_validate(row)
