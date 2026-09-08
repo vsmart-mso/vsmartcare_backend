@@ -58,7 +58,6 @@ class LivenessAttemptRead(BaseModel):
     fail_reason: str | None = None
     skip_reason: str | None = None
     description: str | None = None
-    is_mobile: bool | None = None
     created_at: datetime
     completed_at: datetime | None = None
 

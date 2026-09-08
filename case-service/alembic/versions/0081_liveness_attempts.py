@@ -42,7 +42,6 @@ def upgrade() -> None:
         sa.Column("description", sa.String(length=512), nullable=True),
         sa.Column("sdk_version", sa.String(length=64), nullable=True),
         sa.Column("device", sa.String(length=255), nullable=True),
-        sa.Column("is_mobile", sa.Boolean(), nullable=True),
         # JSON ไม่ใช่ JSONB — JSONB เรียง key ใหม่ ทำให้เสียความเป็น "ดิบตามที่ได้รับ"
         # และฟิลด์ที่ต้อง query ถูกดึงออกมาเป็นคอลัมน์แล้ว
         sa.Column("raw_payload", sa.JSON(), nullable=True),

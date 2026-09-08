@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..core.base import Base
@@ -73,9 +73,8 @@ class LivenessAttempt(Base):
     sdk_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     #: deviceInfo จาก payload — มีเฉพาะแถวที่ AINU ตอบกลับมา
+    #: แถว pending/skipped จึงเป็น null เสมอ สถิติ desktop vs mobile ครอบคลุมแค่ completed/failed
     device: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    #: เดาจาก User-Agent ตอนเปิด session — มีครบทุกแถวรวม pending/skipped ที่ payload ไม่เคยมา
-    is_mobile: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     #: payload ดิบจาก onEkycResult() เก็บทั้งก้อนไม่ตัดอะไร (เก็บ signature/keyId ไว้ verify ย้อนหลัง)
     #: ⚠️ ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน · มี warning เฝ้าขนาดใน services/liveness_payload.py

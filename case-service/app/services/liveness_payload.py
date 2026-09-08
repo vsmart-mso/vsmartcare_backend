@@ -138,25 +138,6 @@ def warn_if_payload_large(payload: Any, *, reference_id: str) -> int:
     return size
 
 
-_MOBILE_HINTS = ("android", "iphone", "ipad", "ipod", "mobile", "windows phone")
-
-
-def is_mobile_user_agent(user_agent: str | None) -> bool | None:
-    """เดาจาก User-Agent ว่าเป็นมือถือไหม — เก็บเป็นสถิติ ไม่ได้ใช้บล็อกใคร
-
-    ต้องอ่านตอนเปิด session เพราะแถว pending/skipped ไม่มี payload จึงไม่มี `device`
-    และคำถามที่ค้างกับ AINU ("ทำไม desktop สแกนไม่ผ่านบ่อยกว่ามือถือ") ต้องใช้ค่านี้กับทุกแถว
-
-    คืน None เมื่อไม่มี UA มาเลย — แยกจาก False ที่แปลว่า "มี UA และไม่ใช่มือถือ"
-    """
-    if user_agent is None:
-        return None
-    ua = user_agent.strip().lower()
-    if not ua:
-        return None
-    return any(hint in ua for hint in _MOBILE_HINTS)
-
-
 def _normalize_status(raw_status: Any) -> str:
     """map transactionStatus ของ AINU → status ของเรา
 

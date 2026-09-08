@@ -31,11 +31,7 @@ logger = logging.getLogger("case-service.liveness")
 
 
 def _server_marked_row(persons_id: int, applicant_id: int, skip_reason: str) -> LivenessAttempt:
-    """แถวที่เซิร์ฟเวอร์เขียนเอง — reference_id สร้างใหม่เพราะคอลัมน์เป็น NOT NULL UNIQUE
-
-    is_mobile ปล่อย null ตามจริง: ตอนยื่นคำร้องเราไม่รู้ว่าอุปกรณ์ที่ใช้สแกน
-    เป็นตัวเดียวกับที่ใช้ยื่นหรือเปล่า
-    """
+    """แถวที่เซิร์ฟเวอร์เขียนเอง — reference_id สร้างใหม่เพราะคอลัมน์เป็น NOT NULL UNIQUE"""
     return LivenessAttempt(
         persons_id=persons_id,
         applicant_id=applicant_id,

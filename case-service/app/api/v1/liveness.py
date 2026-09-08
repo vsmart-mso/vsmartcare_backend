@@ -16,9 +16,9 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Optional
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,11 +38,7 @@ from ...schemas.liveness import (
     LivenessSkipRequest,
     LivenessTransactionRequest,
 )
-from ...services.liveness_payload import (
-    is_mobile_user_agent,
-    parse_result,
-    warn_if_payload_large,
-)
+from ...services.liveness_payload import parse_result, warn_if_payload_large
 from ...settings import settings
 
 logger = logging.getLogger("case-service.liveness")
@@ -108,7 +104,6 @@ def _assert_not_finalized(row: LivenessAttempt) -> None:
 async def create_session(
     claims: Annotated[CitizenClaims, Depends(require_citizen)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    user_agent: Optional[str] = Header(default=None, alias="User-Agent"),
 ) -> LivenessSessionResponse:
     """สร้าง reference_id ใหม่ทุกครั้งที่เริ่มสแกน
 
@@ -123,8 +118,6 @@ async def create_session(
             persons_id=claims.person_id,
             reference_id=reference_id,
             status=STATUS_PENDING,
-            # อ่านจาก UA ตรงนี้ที่เดียว เพราะแถวที่ไม่จบจะไม่มี payload ให้อ่าน device
-            is_mobile=is_mobile_user_agent(user_agent),
         )
     )
     await session.flush()

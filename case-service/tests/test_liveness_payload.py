@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from app.models.liveness_attempt import STATUS_COMPLETED, STATUS_FAILED
 from app.services.liveness_payload import (
     PAYLOAD_WARN_BYTES,
-    is_mobile_user_agent,
     parse_result,
     payload_size,
     warn_if_payload_large,
@@ -166,19 +165,6 @@ class PayloadSizeWarningTests(unittest.TestCase):
 
     def test_unserializable_payload_returns_zero(self) -> None:
         self.assertEqual(payload_size({"bad": object()}), 0)
-
-
-class MobileUserAgentTests(unittest.TestCase):
-    def test_mobile_and_desktop(self) -> None:
-        self.assertIs(
-            is_mobile_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 26_6) Mobile/15E148"), True
-        )
-        self.assertIs(is_mobile_user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"), False)
-
-    def test_missing_user_agent_is_none_not_false(self) -> None:
-        """None = ไม่รู้ · False = รู้ว่าไม่ใช่มือถือ — สองอย่างนี้ต้องแยกกันในสถิติ"""
-        self.assertIsNone(is_mobile_user_agent(None))
-        self.assertIsNone(is_mobile_user_agent("   "))
 
 
 if __name__ == "__main__":

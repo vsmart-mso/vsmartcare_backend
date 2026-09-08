@@ -869,8 +869,7 @@ Master ระเบียบ/ประกาศ — `id` ไม่ autoincrement
 | `skip_reason` | varchar(64) | YES | | **เราเป็นคนตัดสิน** ดูตารางด้านล่าง |
 | `description` | varchar(512) | YES | | ข้อความอธิบายจาก AINU — ไม่แสดงต่อผู้ใช้โดยตรง |
 | `sdk_version` | varchar(64) | YES | | ใช้ตรวจย้อนหลังเมื่อพฤติกรรมเปลี่ยนโดยไม่ได้แก้โค้ด |
-| `device` | varchar(255) | YES | | จาก `deviceInfo` — มีเฉพาะแถวที่ AINU ตอบกลับมา |
-| `is_mobile` | bool | YES | | เดาจาก User-Agent ตอนเปิด session — **มีครบทุกแถวรวม pending/skipped** · `null` = ไม่มี UA |
+| `device` | varchar(255) | YES | | จาก `deviceInfo` — **มีเฉพาะแถวที่ AINU ตอบกลับมา** แถว `pending`/`skipped` เป็น `null` เสมอ |
 | `raw_payload` | json | YES | | payload ดิบทั้งก้อนจาก `onEkycResult()` — **ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน** |
 | `applicant_id` | int | YES | FK → `applicants.id` SET NULL, IX | เติมตอนยื่นคำร้องสำเร็จ · `IS NOT NULL` = ถูกใช้ไปแล้ว |
 | `created_at` | timestamptz | NO | | default `now()` |

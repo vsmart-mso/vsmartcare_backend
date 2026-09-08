@@ -4174,15 +4174,13 @@ async def ocr_link_proxy(
 )
 async def liveness_session_proxy(
     authorization: str = Depends(require_citizen_bearer),
-    user_agent: Optional[str] = Header(default=None, alias="User-Agent"),
 ) -> Any:
     base = settings.case_service_url.rstrip("/")
-    headers = _forward_auth_headers(authorization)
-    # case-service อ่าน User-Agent เพื่อเก็บ is_mobile เป็นสถิติ
-    # ต้องส่งของผู้ใช้จริงต่อไป ไม่งั้นจะได้ UA ของ httpx ทุกแถว
-    if user_agent:
-        headers["User-Agent"] = user_agent
-    return await _post(f"{base}/v1/liveness/session", json={}, headers=headers)
+    return await _post(
+        f"{base}/v1/liveness/session",
+        json={},
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 @router.post(
