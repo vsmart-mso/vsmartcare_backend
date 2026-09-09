@@ -870,7 +870,7 @@ Master ระเบียบ/ประกาศ — `id` ไม่ autoincrement
 | `description` | varchar(512) | YES | | ข้อความอธิบายจาก AINU — ไม่แสดงต่อผู้ใช้โดยตรง |
 | `sdk_version` | varchar(64) | YES | | ใช้ตรวจย้อนหลังเมื่อพฤติกรรมเปลี่ยนโดยไม่ได้แก้โค้ด |
 | `device` | varchar(255) | YES | | จาก `deviceInfo` — **มีเฉพาะแถวที่ AINU ตอบกลับมา** แถว `pending`/`skipped` เป็น `null` เสมอ |
-| `raw_payload` | json | YES | | payload ดิบทั้งก้อนจาก `onEkycResult()` — **ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน** |
+| `raw_payload` | json | YES | | payload จาก `onEkycResult()` **ตัดภาพ base64 ออกแล้ว** (แทนด้วย `<stripped>`) · `signature`/`keyId`/`metadata` เก็บครบ · **ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน** |
 | `applicant_id` | int | YES | FK → `applicants.id` SET NULL, IX | เติมตอนยื่นคำร้องสำเร็จ · `IS NOT NULL` = ถูกใช้ไปแล้ว |
 | `created_at` | timestamptz | NO | | default `now()` |
 | `completed_at` | timestamptz | YES | | จาก `completedAt` ใน payload |
@@ -896,6 +896,7 @@ Master ระเบียบ/ประกาศ — `id` ไม่ autoincrement
 | `USER_SKIPPED` | ผู้ใช้กดข้ามเอง |
 | **`NO_ATTEMPT`** | ยื่นคำร้องโดยไม่แนบ `liveness_reference_id` หรือแนบค่าที่ไม่ถูกต้อง/ของคนอื่น |
 | **`REPLAYED`** | เอา `reference_id` ที่ผูกกับคำร้องอื่นไปแล้วมายื่นซ้ำ |
+| **`NOT_CONFIGURED`** | `POST /v1/liveness/session` ตอบ 503 เพราะ **ฝั่งเราตั้ง `AINU_*` ไม่ครบ** — แยกจาก `PROVIDER_UNAVAILABLE` ที่แปลว่าระบบ AINU เองมีปัญหา |
 
 > **ทุก applicant มีแถวอย่างน้อย 1 แถวเสมอ** เพราะ `POST /v1/cases` สร้างแถว `NO_ATTEMPT` ให้เอง
 > เมื่อไม่มีอะไรแนบมา → คำร้องที่ไม่มีแถวเลยคือความผิดปกติที่ต้องไปสืบ ไม่ใช่เรื่องปกติ
