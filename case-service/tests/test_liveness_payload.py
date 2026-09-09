@@ -18,7 +18,7 @@ from app.services.liveness_payload import (
     warn_if_payload_large,
 )
 
-# payload สำเร็จ — ประกอบจากสเปก "Return Data" ของ AINU (เอกสารจากทาง ainu.md ข้อ 1)
+# payload สำเร็จ — ประกอบจากสเปก Return Data Fields ของ AINU (eKYC_Full_Spec.md ส่วนที่ 1)
 PAYLOAD_COMPLETED = {
     "transactionId": "6f1d0c2e-6d1a-4f7e-9b3a-0c5a1d2e3f40",
     "transactionStatus": "completed",
