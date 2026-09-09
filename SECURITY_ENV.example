@@ -80,6 +80,18 @@ THAID_JWT_SECRET=dev-thaid-jwt-secret-change-in-production
 # อย่าใส่ GEMINI_API_KEY ใน docker-compose environment แบบ ${VAR:-}
 #   เพราะค่าว่างจะทับ env_file
 
+# case-service — ด่าน liveness (AINU eKYC) ใส่ใน case-service/.env
+#   AINU_ACCOUNT_ID=ekycsdk-dga-pmcare
+#   AINU_ACCOUNT_SECRET=  (ไฟล์ DGA-PCA001_credential_พม.xlsx ช่อง Web SDK — ห้าม commit)
+#   AINU_FLOW_ID=DGA-PMCARE-001
+#   AINU_LANGUAGE=TH
+#   ไม่ตั้ง 3 ตัวแรก = POST /v1/liveness/session ตอบ 503 liveness_not_configured
+#   (frontend ข้ามด่านแล้วยื่นคำร้องได้ตามปกติ — รอบนี้ยังไม่ gate)
+# อย่าใส่ AINU_ACCOUNT_SECRET ใน docker-compose environment แบบ ${VAR:-}
+#   เพราะค่าว่างจะทับ env_file (เหมือนกรณี GEMINI_API_KEY)
+# beta ใช้ credential UAT (uat.ainu.tech) และต้องรันหลังมี HTTPS cert จริง
+#   ไม่งั้นกล้องบนมือถือไม่ทำงาน
+
 POSTGRES_PASSWORD=
 
 # thaid-auth — production เท่านั้น (dev ว่างได้ถ้า APP_ENV=development)

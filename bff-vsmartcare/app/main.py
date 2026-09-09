@@ -167,6 +167,13 @@ _TAGS = [
     {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด + สร้างเคสสุ่ม"},
     {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
     {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
+    {
+        "name": "liveness",
+        "description": (
+            "ด่านยืนยันตัวตนด้วยใบหน้า AINU eKYC ก่อนยื่นคำร้อง (proxy → case-service) — "
+            "รอบนี้บันทึกสถิติอย่างเดียว ยังไม่บล็อกการยื่นคำร้อง"
+        ),
+    },
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
     {"name": "indicators", "description": "ตัวชี้วัดเงินช่วยเหลือ พม Care — รายจังหวัดแยก 6 ประเภท / ทุกจังหวัดไม่แยกหมวด / export JSON แถวแบน dossier / province-overview สรุป 4 ตัวเลข (สค. นับที่จังหวัดแม่ตาม DWF)"},
 ]
@@ -4153,6 +4160,81 @@ async def ocr_link_proxy(
     base = settings.ocr_service_url.rstrip("/")
     headers = _ocr_service_headers()
     return await _patch(f"{base}/v1/ocr/results/{ocr_result_id}/link", json=body, headers=headers)
+
+
+# ── liveness (proxy → case-service) ──────────────────────────────────────────
+# ต่างจาก ocr proxy ตรงที่ไม่มี service key: case-service ใช้ Bearer ของ citizen
+# ตรง ๆ เพื่อรู้ว่า attempt เป็นของใคร
+
+
+@router.post(
+    "/v1/liveness/session",
+    tags=["liveness"],
+    summary="เปิด session liveness + คืน config ให้ SDK (proxy → case-service)",
+)
+async def liveness_session_proxy(
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/session",
+        json={},
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/transaction",
+    tags=["liveness"],
+    summary="บันทึก transaction_id จาก onReady() (proxy → case-service)",
+)
+async def liveness_transaction_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/transaction",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/result",
+    tags=["liveness"],
+    summary="บันทึกผลจาก onEkycResult() (proxy → case-service)",
+)
+async def liveness_result_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/result",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/skip",
+    tags=["liveness"],
+    summary="บันทึกว่าข้ามด่าน liveness เพราะระบบใช้ไม่ได้ (proxy → case-service)",
+)
+async def liveness_skip_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/skip",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 class StaffLoginProxyBody(BaseModel):
