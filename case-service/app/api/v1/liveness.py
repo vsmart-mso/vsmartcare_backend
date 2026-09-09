@@ -26,6 +26,7 @@ from ...core.citizen_security import CitizenClaims, require_citizen
 from ...core.database import get_session
 from ...models.liveness_attempt import (
     CLIENT_SKIP_REASONS,
+    SKIP_NOT_CONFIGURED,
     STATUS_PENDING,
     STATUS_SKIPPED,
     LivenessAttempt,
@@ -38,7 +39,7 @@ from ...schemas.liveness import (
     LivenessSkipRequest,
     LivenessTransactionRequest,
 )
-from ...services.liveness_payload import parse_result, warn_if_payload_large
+from ...services.liveness_payload import parse_result, strip_images, warn_if_payload_large
 from ...settings import settings
 
 logger = logging.getLogger("case-service.liveness")
@@ -46,9 +47,9 @@ logger = logging.getLogger("case-service.liveness")
 router = APIRouter(prefix="/v1/liveness", tags=["liveness"])
 
 
-def _require_ainu_config() -> None:
-    """ตอบ 503 เมื่อยังไม่ได้ตั้ง credential — frontend แปลงเป็น skip_reason=PROVIDER_UNAVAILABLE"""
-    missing = [
+def _missing_ainu_config() -> list[str]:
+    """ชื่อ env ที่ยังไม่ได้ตั้ง — ว่าง = ตั้งครบแล้ว"""
+    return [
         name
         for name, value in (
             ("AINU_ACCOUNT_ID", settings.ainu_account_id),
@@ -57,12 +58,34 @@ def _require_ainu_config() -> None:
         )
         if not (value or "").strip()
     ]
-    if missing:
-        logger.error("AINU config ไม่ครบ: %s", ", ".join(missing))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="liveness_not_configured",
+
+
+async def _record_not_configured(
+    session: AsyncSession,
+    *,
+    persons_id: int,
+    reference_id: str,
+    missing: list[str],
+) -> None:
+    """บันทึกแถว skipped/NOT_CONFIGURED ไว้ก่อนตอบ 503
+
+    ถ้าไม่บันทึก คำร้องที่ยื่นตามมาจะได้แถว NO_ATTEMPT ซึ่งแปลว่า "ไม่มีการสแกน"
+    แยกไม่ออกจากคนที่จงใจข้าม ทั้งที่สาเหตุจริงคือ **เราเองตั้งค่าไม่ครบ**
+
+    ต้อง commit เองก่อน raise เพราะ get_session() จะ rollback เมื่อเจอ exception
+    (HTTPException ก็นับ) แถวที่เพิ่ง add ไว้จะหายไปพร้อมกัน
+    """
+    logger.error("AINU config ไม่ครบ: %s", ", ".join(missing))
+    session.add(
+        LivenessAttempt(
+            persons_id=persons_id,
+            reference_id=reference_id,
+            status=STATUS_SKIPPED,
+            skip_reason=SKIP_NOT_CONFIGURED,
+            completed_at=datetime.now(timezone.utc),
         )
+    )
+    await session.commit()
 
 
 async def _get_owned_attempt(
@@ -110,9 +133,23 @@ async def create_session(
     ปุ่ม "เริ่มใหม่" ต้องเรียกตัวนี้ซ้ำ ไม่ใช่เรียก setup() ด้วย reference เดิม
     ไม่งั้นการสแกนหลายครั้งจะถูกยุบเป็นแถวเดียวและ reconcile กับ AINU ทีหลังไม่ได้
     """
-    _require_ainu_config()
-
     reference_id = str(uuid.uuid4())
+
+    missing = _missing_ainu_config()
+    if missing:
+        await _record_not_configured(
+            session,
+            persons_id=claims.person_id,
+            reference_id=reference_id,
+            missing=missing,
+        )
+        # ส่ง reference_id กลับไปด้วย เพื่อให้ frontend แนบตอนยื่นคำร้องได้
+        # คำร้องใบนั้นจะผูกกับแถว NOT_CONFIGURED แทนที่จะได้ NO_ATTEMPT ที่ตีความผิด
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "liveness_not_configured", "reference_id": reference_id},
+        )
+
     session.add(
         LivenessAttempt(
             persons_id=claims.person_id,
@@ -172,6 +209,7 @@ async def set_result(
     row = await _get_owned_attempt(session, reference_id, claims)
     _assert_not_finalized(row)
 
+    # วัดขนาดจากก้อนเดิมก่อนตัดภาพ — ถ้าวัดหลังตัดจะไม่มีวันเกินเกณฑ์
     warn_if_payload_large(body.payload, reference_id=reference_id)
     parsed = parse_result(body.payload)
 
@@ -184,8 +222,10 @@ async def set_result(
     # transaction_id จาก onReady() มาก่อนและเชื่อถือได้กว่า — ทับเฉพาะเมื่อยังว่าง
     row.transaction_id = row.transaction_id or parsed.transaction_id
     row.completed_at = parsed.completed_at or datetime.now(timezone.utc)
-    # เก็บดิบทั้งก้อน: signature + keyId ที่อยู่ในนี้คือทางเดียวที่จะ verify ย้อนหลังได้
-    row.raw_payload = body.payload
+    # เก็บทั้งก้อน **ยกเว้นภาพ** — ภาพใบหน้าเป็นข้อมูลชีวมิติ (PDPA ม.26) ที่ระบบนี้
+    # ไม่เคยขอความยินยอมเพื่อเก็บ ส่วน signature/keyId/metadata ที่ใช้ verify ย้อนหลังรอดครบ
+    # ตัดที่นี่ไม่ใช่ที่ frontend เพราะเป็นด่านที่ client ข้ามไม่ได้
+    row.raw_payload = strip_images(body.payload)
 
     await session.flush()
     return LivenessAttemptRead.model_validate(row)

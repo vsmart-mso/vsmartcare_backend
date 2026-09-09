@@ -1,7 +1,7 @@
 """แตกฟิลด์จาก payload ของ AINU eKYC ลงคอลัมน์ของ `liveness_attempts`.
 
 กฎเหล็กข้อเดียว: **ห้ามโยน exception ไม่ว่า payload จะหน้าตาอย่างไร**
-ถ้าอ่านไม่ออกก็คืนค่าที่อ่านได้เท่าที่มี — payload ดิบถูกเก็บครบอยู่แล้ว
+ถ้าอ่านไม่ออกก็คืนค่าที่อ่านได้เท่าที่มี — payload ถูกเก็บไว้ครบ (ยกเว้นภาพ ดู strip_images)
 จึงกลับมา re-parse ทีหลังได้เสมอเมื่อ AINU เปลี่ยน shape
 
 เกณฑ์ว่าฟิลด์ไหนควรดึงออกมาเป็นคอลัมน์: ต้อง WHERE / GROUP BY / JOIN / INDEX กับมันไหม
@@ -24,8 +24,9 @@ logger = logging.getLogger("case-service.liveness")
 #: 8 KB จึงแยกสองกรณีนี้ขาดโดยไม่ปลุกเทียมเวลา AINU เพิ่มฟิลด์ metadata ธรรมดา
 PAYLOAD_WARN_BYTES = 8 * 1024
 
-#: ฟิลด์ที่ AINU ส่งภาพ base64 มา — ใช้เฉพาะตอนเตือน ไม่ได้ตัดออกจาก payload
-#: (ตกลงกันแล้วว่าเก็บดิบทั้งก้อน เพื่อให้ verify signature ย้อนหลังได้)
+#: ฟิลด์ที่ AINU ส่งภาพ base64 มา — ตัดออกก่อนเก็บลง DB (ดู strip_images)
+#: ตัดตาม "ชื่อ key" อย่างเดียว ไม่ตัดตามความยาวสตริง จึงไม่กระทบ signature (684 ตัวอักษร)
+#: ที่ต้องเก็บไว้ verify ย้อนหลัง
 IMAGE_KEYS: frozenset[str] = frozenset(
     {
         "livenessImage",
@@ -109,6 +110,32 @@ def _image_keys_present(payload: Any) -> set[str]:
     return found
 
 
+#: แทนค่าภาพด้วย marker แทนการลบ key ทิ้ง — จะได้รู้ย้อนหลังว่า AINU เคยส่งภาพอะไรมาบ้าง
+REDACTED_MARKER = "<stripped>"
+
+
+def strip_images(payload: Any) -> Any:
+    """คืน copy ของ payload ที่แทนค่าใน IMAGE_KEYS ด้วย marker (ไล่ลงทุกชั้น)
+
+    ตัดก่อน insert เสมอ — ภาพใบหน้าประชาชนเป็นข้อมูลชีวมิติตาม PDPA ม.26
+    ระบบนี้ไม่เคยขอความยินยอมเพื่อเก็บภาพ ขอแค่ผลผ่าน/ไม่ผ่าน
+
+    ตัดตาม **ชื่อ key** เท่านั้น ไม่ตัดตามความยาวสตริง — `signature` (684 ตัวอักษร)
+    `keyId` และ `metadata` จึงรอดครบ ซึ่งเป็นเหตุผลทั้งหมดที่เก็บ payload ไว้ตั้งแต่แรก
+
+    ทำที่ backend เพราะเป็นด่านที่ frontend ข้ามไม่ได้ — ถ้าไปตัดฝั่ง client
+    คนที่ยิง API ตรงยังส่งภาพเข้ามาได้อยู่ดี
+    """
+    if isinstance(payload, dict):
+        return {
+            key: (REDACTED_MARKER if key in IMAGE_KEYS and value else strip_images(value))
+            for key, value in payload.items()
+        }
+    if isinstance(payload, list):
+        return [strip_images(item) for item in payload]
+    return payload
+
+
 def payload_size(payload: Any) -> int:
     """ขนาด payload เป็น bytes — คืน 0 เมื่อ serialize ไม่ได้ (ต้องไม่โยน)"""
     try:
@@ -120,8 +147,11 @@ def payload_size(payload: Any) -> int:
 def warn_if_payload_large(payload: Any, *, reference_id: str) -> int:
     """เตือนเมื่อ payload ใหญ่ผิดปกติ — สัญญาณว่า AINU เริ่มส่งภาพใบหน้ามาแล้ว
 
-    เราเลือกเก็บ payload ดิบทั้งก้อน จึงไม่มีอะไรกันภาพชีวมิติไม่ให้เข้า DB นอกจากตัวนี้
-    วันที่ warning ตัวนี้ขึ้น ต้องกลับมาทบทวนตาม PDPA มาตรา 26 ทันที
+    **ต้องเรียกกับ payload ก่อน strip_images()** ไม่งั้นจะวัดขนาดหลังตัดภาพแล้ว
+    ซึ่งจะไม่มีวันเกินเกณฑ์ และเราจะไม่มีวันรู้ว่า AINU เปลี่ยนพฤติกรรม
+
+    strip_images() กันภาพไม่ให้เข้า DB อยู่แล้ว ตัวนี้จึงไม่ใช่ด่านกัน แต่เป็น**สัญญาณเตือน**
+    ว่าถึงเวลาทบทวนตาม PDPA มาตรา 26 และตรวจว่ารายชื่อ IMAGE_KEYS ยังครบไหม
     """
     size = payload_size(payload)
     if size <= PAYLOAD_WARN_BYTES:

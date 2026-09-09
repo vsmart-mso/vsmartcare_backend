@@ -32,8 +32,12 @@ SKIP_USER_SKIPPED = "USER_SKIPPED"
 SKIP_NO_ATTEMPT = "NO_ATTEMPT"
 #: เซิร์ฟเวอร์เขียนเองเมื่อเอา reference_id ที่ผูกกับคำร้องอื่นแล้วมาใช้ซ้ำ
 SKIP_REPLAYED = "REPLAYED"
+#: เซิร์ฟเวอร์เขียนเองเมื่อ AINU credential ฝั่งเราตั้งไม่ครบ — แยกจาก PROVIDER_UNAVAILABLE
+#: ที่แปลว่าระบบของ AINU เองมีปัญหา สองอย่างนี้คนละสาเหตุและคนละคนแก้
+SKIP_NOT_CONFIGURED = "NOT_CONFIGURED"
 
-#: รหัสที่ frontend ส่งมาได้ — NO_ATTEMPT/REPLAYED ไม่อยู่ในนี้เพราะเซิร์ฟเวอร์เขียนเอง
+#: รหัสที่ frontend ส่งมาได้ — NO_ATTEMPT / REPLAYED / NOT_CONFIGURED ไม่อยู่ในนี้
+#: เพราะเซิร์ฟเวอร์เป็นคนเขียนเอง (client ส่งมาจะได้ 422)
 CLIENT_SKIP_REASONS = frozenset(
     {
         SKIP_SDK_LOAD_ERROR,
@@ -76,7 +80,8 @@ class LivenessAttempt(Base):
     #: แถว pending/skipped จึงเป็น null เสมอ สถิติ desktop vs mobile ครอบคลุมแค่ completed/failed
     device: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    #: payload ดิบจาก onEkycResult() เก็บทั้งก้อนไม่ตัดอะไร (เก็บ signature/keyId ไว้ verify ย้อนหลัง)
+    #: payload จาก onEkycResult() เก็บทั้งก้อน **ยกเว้นภาพ base64 ที่ strip_images() ตัดออก**
+    #: signature / keyId / metadata รอดครบเพื่อใช้ verify ย้อนหลัง
     #: ⚠️ ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน · มี warning เฝ้าขนาดใน services/liveness_payload.py
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 

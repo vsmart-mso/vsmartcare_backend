@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 from app.models.liveness_attempt import STATUS_COMPLETED, STATUS_FAILED
 from app.services.liveness_payload import (
     PAYLOAD_WARN_BYTES,
+    REDACTED_MARKER,
     parse_result,
     payload_size,
+    strip_images,
     warn_if_payload_large,
 )
 
@@ -165,6 +167,57 @@ class PayloadSizeWarningTests(unittest.TestCase):
 
     def test_unserializable_payload_returns_zero(self) -> None:
         self.assertEqual(payload_size({"bad": object()}), 0)
+
+
+class StripImagesTests(unittest.TestCase):
+    """ภาพใบหน้าเป็นข้อมูลชีวมิติ (PDPA ม.26) ต้องไม่เข้า DB — แต่ signature ต้องรอด"""
+
+    def test_signature_survives(self) -> None:
+        """เหตุผลทั้งหมดที่เก็บ payload ไว้คือ verify ย้อนหลัง — ห้ามตัด signature ทิ้ง
+
+        ฟังก์ชัน redact ฝั่ง frontend ตัดสตริงที่ยาวเกิน 300 ตัวอักษรทุกตัว
+        ซึ่งจะทำลาย signature (684) ตัวนี้จึงตัดตาม "ชื่อ key" อย่างเดียว
+        """
+        payload = {"liveness": {"signature": "A" * 684, "keyId": "kid-1", "reason": "PASS"}}
+        out = strip_images(payload)
+        self.assertEqual(out["liveness"]["signature"], "A" * 684)
+        self.assertEqual(out["liveness"]["keyId"], "kid-1")
+
+    def test_all_image_keys_are_stripped_at_any_depth(self) -> None:
+        payload = {
+            "images": {"livenessImage": "B" * 5000, "thaiIDPortrait": "C" * 5000},
+            "nested": [{"fullFrontThaiCard": "D" * 5000}],
+            "fullFrontThaiCardSupport": "E" * 5000,
+        }
+        out = strip_images(payload)
+        self.assertEqual(out["images"]["livenessImage"], REDACTED_MARKER)
+        self.assertEqual(out["images"]["thaiIDPortrait"], REDACTED_MARKER)
+        self.assertEqual(out["nested"][0]["fullFrontThaiCard"], REDACTED_MARKER)
+        self.assertEqual(out["fullFrontThaiCardSupport"], REDACTED_MARKER)
+
+    def test_empty_image_value_is_left_alone(self) -> None:
+        """ทุกวันนี้ AINU ส่ง {} ว่างมา — ต้องเก็บไว้ตามจริง ไม่แปลงเป็น marker
+
+        ไม่งั้นจะแยกไม่ออกว่า "AINU ไม่ส่งภาพ" กับ "ส่งมาแล้วเราตัด"
+        """
+        out = strip_images({"images": {"livenessImage": {}}})
+        self.assertEqual(out["images"]["livenessImage"], {})
+
+    def test_does_not_mutate_input(self) -> None:
+        payload = {"images": {"livenessImage": "B" * 100}}
+        strip_images(payload)
+        self.assertEqual(payload["images"]["livenessImage"], "B" * 100)
+
+    def test_non_dict_inputs_pass_through(self) -> None:
+        for value in (None, "", 0, [], "ข้อความ"):
+            with self.subTest(value=value):
+                self.assertEqual(strip_images(value), value)
+
+    def test_real_payload_shape_keeps_everything_except_images(self) -> None:
+        out = strip_images(PAYLOAD_COMPLETED)
+        self.assertEqual(out["liveness"]["signature"], "A" * 684)
+        self.assertEqual(out["transactionStatus"], "completed")
+        self.assertEqual(out["summary"], PAYLOAD_COMPLETED["summary"])
 
 
 if __name__ == "__main__":
