@@ -11,6 +11,7 @@ import unittest
 from datetime import datetime, timezone
 
 from app.models.liveness_attempt import STATUS_COMPLETED, STATUS_FAILED
+from app.schemas.liveness import LivenessAttemptRead, LivenessSessionResponse
 from app.services.liveness_payload import (
     PAYLOAD_WARN_BYTES,
     REDACTED_MARKER,
@@ -76,10 +77,28 @@ class ParseResultTests(unittest.TestCase):
         """เอกสาร AINU ขัดกันเองว่า transactionStatus อยู่ชั้นไหน — ต้องอ่านเผื่อทั้งสอง"""
         parsed = parse_result(PAYLOAD_FAILED_NESTED)
         self.assertEqual(parsed.status, STATUS_FAILED)
+        self.assertEqual(parsed.transaction_id, "aa11bb22-cc33-dd44-ee55-ff6677889900")
         self.assertEqual(parsed.fail_reason, "EKYC_ERROR_008")
         self.assertEqual(parsed.liveness_reason, "FACE_NOT_FOUND")
         self.assertEqual(parsed.sdk_version, "1.4.2")
         self.assertEqual(parsed.description, "ตรวจไม่พบใบหน้าเกินจำนวนที่กำหนด")
+
+    def test_sdk_version_from_top_level(self) -> None:
+        parsed = parse_result(
+            {"transactionStatus": "completed", "sdkVersion": "2.0.0"}
+        )
+        self.assertEqual(parsed.sdk_version, "2.0.0")
+
+    def test_sdk_version_from_data_block(self) -> None:
+        parsed = parse_result(
+            {"data": {"transactionStatus": "completed", "sdkVersion": "2.1.0"}}
+        )
+        self.assertEqual(parsed.sdk_version, "2.1.0")
+
+    def test_attempt_read_schema_excludes_raw_payload(self) -> None:
+        self.assertNotIn("raw_payload", LivenessAttemptRead.model_fields)
+        self.assertNotIn("signature", LivenessAttemptRead.model_fields)
+        self.assertNotIn("raw_payload", LivenessSessionResponse.model_fields)
 
     def test_pending_dopa_is_kept_verbatim(self) -> None:
         """flow ของเราไม่มี dopa แต่ AINU ปรับ flow ฝั่งเขาได้เอง — ห้ามแปลงเป็น failed"""
