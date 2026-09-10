@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..models.liveness_attempt import STATUS_COMPLETED, STATUS_FAILED
+from ..models.liveness_attempt import (
+    SKIP_PROVIDER_UNAVAILABLE,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_SKIPPED,
+)
 
 logger = logging.getLogger("case-service.liveness")
 
@@ -42,12 +47,33 @@ _VENDOR_STATUSES = frozenset({STATUS_COMPLETED, STATUS_FAILED, "pending_DOPA"})
 
 _STATUS_MAX_LEN = 16
 
+#: failReason ที่แปลว่า **การสแกนไม่เคยเริ่ม** ไม่ใช่ผู้ใช้สแกนแล้วไม่ผ่าน
+#:
+#: AINU ส่งเคสพวกนี้มาเป็น `transactionStatus: "failed"` เหมือนกับการสแกนไม่ผ่านจริง
+#: ทั้งที่คนละเรื่องกัน เช่น credential ผิด → handshake ตอบ 401/500 → SDK คืน INIT_ERROR
+#: ถ้าปล่อยเป็น failed สถิติ "อัตราสแกนผ่าน" จะถูกกลบด้วยเคสที่ระบบพัง
+#: (ของจริงเคยเกิด 30 แถว INIT_ERROR กลบ EKYC_ERROR_007 ที่มีแค่ 4 แถว)
+#:
+#: จึงแปลงเป็น skipped/PROVIDER_UNAVAILABLE ตามกติกาที่ว่า skip_reason คือสิ่งที่ "เรา" สรุป
+#: แต่ยังเก็บ raw_payload และ fail_reason ตัวจริงไว้ครบ อ่านย้อนหลังได้เสมอ
+INIT_FAILURE_REASONS: frozenset[str] = frozenset(
+    {
+        "INIT_ERROR",
+        "EKYC_INIT_ERROR",
+        "EKYC_SYSTEM_ERROR",
+        "CANT_START_EKYC",
+        "EKYC_ERROR_006",  # เปิด Liveness session ไม่สำเร็จ
+    }
+)
+
 
 @dataclass(frozen=True)
 class ParsedLiveness:
     """ค่าที่จะเขียนลงคอลัมน์ — ทุกตัวยกเว้น status เป็น None ได้"""
 
     status: str
+    #: ตั้งเฉพาะเมื่อ status ถูกแปลงเป็น skipped (ดู INIT_FAILURE_REASONS)
+    skip_reason: str | None = None
     transaction_id: str | None = None
     liveness_reason: str | None = None
     fail_reason: str | None = None
@@ -195,11 +221,29 @@ def parse_result(payload: Any) -> ParsedLiveness:
 
     liveness = _as_dict(_pick(data, "liveness"))
 
+    status = _normalize_status(_pick(data, "transactionStatus"))
+    fail_reason = _text(_pick(data, "failReason"), 64)
+
+    # การสแกนไม่เคยเริ่ม → ไม่ใช่ failed แต่เป็น skipped (ดู INIT_FAILURE_REASONS)
+    skip_reason = None
+    if status == STATUS_FAILED and fail_reason in INIT_FAILURE_REASONS:
+        logger.warning(
+            "liveness เปิดไม่สำเร็จ failReason=%s — บันทึกเป็น %s/%s ไม่ใช่ %s",
+            fail_reason,
+            STATUS_SKIPPED,
+            SKIP_PROVIDER_UNAVAILABLE,
+            STATUS_FAILED,
+        )
+        status = STATUS_SKIPPED
+        skip_reason = SKIP_PROVIDER_UNAVAILABLE
+
     return ParsedLiveness(
-        status=_normalize_status(_pick(data, "transactionStatus")),
+        status=status,
+        skip_reason=skip_reason,
         transaction_id=_text(_pick(data, "transactionId"), 128),
         liveness_reason=_text(liveness.get("reason"), 64),
-        fail_reason=_text(_pick(data, "failReason"), 64),
+        # เก็บรหัสตัวจริงจาก AINU ไว้เสมอ แม้ status จะถูกแปลงเป็น skipped แล้ว
+        fail_reason=fail_reason,
         description=_text(_pick(data, "description"), 512),
         # sdkVersion อยู่ได้ทั้งระดับบนสุดและใน liveness block (เอกสาร AINU ข้อ 1.1 กับ 1.4)
         sdk_version=_text(_pick(data, "sdkVersion") or liveness.get("sdkVersion"), 64),
