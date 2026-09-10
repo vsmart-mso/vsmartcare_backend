@@ -214,6 +214,8 @@ async def set_result(
     parsed = parse_result(body.payload)
 
     row.status = parsed.status
+    # มีค่าเฉพาะเคสที่ AINU บอก failed แต่จริง ๆ คือเปิดระบบไม่ได้ (INIT_FAILURE_REASONS)
+    row.skip_reason = parsed.skip_reason
     row.liveness_reason = parsed.liveness_reason
     row.fail_reason = parsed.fail_reason
     row.description = parsed.description

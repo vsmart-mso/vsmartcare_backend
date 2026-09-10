@@ -10,9 +10,15 @@ import logging
 import unittest
 from datetime import datetime, timezone
 
-from app.models.liveness_attempt import STATUS_COMPLETED, STATUS_FAILED
+from app.models.liveness_attempt import (
+    SKIP_PROVIDER_UNAVAILABLE,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_SKIPPED,
+)
 from app.schemas.liveness import LivenessAttemptRead, LivenessSessionResponse
 from app.services.liveness_payload import (
+    INIT_FAILURE_REASONS,
     PAYLOAD_WARN_BYTES,
     REDACTED_MARKER,
     parse_result,
@@ -160,6 +166,45 @@ class ParseResultTests(unittest.TestCase):
             {"transactionStatus": "completed", "completedAt": "2026-08-28T09:12:43"}
         )
         self.assertEqual(parsed.completed_at.tzinfo, timezone.utc)
+
+
+class InitFailureTests(unittest.TestCase):
+    """AINU ส่ง "เปิดระบบไม่ได้" มาเป็น failed เหมือนสแกนไม่ผ่าน ต้องแยกออกจากกัน"""
+
+    def test_init_error_becomes_skipped_not_failed(self) -> None:
+        """เคสจริง: credential ผิด → handshake 401 → SDK คืน INIT_ERROR ผ่าน onEkycResult"""
+        payload = {
+            "transactionStatus": "failed",
+            "failReason": "INIT_ERROR",
+            "description": "[SDK INIT ERROR] Request failed with status code 401",
+        }
+        with self.assertLogs("case-service.liveness", level=logging.WARNING):
+            parsed = parse_result(payload)
+        self.assertEqual(parsed.status, STATUS_SKIPPED)
+        self.assertEqual(parsed.skip_reason, SKIP_PROVIDER_UNAVAILABLE)
+        # รหัสตัวจริงจาก AINU ต้องไม่หาย — ใช้สืบย้อนหลังได้
+        self.assertEqual(parsed.fail_reason, "INIT_ERROR")
+
+    def test_all_init_failure_reasons_are_skipped(self) -> None:
+        for reason in sorted(INIT_FAILURE_REASONS):
+            with self.subTest(reason=reason):
+                with self.assertLogs("case-service.liveness", level=logging.WARNING):
+                    parsed = parse_result({"transactionStatus": "failed", "failReason": reason})
+                self.assertEqual(parsed.status, STATUS_SKIPPED)
+                self.assertEqual(parsed.skip_reason, SKIP_PROVIDER_UNAVAILABLE)
+
+    def test_real_scan_failures_stay_failed(self) -> None:
+        """สแกนแล้วไม่ผ่านจริง ต้องคง failed ไว้ ไม่งั้นสถิติอัตราผ่านจะเพี้ยนอีกทาง"""
+        for reason in ("EKYC_ERROR_007", "EKYC_ERROR_008", "EKYC_ERROR_009", "SESSION_TIMEOUT"):
+            with self.subTest(reason=reason):
+                parsed = parse_result({"transactionStatus": "failed", "failReason": reason})
+                self.assertEqual(parsed.status, STATUS_FAILED)
+                self.assertIsNone(parsed.skip_reason)
+
+    def test_completed_never_becomes_skipped(self) -> None:
+        parsed = parse_result({"transactionStatus": "completed", "failReason": "INIT_ERROR"})
+        self.assertEqual(parsed.status, STATUS_COMPLETED)
+        self.assertIsNone(parsed.skip_reason)
 
 
 class PayloadSizeWarningTests(unittest.TestCase):
