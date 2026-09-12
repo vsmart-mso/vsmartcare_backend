@@ -190,9 +190,16 @@ async def _latest_approve_status_for_applicant(
     session: AsyncSession,
     applicant_id: int,
 ) -> bool | None:
+    """สถานะอนุมัติล่าสุดของรอบปัจจุบัน — ข้ามแถวที่ soft-supersede แล้ว.
+
+    คืน None เมื่อไม่มีแถว active (ยังไม่มีประวัติรอบปัจจุบัน หรือถูก reopen แล้ว).
+    """
     return await session.scalar(
         select(ApproveCase.approve_status)
-        .where(ApproveCase.applicant_id == applicant_id)
+        .where(
+            ApproveCase.applicant_id == applicant_id,
+            ApproveCase.approval_superseded_at.is_(None),
+        )
         .order_by(ApproveCase.id.desc())
         .limit(1)
     )
