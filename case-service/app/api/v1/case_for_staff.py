@@ -21,6 +21,7 @@ from ...services.article_approval import (
     record_approve_case_with_status,
     resolve_active_pmj_rejects_for_applicant,
     resolve_article_id_for_applicant,
+    supersede_active_approvals_for_applicant,
     upsert_article,
 )
 from ...api.v1.cases import _load_full_applicant, applicant_to_case_read
@@ -48,6 +49,7 @@ from ...services.process_sla import (
 from ...constants.attachment_types import CASH_DISBURSEMENT_PROOF_TYPE_IDS
 from ...constants.current_status import (
     CURRENT_STATUS_EDIT_REQUESTED,
+    CURRENT_STATUS_GATHERING_ADDITIONAL_INFO,
     CURRENT_STATUS_PENDING_INTAKE,
     CURRENT_STATUS_RECEIVED,
     CURRENT_STATUS_WITHDRAWING,
@@ -999,12 +1001,13 @@ def _applicant_is_disabled_exists():
 
 
 def _applicant_is_approved_exists():
-    """มีแถว approve_case ที่ approve_status = true สำหรับ applicant นี้หรือไม่."""
+    """มีแถว approve_case ที่ approve_status = true และยังไม่ superseded สำหรับ applicant นี้หรือไม่."""
     return (
         select(ApproveCase.id)
         .where(
             ApproveCase.applicant_id == Applicant.id,
             ApproveCase.approve_status.is_(True),
+            ApproveCase.approval_superseded_at.is_(None),
         )
         .exists()
     )
@@ -2591,6 +2594,14 @@ async def create_welfare_request_status_for_staff(
             session,
             applicant_id=body.applicant_id,
         )
+    elif body.current_status_id in (
+        CURRENT_STATUS_EDIT_REQUESTED,
+        CURRENT_STATUS_GATHERING_ADDITIONAL_INFO,
+    ):
+        await supersede_active_approvals_for_applicant(
+            session,
+            applicant_id=body.applicant_id,
+        )
 
     maybe_freeze_process_sla_for_status(applicant, body.current_status_id)
 
@@ -3322,6 +3333,11 @@ async def create_welfare_edit_request(
     )
     session.add(status_log)
     await session.flush()
+
+    await supersede_active_approvals_for_applicant(
+        session,
+        applicant_id=body.applicant_id,
+    )
 
     comments: list[WelfareReviewComment] = []
     for item in body.comments:

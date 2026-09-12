@@ -35,12 +35,13 @@ def _latest_welfare_request_status_subquery():
 
 
 def _applicant_is_approved_exists():
-    """มีแถว approve_case ที่ approve_status = true สำหรับ applicant นี้หรือไม่."""
+    """มีแถว approve_case ที่ approve_status = true และยังไม่ superseded สำหรับ applicant นี้หรือไม่."""
     return (
         select(ApproveCase.id)
         .where(
             ApproveCase.applicant_id == Applicant.id,
             ApproveCase.approve_status.is_(True),
+            ApproveCase.approval_superseded_at.is_(None),
         )
         .exists()
     )

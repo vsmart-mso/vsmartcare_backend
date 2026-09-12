@@ -136,6 +136,29 @@ async def resolve_active_pmj_rejects_for_applicant(
     return result.rowcount or 0
 
 
+async def supersede_active_approvals_for_applicant(
+    session: AsyncSession,
+    *,
+    applicant_id: int,
+) -> int:
+    """Soft-supersede แถวอนุมัติที่ยัง active (ตั้ง approval_superseded_at).
+
+    เรียกเมื่อเข้าสถานะ 8 (แก้ไขข้อมูล) หรือ 9 (หาข้อมูลเพิ่มเติม)
+    เพื่อให้ is_approved / latest_approve_status ไม่นับแถวอนุมัติรอบเก่า
+    โดยไม่ลบประวัติและไม่สลับเป็น reject.
+    """
+    result = await session.execute(
+        update(ApproveCase)
+        .where(
+            ApproveCase.applicant_id == applicant_id,
+            ApproveCase.approve_status.is_(True),
+            ApproveCase.approval_superseded_at.is_(None),
+        )
+        .values(approval_superseded_at=datetime.now())
+    )
+    return result.rowcount or 0
+
+
 async def resolve_article_id_for_applicant(
     session: AsyncSession,
     applicant_id: int,
