@@ -57,6 +57,7 @@ class ApproveCaseRead(ApproveCaseBase):
     id: int
     article_id: int | None = None
     reject_resolved_at: datetime | None = None
+    approval_superseded_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

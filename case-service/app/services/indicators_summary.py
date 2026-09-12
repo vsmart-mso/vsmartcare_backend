@@ -1166,12 +1166,13 @@ async def fetch_indicators_nationwide(
 
 
 def _applicant_is_approved_exists():
-    """มีแถว approve_case ที่ approve_status = true — เหมือน staff digest finance_pending."""
+    """มีแถว approve_case ที่ approve_status = true และยังไม่ superseded — เหมือน staff digest finance_pending."""
     return (
         select(ApproveCase.id)
         .where(
             ApproveCase.applicant_id == Applicant.id,
             ApproveCase.approve_status.is_(True),
+            ApproveCase.approval_superseded_at.is_(None),
         )
         .exists()
     )
