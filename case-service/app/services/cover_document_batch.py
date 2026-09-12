@@ -167,6 +167,7 @@ def _applicant_is_approved_exists():
         .where(
             ApproveCase.applicant_id == Applicant.id,
             ApproveCase.approve_status.is_(True),
+            ApproveCase.approval_superseded_at.is_(None),
         )
         .exists()
     )
