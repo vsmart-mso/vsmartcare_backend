@@ -39,6 +39,7 @@ from ...schemas.liveness import (
     LivenessSkipRequest,
     LivenessTransactionRequest,
 )
+from ...services.liveness_link import sweep_orphan_attempts
 from ...services.liveness_payload import parse_result, strip_images, warn_if_payload_large
 from ...settings import settings
 
@@ -134,6 +135,10 @@ async def create_session(
     ไม่งั้นการสแกนหลายครั้งจะถูกยุบเป็นแถวเดียวและ reconcile กับ AINU ทีหลังไม่ได้
     """
     reference_id = str(uuid.uuid4())
+
+    # เริ่มรอบใหม่ = รอบเก่าที่ยังไม่ถูกใช้ยื่นคำร้องหมดความหมาย — กวาดทิ้งก่อนสร้างแถวใหม่
+    # (นโยบาย: DB เก็บถาวรเฉพาะแถวที่ผูก applicant) session เก่าที่ค้างอีก tab จะตอบ 404
+    await sweep_orphan_attempts(session, persons_id=claims.person_id)
 
     missing = _missing_ainu_config()
     if missing:

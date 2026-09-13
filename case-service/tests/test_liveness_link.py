@@ -70,6 +70,55 @@ class LinkLivenessToApplicantTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(existing.applicant_id, 77)
         self.assertEqual(len(db.attempts), 1)
 
+    async def test_successful_link_sweeps_other_orphans_of_same_person(self) -> None:
+        """นโยบายเก็บข้อมูล: ยื่นคำร้องแล้วต้องกวาดแถวกำพร้าที่เหลือของคนเดิมทิ้ง"""
+        used = make_attempt(reference_id="ref-used-now", persons_id=PERSON_A_ID)
+        old_fail = make_attempt(
+            reference_id="ref-old-fail",
+            persons_id=PERSON_A_ID,
+            status=STATUS_COMPLETED,  # completed ที่ไม่เคยถูกยื่นก็ต้องโดนกวาด
+        )
+        foreign_orphan = make_attempt(reference_id="ref-foreign", persons_id=PERSON_B_ID)
+        already_linked = make_attempt(
+            reference_id="ref-linked-before",
+            persons_id=PERSON_A_ID,
+            applicant_id=11,
+        )
+        db = FakeAsyncSession()
+        db.attempts.extend([used, old_fail, foreign_orphan, already_linked])
+
+        await link_liveness_to_applicant(
+            db,
+            applicant_id=77,
+            persons_id=PERSON_A_ID,
+            reference_id="ref-used-now",
+        )
+
+        refs = {row.reference_id for row in db.attempts}
+        self.assertEqual(used.applicant_id, 77)
+        self.assertIn("ref-used-now", refs)  # แถวที่เพิ่งผูก ต้องรอด
+        self.assertIn("ref-foreign", refs)  # ของ person อื่น ห้ามแตะ
+        self.assertIn("ref-linked-before", refs)  # ผูกคำร้องอื่นไปแล้ว ห้ามแตะ
+        self.assertNotIn("ref-old-fail", refs)  # กำพร้าของคนเดิม ต้องหาย
+
+    async def test_no_attempt_row_survives_its_own_sweep(self) -> None:
+        orphan = make_attempt(reference_id="ref-abandoned", persons_id=PERSON_A_ID)
+        db = FakeAsyncSession()
+        db.attempts.append(orphan)
+
+        await link_liveness_to_applicant(
+            db,
+            applicant_id=60,
+            persons_id=PERSON_A_ID,
+            reference_id=None,
+        )
+
+        refs = {row.reference_id for row in db.attempts}
+        self.assertNotIn("ref-abandoned", refs)
+        self.assertEqual(len(db.attempts), 1)
+        self.assertEqual(db.attempts[0].skip_reason, SKIP_NO_ATTEMPT)
+        self.assertEqual(db.attempts[0].applicant_id, 60)
+
     async def test_already_used_reference_inserts_replayed_without_touching_original(self) -> None:
         existing = make_attempt(
             reference_id="ref-used",

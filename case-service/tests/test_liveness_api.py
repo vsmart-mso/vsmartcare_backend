@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models.liveness_attempt import (
     CLIENT_SKIP_REASONS,
     SKIP_NO_ATTEMPT,
+    SKIP_NOT_CONFIGURED,
     SKIP_REPLAYED,
     SKIP_USER_SKIPPED,
     STATUS_COMPLETED,
@@ -165,6 +166,40 @@ class LivenessApiUsageTests(unittest.TestCase):
                 self.assertEqual(response.json()["skip_reason"], reason)
                 self.assertEqual(response.json()["status"], STATUS_SKIPPED)
 
+    def test_new_session_sweeps_previous_orphan_of_same_person(self) -> None:
+        """นโยบายเก็บข้อมูล: เริ่มรอบใหม่ต้องกวาดแถวกำพร้ารอบก่อนของคนเดิมทิ้ง"""
+        first_ref = self._open_session()["reference_id"]
+        # ทำให้รอบแรกจบเป็น failed ก่อน เพื่อยืนยันว่ากวาดทุก status ไม่ใช่แค่ pending
+        self.client.post(
+            f"/v1/liveness/{first_ref}/result",
+            json={"payload": {"not": "an-ainu-result"}},
+        )
+
+        second_ref = self._open_session()["reference_id"]
+
+        self.assertEqual(len(self.db.attempts), 1)
+        self.assertEqual(self.db.attempts[0].reference_id, second_ref)
+        self.assertEqual(self.db.attempts[0].status, STATUS_PENDING)
+
+    def test_new_session_keeps_linked_rows_and_other_persons_rows(self) -> None:
+        linked = make_attempt(
+            reference_id="ref-linked",
+            status=STATUS_COMPLETED,
+            applicant_id=77,
+        )
+        foreign_orphan = make_attempt(
+            reference_id="ref-foreign-orphan",
+            persons_id=PERSON_B_ID,
+        )
+        self.db.attempts.extend([linked, foreign_orphan])
+
+        self._open_session()
+
+        refs = {row.reference_id for row in self.db.attempts}
+        self.assertIn("ref-linked", refs)  # ผูก applicant แล้ว ห้ามโดนกวาด
+        self.assertIn("ref-foreign-orphan", refs)  # ของ person อื่น ห้ามโดนกวาด
+        self.assertEqual(len(self.db.attempts), 3)
+
     def test_malformed_payload_returns_200_failed_not_500(self) -> None:
         ref = self._open_session()["reference_id"]
         response = self.client.post(
@@ -288,13 +323,19 @@ class LivenessApiSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(skipped.status_code, 200, skipped.text)
         _assert_no_raw_leak(self, skipped)
 
-    def test_s5_session_without_ainu_config_is_503_and_does_not_insert(self) -> None:
+    def test_s5_session_without_ainu_config_is_503_and_records_not_configured(self) -> None:
         db = FakeAsyncSession()
         client = self._client_as(citizen_a(), db, ainu=False)
         response = client.post("/v1/liveness/session")
         self.assertEqual(response.status_code, 503, response.text)
-        self.assertEqual(response.json()["detail"], "liveness_not_configured")
-        self.assertEqual(len(db.attempts), 0)
+        detail = response.json()["detail"]
+        self.assertEqual(detail["error"], "liveness_not_configured")
+        # ต้องเกิดแถว NOT_CONFIGURED (commit เองก่อน raise) และคืน reference_id ให้แนบตอนยื่นได้
+        self.assertEqual(len(db.attempts), 1)
+        self.assertEqual(db.attempts[0].status, STATUS_SKIPPED)
+        self.assertEqual(db.attempts[0].skip_reason, SKIP_NOT_CONFIGURED)
+        self.assertEqual(db.attempts[0].reference_id, detail["reference_id"])
+        self.assertGreaterEqual(db.commit_calls, 1)
 
     async def test_s6_linking_someone_elses_reference_does_not_bind_their_row(self) -> None:
         foreign = make_attempt(

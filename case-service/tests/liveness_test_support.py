@@ -20,6 +20,8 @@ os.environ.setdefault(
 )
 os.environ.setdefault("THAID_JWT_SECRET", "test-thaid-jwt-secret")
 
+from sqlalchemy.sql.dml import Delete
+
 from app.core.citizen_security import CitizenClaims, require_citizen
 from app.core.database import get_session
 from app.models.liveness_attempt import STATUS_PENDING, LivenessAttempt
@@ -82,6 +84,7 @@ class FakeAsyncSession:
         self.attempts: list[LivenessAttempt] = []
         self.flush_error = flush_error
         self.flush_calls = 0
+        self.commit_calls = 0
         self.nested_calls = 0
         self.begin_nested_error: BaseException | None = None
 
@@ -104,6 +107,22 @@ class FakeAsyncSession:
             if getattr(row, "created_at", None) is None:
                 row.created_at = now
 
+    async def commit(self) -> None:
+        self.commit_calls += 1
+        await self.flush()
+
+    async def execute(self, statement: Any) -> None:
+        """รองรับเฉพาะ bulk delete ของ sweep_orphan_attempts (WHERE persons_id + applicant_id IS NULL)"""
+        if not isinstance(statement, Delete):
+            raise NotImplementedError(f"FakeAsyncSession.execute ไม่รองรับ {type(statement)!r}")
+        persons_id = _persons_id_from_statement(statement)
+        if persons_id is not None:
+            self.attempts = [
+                row
+                for row in self.attempts
+                if not (row.persons_id == persons_id and row.applicant_id is None)
+            ]
+
     async def scalar(self, statement: Any) -> LivenessAttempt | None:
         ref = _reference_id_from_statement(statement)
         if ref is None:
@@ -115,6 +134,14 @@ class FakeAsyncSession:
 
     def added_except(self, original: LivenessAttempt) -> list[LivenessAttempt]:
         return [row for row in self.attempts if row is not original]
+
+
+def _persons_id_from_statement(statement: Any) -> int | None:
+    compiled = statement.compile()
+    for key, value in compiled.params.items():
+        if "persons_id" in str(key):
+            return value
+    return None
 
 
 def _reference_id_from_statement(statement: Any) -> str | None:
