@@ -8,6 +8,10 @@
 ถึงจะได้คำร้อง) คนที่ข้ามด่านนี้จึงทิ้งร่องรอยที่ลบไม่ได้ — ต่างจากการให้ frontend
 เป็นคนรายงานว่าข้าม ซึ่งแค่ "ไม่เรียก" ก็หายไปเฉย ๆ
 
+นโยบายเก็บข้อมูล: DB เก็บถาวรเฉพาะแถวที่ผูก applicant แล้ว — แถวกำพร้า
+(`applicant_id IS NULL`) ของ person เดิมถูกกวาดทิ้งท้าย `_link()` และตอนเปิด session ใหม่
+(ดู `sweep_orphan_attempts`)
+
 ⚠️ กันได้แค่ "ข้ามแบบเงียบ ๆ" ไม่ได้กันการปลอมผลว่า completed
 เรื่องนั้นต้องรอ verify signature ฝั่งเซิร์ฟเวอร์
 """
@@ -17,7 +21,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.liveness_attempt import (
@@ -28,6 +32,21 @@ from ..models.liveness_attempt import (
 )
 
 logger = logging.getLogger("case-service.liveness")
+
+
+async def sweep_orphan_attempts(session: AsyncSession, *, persons_id: int) -> None:
+    """ลบแถวกำพร้า (ยังไม่ผูก applicant) ทั้งหมดของ person เดียว — ทุก status
+
+    ลบเฉพาะของ person ที่กำลังทำ action อยู่เอง จึงไม่กระทบ session ของคนอื่น
+    แถวที่มี applicant_id แล้ว (รวม NO_ATTEMPT/REPLAYED) ไม่ถูกแตะเด็ดขาด
+    ผู้เรียกต้อง flush การผูก applicant ให้เสร็จก่อน ไม่งั้น bulk delete จะกวาดแถวนั้นไปด้วย
+    """
+    await session.execute(
+        delete(LivenessAttempt).where(
+            LivenessAttempt.persons_id == persons_id,
+            LivenessAttempt.applicant_id.is_(None),
+        )
+    )
 
 
 def _server_marked_row(persons_id: int, applicant_id: int, skip_reason: str) -> LivenessAttempt:
@@ -80,42 +99,38 @@ async def _link(
 ) -> None:
     if not reference_id:
         session.add(_server_marked_row(persons_id, applicant_id, SKIP_NO_ATTEMPT))
-        await session.flush()
-        return
-
-    row = await session.scalar(
-        select(LivenessAttempt).where(LivenessAttempt.reference_id == reference_id)
-    )
-
-    if row is None or row.persons_id != persons_id:
-        # อ้างถึง attempt ที่ไม่มีอยู่จริง หรือของคนอื่น — เชื่อไม่ได้ ถือว่าไม่มีการสแกน
-        logger.warning(
-            "reference_id ที่ยื่นมาไม่ถูกต้อง applicant_id=%s persons_id=%s reference_id=%s "
-            "(%s) — บันทึกเป็น %s",
-            applicant_id,
-            persons_id,
-            reference_id,
-            "ไม่พบแถว" if row is None else "เป็นของ person อื่น",
-            SKIP_NO_ATTEMPT,
+    else:
+        row = await session.scalar(
+            select(LivenessAttempt).where(LivenessAttempt.reference_id == reference_id)
         )
-        session.add(_server_marked_row(persons_id, applicant_id, SKIP_NO_ATTEMPT))
-        await session.flush()
-        return
 
-    if row.applicant_id is not None:
-        # เอาการสแกนครั้งเดียวไปยื่นหลายคำร้อง — ไม่บล็อกตามข้อตกลงรอบนี้
-        # แต่ไม่แก้แถวเดิม (จะทำให้สถิติของคำร้องแรกเพี้ยน) และทิ้งหลักฐานไว้
-        logger.warning(
-            "reference_id ถูกใช้ไปแล้วกับ applicant_id=%s แต่ถูกยื่นซ้ำกับ applicant_id=%s "
-            "reference_id=%s — บันทึกเป็น %s",
-            row.applicant_id,
-            applicant_id,
-            reference_id,
-            SKIP_REPLAYED,
-        )
-        session.add(_server_marked_row(persons_id, applicant_id, SKIP_REPLAYED))
-        await session.flush()
-        return
+        if row is None or row.persons_id != persons_id:
+            # อ้างถึง attempt ที่ไม่มีอยู่จริง หรือของคนอื่น — เชื่อไม่ได้ ถือว่าไม่มีการสแกน
+            logger.warning(
+                "reference_id ที่ยื่นมาไม่ถูกต้อง applicant_id=%s persons_id=%s reference_id=%s "
+                "(%s) — บันทึกเป็น %s",
+                applicant_id,
+                persons_id,
+                reference_id,
+                "ไม่พบแถว" if row is None else "เป็นของ person อื่น",
+                SKIP_NO_ATTEMPT,
+            )
+            session.add(_server_marked_row(persons_id, applicant_id, SKIP_NO_ATTEMPT))
+        elif row.applicant_id is not None:
+            # เอาการสแกนครั้งเดียวไปยื่นหลายคำร้อง — ไม่บล็อกตามข้อตกลงรอบนี้
+            # แต่ไม่แก้แถวเดิม (จะทำให้สถิติของคำร้องแรกเพี้ยน) และทิ้งหลักฐานไว้
+            logger.warning(
+                "reference_id ถูกใช้ไปแล้วกับ applicant_id=%s แต่ถูกยื่นซ้ำกับ applicant_id=%s "
+                "reference_id=%s — บันทึกเป็น %s",
+                row.applicant_id,
+                applicant_id,
+                reference_id,
+                SKIP_REPLAYED,
+            )
+            session.add(_server_marked_row(persons_id, applicant_id, SKIP_REPLAYED))
+        else:
+            row.applicant_id = applicant_id
 
-    row.applicant_id = applicant_id
+    # flush ให้การผูก applicant ลงถึง DB ก่อน แล้วค่อยกวาดแถวกำพร้าที่เหลือของ person นี้
     await session.flush()
+    await sweep_orphan_attempts(session, persons_id=persons_id)
