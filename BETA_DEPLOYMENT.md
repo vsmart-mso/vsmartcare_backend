@@ -79,6 +79,7 @@ flowchart LR
 
 - [ ] รัน `case-service`, `notification-service`, `thaid-auth-service`, `bff-vsmartcare`
 - [ ] ตั้ง env ตาม [ตารางด้านล่าง](#ตัวแปรแวดล้อม-ต่อ-service) — URL ระหว่าง service ใช้ชื่อภายใน (เช่น `http://case-service:8000`) **ไม่ใช่** `localhost` ของเครื่อง host
+- [ ] ตั้ง `APP_ENV`, `DOCS_USERNAME`, `DOCS_PASSWORD` ของ BFF — ไม่ตั้ง = BFF start ไม่ขึ้น (ดู [หน้าเอกสาร API](#หน้าเอกสาร-api-docs-redoc-openapijson))
 - [ ] mount volume สำหรับ `UPLOAD_ROOT` ของ case-service
 
 ### 4. Reverse proxy + TLS
@@ -138,12 +139,37 @@ location /api-vsmartcare/ {
 | ตัวแปร | จำเป็น | ตัวอย่าง Beta (แบบ A) | หมายเหตุ |
 |--------|--------|------------------------|----------|
 | `PORT` | จำเป็น | `8000` | พอร์ตใน container |
+| `APP_ENV` | บังคับ (beta/prod) | `beta` | ไม่ตั้ง = BFF มองว่าเป็นเครื่องนักพัฒนา แล้วยอมให้ใช้รหัสหน้า docs เริ่มต้น |
 | `BFF_API_PREFIX` | ไม่บังคับ | `/api-vsmartcare` | prefix สาธารณะของ BFF (default ในโค้ด) |
 | `CASE_SERVICE_URL` | จำเป็น | `http://case-service:8000` | URL ภายใน cluster |
 | `NOTIFICATION_SERVICE_URL` | จำเป็น | `http://notification-service:8000` | URL ภายใน cluster |
 | `THAID_AUTH_SERVICE_URL` | จำเป็น | `http://thaid-auth-service:8000` | URL ภายใน cluster |
 | `BFF_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค |
 | `BFF_API_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | trusted server clients (`volunteer_smart`) — ต้องตรงกับ `STAFF_INTERNAL_API_KEY` |
+| `DOCS_USERNAME` | บังคับ (beta/prod) | `vcare-docs` | ชื่อผู้ใช้หน้าเอกสาร API — ห้ามเป็น `docs` (ค่าเริ่มต้นของ localdev) |
+| `DOCS_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | รหัสผ่านหน้าเอกสาร API — **คนละตัวกับ `BFF_API_PASSWORD`** ห้ามเป็น `docs` และต้องเป็นอักขระ ASCII |
+
+#### หน้าเอกสาร API (`/docs`, `/redoc`, `/openapi.json`)
+
+ทั้งสาม path ถูกล็อกทุก environment ตามผลตรวจ pentest (Swagger เปิดสาธารณะ) — เข้าได้ 2 ทาง
+
+- **คน** เปิดเบราว์เซอร์แล้วกรอกที่หน้า login `{BFF_API_PREFIX}/docs/login` ระบบออก cookie อายุ 8 ชั่วโมง (ออกจากระบบที่ `{BFF_API_PREFIX}/docs/logout`)
+- **สคริปต์ / smoke test** ใช้ HTTP Basic ตามเดิม `curl -u "$DOCS_USERNAME:$DOCS_PASSWORD" .../openapi.json`
+
+`localdev` ใช้ค่าเริ่มต้น `docs` / `docs` ได้ แต่ **beta และ production จะ start ไม่ขึ้น** ถ้ายังใช้ค่าเริ่มต้น — log จะขึ้น
+
+```
+RuntimeError: DOCS_USERNAME and DOCS_PASSWORD must be changed from the dev defaults when APP_ENV=beta
+```
+
+สร้างรหัส (ตัดอักขระที่กวน shell/URL ออก และคง ASCII ตามข้อจำกัดของ HTTP Basic)
+
+```bash
+export DOCS_USERNAME=vcare-docs
+export DOCS_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
+```
+
+เปลี่ยน `DOCS_PASSWORD` เมื่อไหร่ cookie ของทุกคนที่ login ค้างไว้จะใช้ไม่ได้ทันที (ใช้เป็นวิธีเพิกถอน session ทั้งหมด)
 
 ### case-service
 
@@ -236,6 +262,8 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 | อัปโหลด | path `UPLOAD_ROOT` เขียนได้หลังอัปโหลดหลักฐาน |
 | ThaiD | ล็อกอิน redirect กลับ callback URL ที่ลงทะเบียน ไม่ mismatch |
 | CORS | เรียก API จาก origin ของ SPA ไม่ถูกบล็อก |
+| เอกสาร API ถูกล็อก | `curl -i .../api-vsmartcare/openapi.json` ต้องได้ `303` ไปหน้า login **ห้ามได้ `200` พร้อม JSON spec** |
+| เอกสาร API ยังใช้งานได้ | `curl -u "$DOCS_USERNAME:$DOCS_PASSWORD" .../api-vsmartcare/openapi.json` ได้ `200` พร้อม spec |
 
 Health ภายใน service: `/healthz`, `/readyz` (ดู [`case-service/app/main.py`](case-service/app/main.py) และ service อื่น)
 
