@@ -29,6 +29,7 @@ from .case_for_staff_schema import (
     StaffDataEditLogBody,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
+    CentralCaseForStaffListResponse,
     CaseForStaffListResponse,
     CaseForStaffRead as CaseForStaffListItem,
     CaseForStaffStatusSummaryResponse,
@@ -216,6 +217,12 @@ def custom_openapi() -> Dict[str, Any]:
         tags=app.openapi_tags,
     )
     components = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    bearer_schemes = {
+        name for name, definition in components.items()
+        if definition.get("type") == "http" and definition.get("scheme") == "bearer"
+    } | {"BearerAuth"}
+    # Swagger Authorize แสดง Bearer เพียงช่องเดียว; API key ยังรับตามเดิมที่ runtime.
+    components.clear()
     components["BearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
@@ -225,12 +232,23 @@ def custom_openapi() -> Dict[str, Any]:
             f"หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
         ),
     }
-    components["BffApiKey"] = {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-Key",
-        "description": "รหัส trusted server clients เท่านั้น (volunteer_smart) — ไม่ใช้จาก browser",
-    }
+    for path_item in schema.get("paths", {}).values():
+        for method, operation in path_item.items():
+            if method not in {"get", "post", "put", "patch", "delete", "head", "options", "trace"}:
+                continue
+            requirements = operation.get("security")
+            if requirements is None:
+                continue
+            has_bearer = any(bearer_schemes.intersection(req) for req in requirements)
+            operation["security"] = [{"BearerAuth": []}] if has_bearer else []
+            if "parameters" in operation:
+                operation["parameters"] = [
+                    parameter for parameter in operation["parameters"]
+                    if not (
+                        parameter.get("in") == "header"
+                        and parameter.get("name", "").lower() == "x-api-key"
+                    )
+                ]
     schema["security"] = [{"BearerAuth": []}]
     app.openapi_schema = schema
     return app.openapi_schema
@@ -1029,6 +1047,67 @@ async def list_cases_for_staff(
             "items": [CaseForStaffListItem.model_validate(item) for item in data.get("items", [])],
         }
     )
+
+
+@router.get(
+    "/v1/case_for_staff/central",
+    tags=["case_for_staff"],
+    summary="รายการเคสข้ามจังหวัดตามหมวดเงินสำหรับระบบส่วนกลาง (read-only)",
+    description=(
+        "ระบบต้นทางตรวจกรมของ user แล้วส่ง type_money_id; 1=สป.เห็นทุกหมวด, "
+        "2–6=เห็นเฉพาะหมวดนั้น. ไม่ส่ง province_id = ทุกจังหวัด. "
+        "อนุญาต staff Bearer JWT หรือ trusted service API key; "
+        "case-service ตรวจลายเซ็นและอายุ JWT โดยไม่ล็อกจังหวัดจาก token"
+    ),
+    response_model=CentralCaseForStaffListResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def list_cases_for_central_system(
+    province_id: Optional[int] = Query(None, description="ไม่ส่ง = ทุกจังหวัด"),
+    case_number: Optional[str] = Query(None),
+    current_status: Optional[str] = Query(None),
+    current_status_id: Optional[list[int]] = Query(None, description="ส่งซ้ำได้หลายค่า"),
+    firstname: Optional[str] = Query(None),
+    lastname: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    datetime_create: Optional[date] = Query(None),
+    province_name: Optional[str] = Query(None),
+    district_id: Optional[int] = Query(None),
+    district_name: Optional[str] = Query(None),
+    subdistrict_id: Optional[int] = Query(None),
+    subdistrict_name: Optional[str] = Query(None),
+    subdistrict_postcode_id: Optional[int] = Query(None),
+    postcode: Optional[str] = Query(None),
+    type_money_id: int = Query(
+        ...,
+        description="หมวดเงินตามกรมของ user: 1=สป.เห็นทุกหมวด, 2–6=เฉพาะหมวดนั้น",
+    ),
+) -> CentralCaseForStaffListResponse:
+    pairs: list[tuple[str, Any]] = []
+    scalar_params = {
+        "province_id": province_id,
+        "case_number": case_number,
+        "current_status": current_status,
+        "firstname": firstname,
+        "lastname": lastname,
+        "cid": cid,
+        "datetime_create": datetime_create.isoformat() if datetime_create else None,
+        "province_name": province_name,
+        "district_id": district_id,
+        "district_name": district_name,
+        "subdistrict_id": subdistrict_id,
+        "subdistrict_name": subdistrict_name,
+        "subdistrict_postcode_id": subdistrict_postcode_id,
+        "postcode": postcode,
+        "type_money_id": type_money_id,
+    }
+    pairs.extend((key, value) for key, value in scalar_params.items() if value is not None)
+    if current_status_id:
+        pairs.extend(("current_status_id", value) for value in current_status_id)
+    suffix = f"?{urlencode(pairs)}" if pairs else ""
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/case_for_staff/central{suffix}")
+    return CentralCaseForStaffListResponse.model_validate(data)
 
 
 @router.get(

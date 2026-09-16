@@ -135,6 +135,14 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CentralCaseForStaffListResponse(BaseModel):
+    province_id: int | None = None
+    province_name: str | None = Field(None, max_length=255)
+    total_applicants: int = Field(..., ge=0)
+    filtered_applicants: int = Field(..., ge=0)
+    items: list[CaseForStaffRead] = Field(default_factory=list)
+
+
 class CaseForStaffStatusSummaryResponse(BaseModel):
     province_id: int
     province_name: str = Field(..., min_length=1, max_length=255)

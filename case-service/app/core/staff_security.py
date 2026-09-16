@@ -155,3 +155,52 @@ async def require_staff(
         await assert_applicant_in_staff_province(session, staff, int(applicant_param))
 
     return staff
+
+
+async def require_staff_service_api_key(
+    x_api_key: Optional[str] = Header(default=None),
+) -> None:
+    """อนุญาตเฉพาะ trusted service ที่ถือ STAFF_INTERNAL_API_KEY."""
+    internal_api_key = (settings.staff_internal_api_key or "").strip()
+    if not internal_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="staff_internal_api_key_not_configured",
+        )
+    if (x_api_key or "").strip() != internal_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid_api_key",
+        )
+
+
+async def require_central_read_auth(
+    authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Header(default=None),
+) -> None:
+    """Service API key หรือ staff JWT ที่ถูกต้อง โดยไม่ตรวจ province scope."""
+    internal_api_key = (settings.staff_internal_api_key or "").strip()
+    if internal_api_key and (x_api_key or "").strip() == internal_api_key:
+        return
+    if authorization and authorization.lower().startswith("bearer "):
+        secret = (settings.staff_jwt_secret or "").strip()
+        if not secret:
+            raise HTTPException(status_code=503, detail="staff_auth_not_configured")
+        raw = decode_staff_jwt(secret, authorization.split(" ", 1)[1].strip())
+        if raw:
+            try:
+                _claims_from_raw(raw)
+            except (TypeError, ValueError, HTTPException):
+                pass
+            else:
+                return
+        raise HTTPException(
+            status_code=401,
+            detail="invalid_staff_token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    raise HTTPException(
+        status_code=401,
+        detail="bearer_or_api_key_required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
