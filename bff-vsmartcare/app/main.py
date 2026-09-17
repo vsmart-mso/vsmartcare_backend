@@ -56,7 +56,13 @@ from .dashboard_schema import (
     DashboardSubDistrictsRead,
 )
 from .submission_eligibility_schema import SubmissionEligibilityRead
-from .middleware import CaptureAuthMiddleware, SecurityHeadersMiddleware, StaffRouteAuthMiddleware, merge_forward_headers
+from .middleware import (
+    CaptureAuthMiddleware,
+    STAFF_COMPAT_PATH_PREFIXES,
+    SecurityHeadersMiddleware,
+    StaffRouteAuthMiddleware,
+    merge_forward_headers,
+)
 from .rate_limit import RateLimitMiddleware
 from .settings import cors_origin_list, settings
 from .vsmart_compat import case_compat_from_por_kor_1, staff_evidence_url, vsmart_internal_headers
@@ -206,7 +212,12 @@ app.add_middleware(
 
 
 def custom_openapi() -> Dict[str, Any]:
-    """สร้าง/แคช OpenAPI schema และเพิ่ม security scheme Bearer ให้ Swagger ใช้ปุ่ม Authorize."""
+    """สร้าง/แคช OpenAPI schema — security จาก Depends และ middleware staff paths.
+
+    Route ที่มี FastAPI Depends ถูก remap เป็น BearerAuth / BffApiKey (dual = OR).
+    Path ที่ StaffRouteAuthMiddleware ล็อกแต่ไม่มี Depends จะได้ dual OR ด้วย
+    เพื่อให้ Swagger Authorize แนบ header ได้ — ไม่ทับ operation ที่ Depends ตั้งไว้แล้ว.
+    """
     if app.openapi_schema:
         return app.openapi_schema
     schema = get_openapi(
@@ -217,11 +228,20 @@ def custom_openapi() -> Dict[str, Any]:
         tags=app.openapi_tags,
     )
     components = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    # จดชื่อ scheme ที่ FastAPI สร้างจาก HTTPBearer / APIKeyHeader ก่อน remap
     bearer_schemes = {
-        name for name, definition in components.items()
+        name
+        for name, definition in components.items()
         if definition.get("type") == "http" and definition.get("scheme") == "bearer"
-    } | {"BearerAuth"}
-    # Swagger Authorize แสดง Bearer เพียงช่องเดียว; API key ยังรับตามเดิมที่ runtime.
+    }
+    api_key_schemes = {
+        name
+        for name, definition in components.items()
+        if definition.get("type") == "apiKey"
+        and definition.get("in") == "header"
+        and str(definition.get("name", "")).lower() == "x-api-key"
+    }
+
     components.clear()
     components["BearerAuth"] = {
         "type": "http",
@@ -229,27 +249,67 @@ def custom_openapi() -> Dict[str, Any]:
         "bearerFormat": "JWT",
         "description": (
             "access_token จาก ThaiD login (`POST /v1/auth/thaid/login` → callback) "
-            f"หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
+            "หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
         ),
     }
-    for path_item in schema.get("paths", {}).values():
+    components["BffApiKey"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": (
+            "Trusted server / cron API key (ค่าเดียวกับ BFF_API_PASSWORD) — "
+            "ใช้กับ internal routes และ dual-auth (lookups/geo/dashboard)"
+        ),
+    }
+
+    bff_prefix = settings.bff_api_prefix.rstrip("/")
+    dual_or = [{"BearerAuth": []}, {"BffApiKey": []}]
+    http_methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    for path, path_item in schema.get("paths", {}).items():
+        rel = path[len(bff_prefix) :] if bff_prefix and path.startswith(bff_prefix) else path
+        on_staff_middleware = any(rel.startswith(p) for p in STAFF_COMPAT_PATH_PREFIXES)
         for method, operation in path_item.items():
-            if method not in {"get", "post", "put", "patch", "delete", "head", "options", "trace"}:
+            if method not in http_methods:
                 continue
             requirements = operation.get("security")
-            if requirements is None:
-                continue
-            has_bearer = any(bearer_schemes.intersection(req) for req in requirements)
-            operation["security"] = [{"BearerAuth": []}] if has_bearer else []
-            if "parameters" in operation:
+            has_bearer = False
+            has_api_key = False
+            if isinstance(requirements, list):
+                for req in requirements:
+                    if not isinstance(req, dict):
+                        continue
+                    for scheme_name in req:
+                        if scheme_name in bearer_schemes:
+                            has_bearer = True
+                        if scheme_name in api_key_schemes:
+                            has_api_key = True
+
+            # FastAPI มักสร้าง dual-Depends เป็น AND — map เป็น OR ให้ตรง runtime
+            if has_bearer and has_api_key:
+                operation["security"] = dual_or
+            elif has_api_key:
+                operation["security"] = [{"BffApiKey": []}]
+            elif has_bearer:
+                operation["security"] = [{"BearerAuth": []}]
+            elif on_staff_middleware:
+                # middleware ล็อก path นี้แต่ OpenAPI มองไม่เห็น Depends — dual OR ให้ Authorize ทำงาน
+                operation["security"] = dual_or
+                has_api_key = True
+            else:
+                operation["security"] = []
+
+            if has_api_key and "parameters" in operation:
                 operation["parameters"] = [
-                    parameter for parameter in operation["parameters"]
+                    parameter
+                    for parameter in operation["parameters"]
                     if not (
                         parameter.get("in") == "header"
                         and parameter.get("name", "").lower() == "x-api-key"
                     )
                 ]
-    schema["security"] = [{"BearerAuth": []}]
+
+    # ไม่บังคับ Bearer ทั้ง schema — public routes (health/ThaiD) เหลือ security=[]
+    schema["security"] = []
     app.openapi_schema = schema
     return app.openapi_schema
 
