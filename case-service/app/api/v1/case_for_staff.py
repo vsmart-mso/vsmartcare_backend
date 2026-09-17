@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 import uuid
 from typing import Literal
@@ -172,6 +173,7 @@ from ...schemas.case_for_staff import (
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead,
     CaseForStaffListResponse,
+    CentralCaseForStaffListResponse,
     CaseForStaffStatusSummaryResponse,
     CaseForStaffPorKor1DetailResponse,
     CaseForStaffRead,
@@ -227,13 +229,45 @@ from ...schemas.welfare import (
 )
 
 
-from ...core.staff_security import StaffClaims, assert_province_scope, require_staff
+from ...core.staff_security import (
+    StaffClaims,
+    assert_province_scope,
+    require_staff,
+    require_central_read_auth,
+)
 
 router = APIRouter(
     prefix="/v1/case_for_staff",
     tags=["case_for_staff"],
     dependencies=[Depends(require_staff)],
 )
+
+central_router = APIRouter(
+    prefix="/v1/case_for_staff",
+    tags=["case_for_staff"],
+)
+
+
+@dataclass(frozen=True)
+class _CaseListResult:
+    province: Province | None
+    total_applicants: int
+    filtered_applicants: int
+    items: list[CaseForStaffRead]
+
+
+CENTRAL_TYPE_MONEY_IDS = frozenset({1, 2, 3, 4, 5, 6})
+SPO_TYPE_MONEY_ID = 1
+
+
+def _central_type_money_scope(type_money_id: int) -> set[int] | None:
+    if type_money_id not in CENTRAL_TYPE_MONEY_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid_type_money_id",
+        )
+    # สป. เป็นระบบส่วนกลาง จึงอ่านได้ทุกหมวดเงิน
+    return None if type_money_id == SPO_TYPE_MONEY_ID else {type_money_id}
 
 ALLOWED_IMAGE_TYPES: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -1092,38 +1126,60 @@ async def _apply_payment_status_if_needed(
     return status_log, status_row
 
 
-@router.get("", response_model=CaseForStaffListResponse)
-async def list_cases_for_staff(
-    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
-    province_ids: list[str] | None = Query(
-        None,
-        description="DWF scope narrowing only; values must belong to the DWF group resolved from province_id/staff",
-    ),
-    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
-    case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
-    current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
-    current_status_id: list[int] | None = Query(
-        None,
-        description="Filter by current_status_id; supports repeated query values",
-    ),
-    firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
-    lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
-    cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
-    datetime_create: date | None = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
-    province_name: str | None = Query(None, description="ค้นหาจากชื่อจังหวัด"),
-    district_id: int | None = Query(None, description="กรองตามอำเภอ"),
-    district_name: str | None = Query(None, description="ค้นหาจากชื่ออำเภอ"),
-    subdistrict_id: int | None = Query(None, description="กรองตามตำบล"),
-    subdistrict_name: str | None = Query(None, description="ค้นหาจากชื่อตำบล"),
-    subdistrict_postcode_id: int | None = Query(None, description="กรองตามแถว bridge sub_districts_postcode"),
-    postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
-    type_money_id: int | None = Query(None, description="กรองตาม type_money_category.id (applicants.type_money_category_id)"),
-    session: AsyncSession = Depends(get_session),
-    staff: StaffClaims = Depends(require_staff),
-) -> CaseForStaffListResponse:
-    province = await session.scalar(select(Province).where(Province.id == province_id))
-    if province is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
+async def _list_cases_for_staff_impl(
+    *,
+    province_id: int | None,
+    province_ids: list[str] | None,
+    dwf_scope: bool,
+    case_number: str | None,
+    current_status: str | None,
+    current_status_id: list[int] | None,
+    firstname: str | None,
+    lastname: str | None,
+    cid: str | None,
+    datetime_create: date | None,
+    province_name: str | None,
+    district_id: int | None,
+    district_name: str | None,
+    subdistrict_id: int | None,
+    subdistrict_name: str | None,
+    subdistrict_postcode_id: int | None,
+    postcode: str | None,
+    type_money_id: int | list[int] | None,
+    session: AsyncSession,
+    staff: StaffClaims | None,
+    allowed_type_money_ids: set[int] | None = None,
+) -> _CaseListResult:
+    province = None
+    if province_id is not None:
+        province = await session.scalar(select(Province).where(Province.id == province_id))
+        if province is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="province_not_found")
+
+    requested_type_money_ids = (
+        {type_money_id}
+        if isinstance(type_money_id, int)
+        else set(type_money_id or [])
+    )
+
+    scope_conditions = []
+    if province_id is not None:
+        if staff is not None:
+            scope_conditions.append(
+                _case_location_visibility_condition(
+                    province_id=province_id,
+                    staff=staff,
+                    dwf_scope=dwf_scope,
+                    requested_province_ids=_parse_int_query_values(province_ids),
+                    type_money_ids=requested_type_money_ids or None,
+                    province_column=Province.id,
+                    type_money_column=Applicant.type_money_category_id,
+                )
+            )
+        else:
+            scope_conditions.append(Province.id == province_id)
+    if allowed_type_money_ids is not None:
+        scope_conditions.append(Applicant.type_money_category_id.in_(allowed_type_money_ids))
 
     latest_status_sq = (
         select(
@@ -1343,17 +1399,7 @@ async def list_cases_for_staff(
             ApplicantSubmissionAudit.applicant_id == Applicant.id,
         )
         .outerjoin(TypeMoneyCategory, TypeMoneyCategory.id == Applicant.type_money_category_id)
-        .where(
-            _case_location_visibility_condition(
-                province_id=province_id,
-                staff=staff,
-                dwf_scope=dwf_scope,
-                requested_province_ids=_parse_int_query_values(province_ids),
-                type_money_ids={type_money_id} if type_money_id is not None else None,
-                province_column=Province.id,
-                type_money_column=Applicant.type_money_category_id,
-            )
-        )
+        .where(*scope_conditions)
         .order_by(Applicant.created_at.desc(), Applicant.id.desc())
     )
 
@@ -1389,8 +1435,8 @@ async def list_cases_for_staff(
         stmt = stmt.where(SubDistrictPostcode.id == subdistrict_postcode_id)
     if cleaned_postcode := _clean_text_filter(postcode):
         stmt = stmt.where(Postcode.name.ilike(f"%{cleaned_postcode}%"))
-    if type_money_id is not None:
-        stmt = stmt.where(Applicant.type_money_category_id == type_money_id)
+    if requested_type_money_ids:
+        stmt = stmt.where(Applicant.type_money_category_id.in_(requested_type_money_ids))
 
     filtered_count_stmt = select(func.count()).select_from(
         stmt.with_only_columns(Applicant.id).order_by(None).distinct().subquery()
@@ -1418,12 +1464,140 @@ async def list_cases_for_staff(
             applicant_id,
             [],
         )
-    return CaseForStaffListResponse(
-        province_id=province.id,
-        province_name=province.name,
+    return _CaseListResult(
+        province=province,
         total_applicants=total_applicants or 0,
         filtered_applicants=filtered_applicants or 0,
         items=[_row_to_case_for_staff_read(row) for row in enriched_rows],
+    )
+
+
+@router.get("", response_model=CaseForStaffListResponse)
+async def list_cases_for_staff(
+    province_id: int = Query(..., description="รหัสจังหวัดที่ต้องการค้นหา"),
+    province_ids: list[str] | None = Query(
+        None,
+        description="DWF scope narrowing only; values must belong to the DWF group resolved from province_id/staff",
+    ),
+    dwf_scope: bool = Query(False, description="Use DWF/Sor Kor visibility from drpod_dwf.json"),
+    case_number: str | None = Query(None, description="ค้นหาจากเลข case"),
+    current_status: str | None = Query(None, description="ค้นหาจากข้อความสถานะฝั่งเจ้าหน้าที่"),
+    current_status_id: list[int] | None = Query(
+        None,
+        description="Filter by current_status_id; supports repeated query values",
+    ),
+    firstname: str | None = Query(None, description="ค้นหาจากชื่อ"),
+    lastname: str | None = Query(None, description="ค้นหาจากนามสกุล"),
+    cid: str | None = Query(None, description="ค้นหาจากเลขบัตรประชาชน"),
+    datetime_create: date | None = Query(None, description="วันที่สร้าง case (YYYY-MM-DD)"),
+    province_name: str | None = Query(None, description="ค้นหาจากชื่อจังหวัด"),
+    district_id: int | None = Query(None, description="กรองตามอำเภอ"),
+    district_name: str | None = Query(None, description="ค้นหาจากชื่ออำเภอ"),
+    subdistrict_id: int | None = Query(None, description="กรองตามตำบล"),
+    subdistrict_name: str | None = Query(None, description="ค้นหาจากชื่อตำบล"),
+    subdistrict_postcode_id: int | None = Query(
+        None,
+        description="กรองตามแถว bridge sub_districts_postcode",
+    ),
+    postcode: str | None = Query(None, description="ค้นหาจากรหัสไปรษณีย์"),
+    type_money_id: int | None = Query(
+        None,
+        description="กรองตาม type_money_category.id (applicants.type_money_category_id)",
+    ),
+    session: AsyncSession = Depends(get_session),
+    staff: StaffClaims = Depends(require_staff),
+) -> CaseForStaffListResponse:
+    result = await _list_cases_for_staff_impl(
+        province_id=province_id,
+        province_ids=province_ids,
+        dwf_scope=dwf_scope,
+        case_number=case_number,
+        current_status=current_status,
+        current_status_id=current_status_id,
+        firstname=firstname,
+        lastname=lastname,
+        cid=cid,
+        datetime_create=datetime_create,
+        province_name=province_name,
+        district_id=district_id,
+        district_name=district_name,
+        subdistrict_id=subdistrict_id,
+        subdistrict_name=subdistrict_name,
+        subdistrict_postcode_id=subdistrict_postcode_id,
+        postcode=postcode,
+        type_money_id=type_money_id,
+        session=session,
+        staff=staff,
+    )
+    assert result.province is not None
+    return CaseForStaffListResponse(
+        province_id=result.province.id,
+        province_name=result.province.name,
+        total_applicants=result.total_applicants,
+        filtered_applicants=result.filtered_applicants,
+        items=result.items,
+    )
+
+
+@central_router.get(
+    "/central",
+    response_model=CentralCaseForStaffListResponse,
+    summary="รายการเคสข้ามจังหวัดตามหมวดเงินสำหรับระบบส่วนกลาง (read-only)",
+)
+async def list_cases_for_central_system(
+    province_id: int | None = Query(None, description="ไม่ส่ง = ทุกจังหวัด"),
+    case_number: str | None = Query(None),
+    current_status: str | None = Query(None),
+    current_status_id: list[int] | None = Query(None, description="ส่งซ้ำได้หลายค่า"),
+    firstname: str | None = Query(None),
+    lastname: str | None = Query(None),
+    cid: str | None = Query(None),
+    datetime_create: date | None = Query(None),
+    province_name: str | None = Query(None),
+    district_id: int | None = Query(None),
+    district_name: str | None = Query(None),
+    subdistrict_id: int | None = Query(None),
+    subdistrict_name: str | None = Query(None),
+    subdistrict_postcode_id: int | None = Query(None),
+    postcode: str | None = Query(None),
+    type_money_id: int = Query(
+        ...,
+        description="หมวดเงินตามกรมของผู้ใช้: 1=สป.เห็นทุกหมวด, 2–6=เห็นเฉพาะหมวดนั้น",
+    ),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_central_read_auth),
+) -> CentralCaseForStaffListResponse:
+    allowed_type_money_ids = _central_type_money_scope(type_money_id)
+    result = await _list_cases_for_staff_impl(
+        province_id=province_id,
+        province_ids=None,
+        dwf_scope=False,
+        case_number=case_number,
+        current_status=current_status,
+        current_status_id=current_status_id,
+        firstname=firstname,
+        lastname=lastname,
+        cid=cid,
+        datetime_create=datetime_create,
+        province_name=province_name,
+        district_id=district_id,
+        district_name=district_name,
+        subdistrict_id=subdistrict_id,
+        subdistrict_name=subdistrict_name,
+        subdistrict_postcode_id=subdistrict_postcode_id,
+        postcode=postcode,
+        # type_money_id ใช้กำหนด scope สิทธิ์ด้านล่าง ไม่ใช้เป็น filter ซ้ำใน query
+        type_money_id=None,
+        session=session,
+        staff=None,
+        allowed_type_money_ids=allowed_type_money_ids,
+    )
+    return CentralCaseForStaffListResponse(
+        province_id=result.province.id if result.province else None,
+        province_name=result.province.name if result.province else None,
+        total_applicants=result.total_applicants,
+        filtered_applicants=result.filtered_applicants,
+        items=result.items,
     )
 
 

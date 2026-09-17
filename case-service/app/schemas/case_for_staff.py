@@ -187,6 +187,16 @@ class CaseForStaffListResponse(BaseModel):
     items: list[CaseForStaffRead] = Field(default_factory=list)
 
 
+class CentralCaseForStaffListResponse(BaseModel):
+    """รายการสำหรับระบบส่วนกลาง; province เป็น null เมื่อดึงทุกจังหวัด."""
+
+    province_id: int | None = None
+    province_name: str | None = Field(None, max_length=255)
+    total_applicants: int = Field(..., ge=0, description="จำนวนเคสภายใน scope หมวดเงิน/จังหวัด")
+    filtered_applicants: int = Field(..., ge=0, description="จำนวนเคสหลังใช้ตัวกรอง")
+    items: list[CaseForStaffRead] = Field(default_factory=list)
+
+
 class CaseForStaffStatusSummaryResponse(BaseModel):
     """สรุปจำนวนคำร้องตาม bucket สำหรับ staff digest (จังหวัดเดียว)."""
 
