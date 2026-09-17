@@ -7,6 +7,7 @@ from .api.v1.admin import router as admin_router
 from .api.v1.applicant import router as applicant_router
 from .api.v1.person_purge import router as person_purge_router
 from .api.v1.staff import router as staff_router
+from .api.v1.case_for_staff import central_router as central_case_for_staff_router
 from .api.v1.case_for_staff import router as case_for_staff_router
 from .api.v1.cases import router as cases_router
 from .api.v1.eligibility import router as eligibility_router
@@ -27,6 +28,7 @@ app.include_router(staff_router)
 app.include_router(lookups_router)
 app.include_router(geo_router)
 app.include_router(case_for_staff_router)
+app.include_router(central_case_for_staff_router)
 app.include_router(eligibility_router)
 app.include_router(cases_router)
 app.include_router(intake_router)
