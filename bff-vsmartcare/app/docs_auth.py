@@ -121,23 +121,23 @@ _LOGIN_PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>เข้าสู่ระบบเอกสาร API</title>
+
 <style>
-  /* หน้าตาแบบ Windows XP (Luna) — สีและเส้นขอบตามชุดสีของระบบเดิม */
+  /* หน้าตาแบบ Windows XP (Luna) — โทนเข้มขึ้นเล็กน้อยเพื่อความรู้สึกเขตจำกัด */
   body {{
     margin: 0; padding: 24px 16px; background: #5a7edc; color: #000000;
     font-family: Tahoma, "Sarabun", "Noto Sans Thai", Geneva, sans-serif; font-size: 13px;
     min-height: 100vh; display: flex; align-items: center; justify-content: center;
   }}
   .window {{
-    width: 100%; max-width: 380px; box-sizing: border-box;
+    width: 100%; max-width: 360px; box-sizing: border-box;
     background: #ece9d8; border: 1px solid #0831d9; padding: 3px;
-    box-shadow: 2px 2px 0 rgba(0, 0, 0, .35);
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, .45);
   }}
   .titlebar {{
     display: flex; align-items: center; justify-content: space-between;
     height: 26px; padding: 0 3px 0 6px; margin-bottom: 8px;
-    background: linear-gradient(to bottom, #0058ee 0%, #3a93ff 8%, #0954e1 40%, #0142ce 88%, #003bbe 100%);
+    background: linear-gradient(to bottom, #0039b8 0%, #2a6fd6 8%, #0748c4 40%, #0135a8 88%, #002a90 100%);
     color: #ffffff; font-weight: bold; font-size: 12px;
     text-shadow: 1px 1px 0 rgba(0, 0, 0, .45);
   }}
@@ -146,9 +146,14 @@ _LOGIN_PAGE = """<!doctype html>
     background: linear-gradient(to bottom, #e9757c 0%, #d63b3b 55%, #b32020 100%);
     border: 1px solid #ffffff; color: #ffffff; font-weight: bold;
   }}
-  .inner {{ padding: 10px 12px 12px; }}
-  h1 {{ margin: 0 0 4px; font-size: 13px; font-weight: bold; }}
-  p.sub {{ margin: 0 0 14px; font-size: 12px; color: #333333; line-height: 1.6; }}
+  .inner {{ padding: 14px 14px 14px; }}
+  .mark {{
+    display: flex; justify-content: center; margin: 4px 0 16px;
+  }}
+  .mark svg {{
+    width: 48px; height: 48px; display: block;
+    filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, .25));
+  }}
   fieldset {{
     border: 1px solid #ffffff; border-top-color: #aca899; border-left-color: #aca899;
     margin: 0 0 12px; padding: 10px 12px 12px;
@@ -180,32 +185,34 @@ _LOGIN_PAGE = """<!doctype html>
     flex: 0 0 auto; width: 16px; height: 16px; line-height: 16px; text-align: center;
     background: #d63b3b; color: #ffffff; font-weight: bold; border: 1px solid #8b1a1a;
   }}
-  .foot {{
-    margin: 12px 0 0; padding-top: 9px; border-top: 1px solid #aca899;
-    font-size: 11px; line-height: 1.7; color: #4a4a4a;
-  }}
-  code {{ font-family: "Courier New", monospace; font-size: 11px; }}
 </style>
 </head>
 <body>
   <form class="window" method="post" action="{action}">
     <div class="titlebar">
-      <span>เข้าสู่ระบบเอกสาร SWAGGER API</span>
-      <span class="x" aria-hidden="true">✕</span>
+      <span>สำหรับผู้ที่ได้รับอนุญาตการเข้าถึงเอกสารเท่านั้น</span>
     </div>
     <div class="inner">
-      <h1>เอกสาร SWAGGER API — {service}</h1>
-      <p class="sub">หน้านี้จำกัดเฉพาะผู้ได้รับอนุญาต กรุณาเข้าสู่ระบบก่อนดูรายการ API</p>
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" role="presentation">
+          <circle cx="24" cy="24" r="22" fill="#2a2f3a" stroke="#1a1e28" stroke-width="2"/>
+          <circle cx="24" cy="24" r="17" fill="none" stroke="#8a909c" stroke-width="1.5"/>
+          <path d="M24 10 L34 14.5 V23.5 C34 30.2 29.8 35.4 24 37.5 C18.2 35.4 14 30.2 14 23.5 V14.5 Z"
+                fill="#4a5363" stroke="#c8cdd6" stroke-width="1.25" stroke-linejoin="round"/>
+          <circle cx="24" cy="22" r="4.5" fill="none" stroke="#d8dde6" stroke-width="1.5"/>
+          <rect x="22.6" y="25.5" width="2.8" height="6.5" rx="0.6" fill="#d8dde6"/>
+        </svg>
+      </div>
       {error}
       <fieldset>
-        <legend>ข้อมูลเข้าสู่ระบบ</legend>
+        <legend>บัญชี</legend>
         <input type="hidden" name="next" value="{next_url}">
         <label for="username">ชื่อผู้ใช้</label>
         <input id="username" name="username" autocomplete="username" autofocus required>
         <label for="password">รหัสผ่าน</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </fieldset>
-      <div class="buttons"><button type="submit">เข้าสู่ระบบ</button></div>
+      <div class="buttons"><button type="submit">ตกลง</button></div>
     </div>
   </form>
 </body>
@@ -214,14 +221,13 @@ _LOGIN_PAGE = """<!doctype html>
 
 _ERROR_BLOCK = """<div class="error">
         <span class="icon" aria-hidden="true">!</span>
-        <span>ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</span>
+        <span>ไม่สามารถเข้าสู่ระบบได้</span>
       </div>"""
 
 
 def _render_login(action: str, next_url: str, *, error: bool) -> str:
     return _LOGIN_PAGE.format(
         action=action,
-        service=settings.service_name,
         error=_ERROR_BLOCK if error else "",
         next_url=next_url,
     )

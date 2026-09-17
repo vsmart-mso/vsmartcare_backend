@@ -9,20 +9,17 @@ services:
     build:
       context: ./bff-vsmartcare
     env_file:
+      # DOCS_* / APP_ENV / BFF_API_PASSWORD — คัดลอกจาก bff-vsmartcare/env.example เป็น .env
+      - path: ./bff-vsmartcare/.env
+        required: false
       # แชร์ OCR_SERVICE_API_KEY กับ ocr-service (service-to-service auth)
       - path: ./ocr-service/.env
         required: false
     environment:
       - PORT=8000
-      # ทีมใช้ localdev / beta / production — beta กับ production บังคับเปลี่ยนรหัสหน้า docs
-      # ไม่ส่งค่านี้ BFF จะมองว่าเป็นเครื่องนักพัฒนาและยอมให้ใช้รหัสเริ่มต้น
-      - APP_ENV=${APP_ENV:-localdev}
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
+      # APP_ENV / DOCS_* / BFF_API_PASSWORD ตั้งใน bff-vsmartcare/.env
+      # อย่าใส่ ${DOCS_USERNAME:-} หรือ ${APP_ENV:-localdev} ที่นี่ — ค่าว่าง/default จะทับ env_file
       - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-}
-      # รหัสเข้าหน้า Swagger/ReDoc/openapi.json — ล็อกทุก env รวม dev
-      # ไม่ตั้ง = ใช้ค่าเริ่มต้น docs/docs; beta และ production ต้องเปลี่ยน (ไม่งั้น BFF start ไม่ขึ้น)
-      - DOCS_USERNAME=${DOCS_USERNAME:-}
-      - DOCS_PASSWORD=${DOCS_PASSWORD:-}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
       - THAID_AUTH_SERVICE_URL=http://thaid-auth-service:8000
