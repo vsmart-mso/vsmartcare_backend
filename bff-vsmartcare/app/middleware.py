@@ -52,7 +52,7 @@ class CaptureAuthMiddleware(BaseHTTPMiddleware):
             _forward_auth.reset(auth_token)
 
 
-_STAFF_COMPAT_PATH_PREFIXES = (
+STAFF_COMPAT_PATH_PREFIXES = (
     "/v1/case_for_staff",
     "/v1/intake",
     "/v1/lookups",
@@ -72,7 +72,7 @@ class StaffRouteAuthMiddleware(BaseHTTPMiddleware):
             rel = path[len(prefix) :]
         else:
             rel = path
-        if any(rel.startswith(p) for p in _STAFF_COMPAT_PATH_PREFIXES):
+        if any(rel.startswith(p) for p in STAFF_COMPAT_PATH_PREFIXES):
             auth = (request.headers.get("authorization") or "").strip()
             api_key = (request.headers.get("x-api-key") or "").strip()
             expected_api_key = (settings.bff_api_password or "").strip()

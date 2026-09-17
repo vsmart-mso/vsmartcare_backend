@@ -29,6 +29,7 @@ from .case_for_staff_schema import (
     StaffDataEditLogBody,
     CaseForStaffFinanceListResponse,
     CaseForStaffFinanceRead as CaseForStaffFinanceListItem,
+    CentralCaseForStaffListResponse,
     CaseForStaffListResponse,
     CaseForStaffRead as CaseForStaffListItem,
     CaseForStaffStatusSummaryResponse,
@@ -55,7 +56,13 @@ from .dashboard_schema import (
     DashboardSubDistrictsRead,
 )
 from .submission_eligibility_schema import SubmissionEligibilityRead
-from .middleware import CaptureAuthMiddleware, SecurityHeadersMiddleware, StaffRouteAuthMiddleware, merge_forward_headers
+from .middleware import (
+    CaptureAuthMiddleware,
+    STAFF_COMPAT_PATH_PREFIXES,
+    SecurityHeadersMiddleware,
+    StaffRouteAuthMiddleware,
+    merge_forward_headers,
+)
 from .rate_limit import RateLimitMiddleware
 from .settings import cors_origin_list, settings
 from .vsmart_compat import case_compat_from_por_kor_1, staff_evidence_url, vsmart_internal_headers
@@ -205,7 +212,12 @@ app.add_middleware(
 
 
 def custom_openapi() -> Dict[str, Any]:
-    """สร้าง/แคช OpenAPI schema และเพิ่ม security scheme Bearer ให้ Swagger ใช้ปุ่ม Authorize."""
+    """สร้าง/แคช OpenAPI schema — security จาก Depends และ middleware staff paths.
+
+    Route ที่มี FastAPI Depends ถูก remap เป็น BearerAuth / BffApiKey (dual = OR).
+    Path ที่ StaffRouteAuthMiddleware ล็อกแต่ไม่มี Depends จะได้ dual OR ด้วย
+    เพื่อให้ Swagger Authorize แนบ header ได้ — ไม่ทับ operation ที่ Depends ตั้งไว้แล้ว.
+    """
     if app.openapi_schema:
         return app.openapi_schema
     schema = get_openapi(
@@ -216,22 +228,88 @@ def custom_openapi() -> Dict[str, Any]:
         tags=app.openapi_tags,
     )
     components = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    # จดชื่อ scheme ที่ FastAPI สร้างจาก HTTPBearer / APIKeyHeader ก่อน remap
+    bearer_schemes = {
+        name
+        for name, definition in components.items()
+        if definition.get("type") == "http" and definition.get("scheme") == "bearer"
+    }
+    api_key_schemes = {
+        name
+        for name, definition in components.items()
+        if definition.get("type") == "apiKey"
+        and definition.get("in") == "header"
+        and str(definition.get("name", "")).lower() == "x-api-key"
+    }
+
+    components.clear()
     components["BearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": (
             "access_token จาก ThaiD login (`POST /v1/auth/thaid/login` → callback) "
-            f"หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
+            "หรือ staff/admin JWT — ใส่เฉพาะ token ไม่ต้องพิมพ์คำว่า Bearer"
         ),
     }
     components["BffApiKey"] = {
         "type": "apiKey",
         "in": "header",
         "name": "X-API-Key",
-        "description": "รหัส trusted server clients เท่านั้น (volunteer_smart) — ไม่ใช้จาก browser",
+        "description": (
+            "Trusted server / cron API key (ค่าเดียวกับ BFF_API_PASSWORD) — "
+            "ใช้กับ internal routes และ dual-auth (lookups/geo/dashboard)"
+        ),
     }
-    schema["security"] = [{"BearerAuth": []}]
+
+    bff_prefix = settings.bff_api_prefix.rstrip("/")
+    dual_or = [{"BearerAuth": []}, {"BffApiKey": []}]
+    http_methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    for path, path_item in schema.get("paths", {}).items():
+        rel = path[len(bff_prefix) :] if bff_prefix and path.startswith(bff_prefix) else path
+        on_staff_middleware = any(rel.startswith(p) for p in STAFF_COMPAT_PATH_PREFIXES)
+        for method, operation in path_item.items():
+            if method not in http_methods:
+                continue
+            requirements = operation.get("security")
+            has_bearer = False
+            has_api_key = False
+            if isinstance(requirements, list):
+                for req in requirements:
+                    if not isinstance(req, dict):
+                        continue
+                    for scheme_name in req:
+                        if scheme_name in bearer_schemes:
+                            has_bearer = True
+                        if scheme_name in api_key_schemes:
+                            has_api_key = True
+
+            # FastAPI มักสร้าง dual-Depends เป็น AND — map เป็น OR ให้ตรง runtime
+            if has_bearer and has_api_key:
+                operation["security"] = dual_or
+            elif has_api_key:
+                operation["security"] = [{"BffApiKey": []}]
+            elif has_bearer:
+                operation["security"] = [{"BearerAuth": []}]
+            elif on_staff_middleware:
+                # middleware ล็อก path นี้แต่ OpenAPI มองไม่เห็น Depends — dual OR ให้ Authorize ทำงาน
+                operation["security"] = dual_or
+                has_api_key = True
+            else:
+                operation["security"] = []
+
+            if has_api_key and "parameters" in operation:
+                operation["parameters"] = [
+                    parameter
+                    for parameter in operation["parameters"]
+                    if not (
+                        parameter.get("in") == "header"
+                        and parameter.get("name", "").lower() == "x-api-key"
+                    )
+                ]
+
+    # ไม่บังคับ Bearer ทั้ง schema — public routes (health/ThaiD) เหลือ security=[]
+    schema["security"] = []
     app.openapi_schema = schema
     return app.openapi_schema
 
@@ -1029,6 +1107,67 @@ async def list_cases_for_staff(
             "items": [CaseForStaffListItem.model_validate(item) for item in data.get("items", [])],
         }
     )
+
+
+@router.get(
+    "/v1/case_for_staff/central",
+    tags=["case_for_staff"],
+    summary="รายการเคสข้ามจังหวัดตามหมวดเงินสำหรับระบบส่วนกลาง (read-only)",
+    description=(
+        "ระบบต้นทางตรวจกรมของ user แล้วส่ง type_money_id; 1=สป.เห็นทุกหมวด, "
+        "2–6=เห็นเฉพาะหมวดนั้น. ไม่ส่ง province_id = ทุกจังหวัด. "
+        "อนุญาต staff Bearer JWT หรือ trusted service API key; "
+        "case-service ตรวจลายเซ็นและอายุ JWT โดยไม่ล็อกจังหวัดจาก token"
+    ),
+    response_model=CentralCaseForStaffListResponse,
+    dependencies=_require_bearer_or_trusted_api_key,
+)
+async def list_cases_for_central_system(
+    province_id: Optional[int] = Query(None, description="ไม่ส่ง = ทุกจังหวัด"),
+    case_number: Optional[str] = Query(None),
+    current_status: Optional[str] = Query(None),
+    current_status_id: Optional[list[int]] = Query(None, description="ส่งซ้ำได้หลายค่า"),
+    firstname: Optional[str] = Query(None),
+    lastname: Optional[str] = Query(None),
+    cid: Optional[str] = Query(None),
+    datetime_create: Optional[date] = Query(None),
+    province_name: Optional[str] = Query(None),
+    district_id: Optional[int] = Query(None),
+    district_name: Optional[str] = Query(None),
+    subdistrict_id: Optional[int] = Query(None),
+    subdistrict_name: Optional[str] = Query(None),
+    subdistrict_postcode_id: Optional[int] = Query(None),
+    postcode: Optional[str] = Query(None),
+    type_money_id: int = Query(
+        ...,
+        description="หมวดเงินตามกรมของ user: 1=สป.เห็นทุกหมวด, 2–6=เฉพาะหมวดนั้น",
+    ),
+) -> CentralCaseForStaffListResponse:
+    pairs: list[tuple[str, Any]] = []
+    scalar_params = {
+        "province_id": province_id,
+        "case_number": case_number,
+        "current_status": current_status,
+        "firstname": firstname,
+        "lastname": lastname,
+        "cid": cid,
+        "datetime_create": datetime_create.isoformat() if datetime_create else None,
+        "province_name": province_name,
+        "district_id": district_id,
+        "district_name": district_name,
+        "subdistrict_id": subdistrict_id,
+        "subdistrict_name": subdistrict_name,
+        "subdistrict_postcode_id": subdistrict_postcode_id,
+        "postcode": postcode,
+        "type_money_id": type_money_id,
+    }
+    pairs.extend((key, value) for key, value in scalar_params.items() if value is not None)
+    if current_status_id:
+        pairs.extend(("current_status_id", value) for value in current_status_id)
+    suffix = f"?{urlencode(pairs)}" if pairs else ""
+    base = settings.case_service_url.rstrip("/")
+    data = await _get(f"{base}/v1/case_for_staff/central{suffix}")
+    return CentralCaseForStaffListResponse.model_validate(data)
 
 
 @router.get(
