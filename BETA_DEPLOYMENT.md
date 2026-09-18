@@ -256,7 +256,7 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 | ตรวจ | วิธี / ผลที่คาด |
 |------|----------------|
 | TLS + SPA | เปิด `https://vsmart-demo.m-society.go.th` ได้หน้าแอป ไม่ใช่หน้า nginx default |
-| BFF ผ่าน proxy | `GET https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` ได้ `{"ok":true}` |
+| BFF ผ่าน proxy | `GET https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` พร้อม header `X-API-Key: $BFF_API_PASSWORD` ได้ `{"ok":true}` — ถ้าไม่ส่ง key ต้องได้ `401` |
 | API ผ่าน BFF | เรียก lookup ใต้ `/api-vsmartcare/v1/...` ได้ (ถ้าเปิด API key ต้องส่ง `X-API-Key`) |
 | DB + migration | case-service บันทึก/อ่านข้อมูลได้ ไม่ error connection |
 | อัปโหลด | path `UPLOAD_ROOT` เขียนได้หลังอัปโหลดหลักฐาน |
@@ -326,13 +326,13 @@ docker compose -f docker-compose.yml exec case-service alembic upgrade head
 จากเครื่องที่เข้าถึงพอร์ตที่ compose map (ค่า default ใน compose):
 
 ```bash
-curl -sS http://127.0.0.1:8000/api-vsmartcare/healthz
+curl -sS -H "X-API-Key: $BFF_API_PASSWORD" http://127.0.0.1:8000/api-vsmartcare/healthz
 curl -sS http://127.0.0.1:8001/healthz
 curl -sS http://127.0.0.1:8002/healthz
 curl -sS http://127.0.0.1:8003/healthz
 ```
 
-ผู้ใช้ปลายทางผ่านโดเมน Beta มักเรียก BFF ผ่าน HTTPS/nginx เช่น `https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` และ API ใต้ `/api-vsmartcare/v1/...` — ดู [ตรวจสอบหลัง deploy](#ตรวจสอบหลัง-deploy)
+ผู้ใช้ปลายทางผ่านโดเมน Beta มักเรียก BFF ผ่าน HTTPS/nginx เช่น `https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` (ต้องส่ง `X-API-Key`) และ API ใต้ `/api-vsmartcare/v1/...` — ดู [ตรวจสอบหลัง deploy](#ตรวจสอบหลัง-deploy)
 
 ### Frontend (build บนเครื่อง CI หรือเซิร์ฟเวอร์ build)
 
