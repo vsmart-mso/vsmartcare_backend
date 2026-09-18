@@ -1,12 +1,28 @@
 # OCR Service API Docs (Frontend)
 
-> Base URL: `http://localhost:8004` (dev) / `http://ocr-service:8000` (docker)
+> **Production / Beta:** เรียก OCR ผ่าน **BFF proxy** เท่านั้น (`POST /api-vsmartcare/v1/ocr/...`) — **อย่า expose `ocr-service` ตรงสู่เบราว์เซอร์**
+>
+> Base URL (service-to-service / local debug): `http://localhost:8004` (dev) / `http://ocr-service:8000` (docker)
 > Service: `ocr-service`
+
+## Architecture
+
+| Caller | Path | Notes |
+|--------|------|--------|
+| Browser SPA | BFF `/v1/ocr/*` | แนะนำ — BFF ใส่ Bearer API key ฝั่ง server |
+| BFF → OCR | `OCR_SERVICE_URL` + `OCR_SERVICE_API_KEY` | ไม่ผ่าน CORS ของ browser |
+| Browser → OCR โดยตรง | ไม่แนะนำ | ปิด CORS กว้างแล้ว; ตั้ง `OCR_CORS_ORIGINS` เฉพาะเมื่อจำเป็น (ห้าม `*`) |
+
+## CORS
+
+- Default: `OCR_CORS_ORIGINS` ว่าง → **ไม่เปิด browser cross-origin** (`allow_origins=[]`, `allow_credentials=False`)
+- ถ้าต้องอนุญาต browser ชั่วคราว: ตั้ง origin จริงคั่นจุลภาค — **ห้ามตั้ง `*`**
+- Methods/headers ที่อนุญาตจำกัด: `GET`/`POST`/`PATCH`/`OPTIONS` และ `Authorization`/`Content-Type`/`Accept`
 
 ## Authentication
 
 - Dev: ถ้าไม่ตั้ง `OCR_API_KEY` เรียกได้โดยไม่ต้องส่ง token
-- Prod: ต้องส่ง `Authorization: Bearer <OCR_API_KEY>`
+- Prod: ต้องส่ง `Authorization: Bearer <OCR_API_KEY>` (BFF inject ให้เมื่อ proxy)
 
 ```http
 Authorization: Bearer your-ocr-api-key

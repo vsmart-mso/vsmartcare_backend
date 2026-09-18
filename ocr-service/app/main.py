@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.ocr import router as ocr_router
-from .settings import settings
+from .settings import cors_origin_list, settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocr-service")
@@ -50,12 +50,14 @@ app = FastAPI(
 )
 
 # ── CORS ──────────────────────────────────────────────────────
+# Default: no browser CORS (BFF → OCR is server-to-service).
+# If OCR_CORS_ORIGINS is set, allow only those origins — never credentials + *.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origin_list(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # ── Request logging middleware ─────────────────────────────────
