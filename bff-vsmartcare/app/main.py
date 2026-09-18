@@ -98,7 +98,7 @@ def require_bearer_or_trusted_api_key(
 def require_internal_api_key(
     x_api_key: Optional[str] = Depends(_api_key_header),
 ) -> None:
-    """Trusted server clients only (volunteer_smart, cron)."""
+    """Trusted server clients only (volunteer_smart, cron) และ health probe."""
     from .settings import is_production
 
     expected = (settings.bff_api_password or "").strip()
@@ -310,7 +310,7 @@ def custom_openapi() -> Dict[str, Any]:
                     )
                 ]
 
-    # ไม่บังคับ Bearer ทั้ง schema — public routes (health/ThaiD) เหลือ security=[]
+    # ไม่บังคับ Bearer ทั้ง schema — public routes (ThaiD) เหลือ security=[]
     schema["security"] = []
     app.openapi_schema = schema
     return app.openapi_schema
@@ -323,21 +323,36 @@ register_docs_routes(app, _api_prefix)
 
 
 
-@router.get("/", tags=["meta"], summary="สถานะ service")
+@router.get(
+    "/",
+    tags=["meta"],
+    summary="สถานะ service",
+    dependencies=_require_internal_api_key,
+)
 def root():
-    """ตอบชื่อบริการและสถานะ OK สำหรับเช็กว่า BFF ทำงานอยู่."""
+    """ตอบชื่อบริการและสถานะ OK สำหรับเช็กว่า BFF ทำงานอยู่ — ต้องส่ง X-API-Key."""
     return {"service": settings.service_name, "ok": True}
 
 
-@router.get("/healthz", tags=["meta"], summary="Liveness probe")
+@router.get(
+    "/healthz",
+    tags=["meta"],
+    summary="Liveness probe",
+    dependencies=_require_internal_api_key,
+)
 def healthz():
-    """Probe ว่า process ยังมีชีวิต (ไม่ต้องพึ่ง backend อื่น) — ใช้กับ orchestrator/k8s liveness."""
+    """Probe ว่า process ยังมีชีวิต (ไม่ต้องพึ่ง backend อื่น) — ต้องส่ง X-API-Key."""
     return {"ok": True}
 
 
-@router.get("/readyz", tags=["meta"], summary="Readiness probe")
+@router.get(
+    "/readyz",
+    tags=["meta"],
+    summary="Readiness probe",
+    dependencies=_require_internal_api_key,
+)
 def readyz():
-    """Probe ความพร้อมรับ traffic — ขยายให้เช็ก downstream ได้ถ้าต้องการ."""
+    """Probe ความพร้อมรับ traffic — ต้องส่ง X-API-Key."""
     return {"ok": True}
 
 
