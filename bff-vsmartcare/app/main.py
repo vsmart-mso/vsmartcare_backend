@@ -65,7 +65,7 @@ from .middleware import (
     merge_forward_headers,
 )
 from .rate_limit import RateLimitMiddleware
-from .settings import cors_origin_list, settings
+from .settings import CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, cors_origin_list, settings
 from .vsmart_compat import case_compat_from_por_kor_1, staff_evidence_url, vsmart_internal_headers
 from .welfare_case_schema import WelfareCaseCreate
 
@@ -208,8 +208,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origin_list(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
 )
 
 

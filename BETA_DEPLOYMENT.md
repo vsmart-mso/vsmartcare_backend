@@ -144,7 +144,7 @@ location /api-vsmartcare/ {
 | `CASE_SERVICE_URL` | จำเป็น | `http://case-service:8000` | URL ภายใน cluster |
 | `NOTIFICATION_SERVICE_URL` | จำเป็น | `http://notification-service:8000` | URL ภายใน cluster |
 | `THAID_AUTH_SERVICE_URL` | จำเป็น | `http://thaid-auth-service:8000` | URL ภายใน cluster |
-| `BFF_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค |
+| `BFF_CORS_ORIGINS` | แนะนำ (บังคับใน production) | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค — **ห้ามตั้ง `*`**; production ต้องเป็น origin จริง (ไม่ใช่แค่ localhost) |
 | `BFF_API_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | trusted server clients (`volunteer_smart`) — ต้องตรงกับ `STAFF_INTERNAL_API_KEY` |
 | `DOCS_USERNAME` | บังคับ (beta/prod) | `vcare-docs` | ชื่อผู้ใช้หน้าเอกสาร API — ห้ามเป็น `docs` (ค่าเริ่มต้นของ localdev) |
 | `DOCS_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | รหัสผ่านหน้าเอกสาร API — **คนละตัวกับ `BFF_API_PASSWORD`** ห้ามเป็น `docs` และต้องเป็นอักขระ ASCII |
@@ -199,7 +199,7 @@ export DOCS_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
 | `THAID_REDIRECT_URI` | จำเป็น | `https://vsmart-demo.m-society.go.th/api-vsmartcare/v1/auth/thaid/callback` | ต้องตรงกับที่ลงทะเบียนใน ThaiD |
 | `THAID_SCOPE` | ไม่บังคับ | ตาม default ในโค้ด | |
 | `THAID_PUBLIC_BASE_URL` | แนะนำ | `https://vsmart-demo.m-society.go.th` | ลิงก์ OAuth/mock ต้องตรง URL ที่ user เห็น |
-| `THAID_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | |
+| `THAID_CORS_ORIGINS` | แนะนำ (บังคับใน production) | `https://vsmart-demo.m-society.go.th` | **ห้ามตั้ง `*`**; ใส่ origin ของ SPA จริงเท่านั้น |
 | `THAID_POST_LOGIN_REDIRECT` | ไม่บังคับ | URL หน้า SPA หลังล็อกอิน | ว่าง = คืน JSON |
 | `THAID_JWT_SECRET` | ไม่บังคับ | สตริงลับยาว | ว่าง = opaque token ใน memory |
 | `THAID_USE_MOCK` | จำเป็น | `false` | Beta จริงไม่ใช้ mock |
@@ -226,6 +226,18 @@ export DOCS_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
 
 **case-service บน Beta:** ตั้ง `NOTIFICATION_SERVICE_URL` และ `STATUS_EMAIL_ENABLED=true` เหมือนตาราง case-service ด้านบน
 
+### ocr-service
+
+อ้างอิง [`ocr-service/app/settings.py`](ocr-service/app/settings.py) และ [`ocr-service/OCR_API_DOCS.md`](ocr-service/OCR_API_DOCS.md)
+
+| ตัวแปร | จำเป็น | ตัวอย่าง Beta | หมายเหตุ |
+|--------|--------|----------------|----------|
+| `GEMINI_API_KEY` | จำเป็น | จาก secret | |
+| `OCR_API_KEY` | จำเป็น (prod) | ค่าลับเดียวกับ `OCR_SERVICE_API_KEY` ของ BFF | Bearer สำหรับ service-to-service |
+| `OCR_CORS_ORIGINS` | ไม่บังคับ | *(ว่าง)* | ว่าง = ไม่เปิด browser CORS — **เรียกผ่าน BFF**; **ห้ามตั้ง `*`** |
+
+**อย่า** publish พอร์ต `ocr-service` สู่สาธารณะ — SPA ใช้ `POST /api-vsmartcare/v1/ocr/...` ผ่าน BFF
+
 ---
 
 ## Frontend
@@ -248,6 +260,8 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 2. TLS บนโดเมนสาธารณะ
 3. ไม่ commit secret / `.env`
 4. `BFF_API_PASSWORD` = `STAFF_INTERNAL_API_KEY` (ค่าเดียวกัน) สำหรับ `volunteer_smart` — **ไม่** build ลง frontend
+5. **CORS:** ตั้ง `BFF_CORS_ORIGINS` / `THAID_CORS_ORIGINS` เป็น origin ของ SPA จริงเท่านั้น — **ห้าม `*`**; production ที่ว่างหรือ localhost-only จะไม่ start
+6. **OCR:** เรียกผ่าน BFF (`/v1/ocr/*`) — อย่า expose `ocr-service` ตรงสู่ browser; `OCR_CORS_ORIGINS` ว่างได้ (default) และห้ามตั้ง `*`
 
 ---
 
@@ -276,7 +290,7 @@ Health ภายใน service: `/healthz`, `/readyz` (ดู [`case-service/app
 - SPA: `https://vsmart-demo.m-society.go.th`
 - BFF สาธารณะ: เช่น `https://api.vsmart-demo.m-society.go.th`
 - ตั้ง `VITE_API_URL` = URL ของ BFF
-- ตั้ง `BFF_CORS_ORIGINS` และ `THAID_CORS_ORIGINS` รวม origin ของ SPA
+- ตั้ง `BFF_CORS_ORIGINS` และ `THAID_CORS_ORIGINS` รวม origin ของ SPA (**ห้าม `*`**; ถ้ามี citizen SPA กับ staff SPA คนละ origin ใส่ทั้งสองคั่นจุลภาค)
 - `THAID_REDIRECT_URI` = URL callback สาธารณะที่ ThaiD redirect ได้ (มักอยู่ใต้โดเมน API ถ้า flow ผ่าน BFF)
 
 ### แบบ C — prefix อื่นหรือ strip ที่ proxy
