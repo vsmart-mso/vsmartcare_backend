@@ -169,6 +169,27 @@ def validate_docs_credentials() -> None:
             raise RuntimeError(f"{_name} must contain ASCII characters only (HTTP Basic limitation)")
 
 
+_LOCALHOST_ORIGIN_MARKERS = (
+    "://localhost",
+    "://127.0.0.1",
+    "://[::1]",
+)
+
+
+def _is_localhost_origin(origin: str) -> bool:
+    lower = origin.strip().lower()
+    return any(m in lower for m in _LOCALHOST_ORIGIN_MARKERS)
+
+
+def _parse_cors_origins(raw: str) -> List[str]:
+    parsed = [o.strip() for o in raw.split(",") if o.strip()]
+    if any(o == "*" for o in parsed):
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must not contain '*' — set explicit SPA origin(s) only"
+        )
+    return parsed
+
+
 def validate_production_settings() -> None:
     validate_docs_credentials()
     if not is_production():
@@ -180,6 +201,20 @@ def validate_production_settings() -> None:
         )
     if not internal_api_key():
         raise RuntimeError("STAFF_INTERNAL_API_KEY or BFF_API_PASSWORD required in production")
+    raw = settings.bff_cors_origins.strip()
+    if not raw:
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must be set in production to the real SPA origin(s)"
+        )
+    origins = _parse_cors_origins(raw)
+    if not origins:
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must be set in production to the real SPA origin(s)"
+        )
+    if all(_is_localhost_origin(o) for o in origins):
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS in production must include non-localhost SPA origin(s)"
+        )
 
 
 _DEV_CORS_ORIGINS: List[str] = [
@@ -189,12 +224,21 @@ _DEV_CORS_ORIGINS: List[str] = [
     "http://127.0.0.1:3000",
 ]
 
+# Explicit method/header allowlists — avoid allow_methods/headers=["*"] with credentials.
+CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+CORS_ALLOW_HEADERS: List[str] = [
+    "Authorization",
+    "Content-Type",
+    "X-API-Key",
+    "Accept",
+]
+
 
 def cors_origin_list() -> List[str]:
     raw = settings.bff_cors_origins.strip()
     if not raw:
         return list(_DEV_CORS_ORIGINS)
-    parsed = [o.strip() for o in raw.split(",") if o.strip()]
+    parsed = _parse_cors_origins(raw)
     return parsed if parsed else list(_DEV_CORS_ORIGINS)
 
 
