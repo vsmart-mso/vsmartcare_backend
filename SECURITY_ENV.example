@@ -23,6 +23,13 @@
 #
 #   BFF_API_PASSWORD=                    → ว่างได้ใน dev (ไม่บังคับ X-API-Key)
 #
+# ── BFF (apps/service/bff-vsmartcare/.env) ──────────────────────────────────
+# คัดลอกจาก bff-vsmartcare/env.example — Compose โหลดผ่าน env_file
+#   APP_ENV=localdev
+#   DOCS_USERNAME=...   (หน้า /docs — คนละตัวกับ BFF_API_PASSWORD)
+#   DOCS_PASSWORD=...
+#   BFF_API_PASSWORD=   (ว่างได้ใน localdev; production ต้องตั้ง)
+#
 # ── Frontend (apps/frontend/.env) ───────────────────────────────────────────
 #
 #   VITE_API_URL=http://localhost:8000/api-vsmartcare
