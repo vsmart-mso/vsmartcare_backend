@@ -47,6 +47,7 @@ from .services.staff_digest_dispatch import (
     dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
+from .docs_auth import register_docs_routes
 from .dashboard_schema import (
     DashboardCasesRead,
     DashboardDistrictsRead,
@@ -191,9 +192,10 @@ app = FastAPI(
     title=settings.service_name,
     version="0.1.0",
     openapi_tags=_TAGS,
-    docs_url=f"{_api_prefix}/docs",
-    redoc_url=f"{_api_prefix}/redoc",
-    openapi_url=f"{_api_prefix}/openapi.json",
+    # ปิด docs ที่ FastAPI สร้างให้ แล้ว mount เองด้านล่างเพื่อใส่ Basic Auth ได้
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 router = APIRouter()
@@ -315,6 +317,9 @@ def custom_openapi() -> Dict[str, Any]:
 
 
 app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
+register_docs_routes(app, _api_prefix)
 
 
 

@@ -9,12 +9,16 @@ services:
     build:
       context: ./bff-vsmartcare
     env_file:
+      # DOCS_* / APP_ENV / BFF_API_PASSWORD — คัดลอกจาก bff-vsmartcare/env.example เป็น .env
+      - path: ./bff-vsmartcare/.env
+        required: false
       # แชร์ OCR_SERVICE_API_KEY กับ ocr-service (service-to-service auth)
       - path: ./ocr-service/.env
         required: false
     environment:
       - PORT=8000
-      - BFF_API_PASSWORD=${BFF_API_PASSWORD:-}
+      # APP_ENV / DOCS_* / BFF_API_PASSWORD ตั้งใน bff-vsmartcare/.env
+      # อย่าใส่ ${DOCS_USERNAME:-} หรือ ${APP_ENV:-localdev} ที่นี่ — ค่าว่าง/default จะทับ env_file
       - STAFF_INTERNAL_API_KEY=${STAFF_INTERNAL_API_KEY:-}
       - CASE_SERVICE_URL=http://case-service:8000
       - NOTIFICATION_SERVICE_URL=http://notification-service:8000
