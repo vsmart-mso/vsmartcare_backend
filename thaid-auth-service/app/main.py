@@ -632,6 +632,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
+        logger.exception("thaid_token_or_userinfo_failed: %s: %s", type(exc).__name__, exc)
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
 
     # ตรวจสิทธิ์จังหวัด (TASK-v-care-12062026-01) — ปิด → ไม่ออก token, แจ้ง error กลับ
