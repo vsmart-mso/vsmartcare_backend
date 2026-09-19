@@ -290,20 +290,52 @@ async def fetch_jwks(jwks_uri: str) -> Dict[str, Any]:
     return data
 
 
+def _expected_kty_for_alg(alg: str) -> Optional[str]:
+    """Map JWT alg to JWKS kty (RSA for RS/PS, EC for ES)."""
+    a = (alg or "").upper()
+    if a.startswith("RS") or a.startswith("PS"):
+        return "RSA"
+    if a.startswith("ES"):
+        return "EC"
+    return None
+
+
+def _select_jwk(keys: list, *, kid: Optional[str], alg: str) -> Dict[str, Any]:
+    """Prefer matching kid; else first key whose kty matches alg."""
+    if kid:
+        by_kid = next((k for k in keys if k.get("kid") == kid), None)
+        if by_kid is not None:
+            return by_kid
+    expected_kty = _expected_kty_for_alg(alg)
+    if expected_kty:
+        by_kty = next((k for k in keys if k.get("kty") == expected_kty), None)
+        if by_kty is not None:
+            return by_kty
+    if keys:
+        return keys[0]
+    raise ValueError("jwks_key_not_found")
+
+
+def _public_key_from_jwk(key_data: Dict[str, Any]):
+    kty = str(key_data.get("kty") or "").upper()
+    if kty == "RSA":
+        return jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+    if kty == "EC":
+        return jwt.algorithms.ECAlgorithm.from_jwk(key_data)
+    raise ValueError(f"unsupported_jwk_kty: {kty or 'missing'}")
+
+
 def verify_id_token(id_token: str, jwks: Dict[str, Any], *, audience: str) -> Dict[str, Any]:
     header = jwt.get_unverified_header(id_token)
+    alg = str(header.get("alg") or "RS256")
     kid = header.get("kid")
     keys = jwks.get("keys") or []
-    key_data = next((k for k in keys if k.get("kid") == kid), None)
-    if key_data is None and keys:
-        key_data = keys[0]
-    if key_data is None:
-        raise ValueError("jwks_key_not_found")
-    public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+    key_data = _select_jwk(keys, kid=kid, alg=alg)
+    public_key = _public_key_from_jwk(key_data)
     return jwt.decode(
         id_token,
         public_key,
-        algorithms=[header.get("alg", "RS256")],
+        algorithms=[alg],
         audience=audience,
         options={"verify_aud": bool(audience)},
     )
