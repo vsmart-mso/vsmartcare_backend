@@ -105,25 +105,50 @@ flowchart LR
 
 ## Reverse proxy (แบบ A ที่แนะนำ)
 
+ระบบนี้เป็น **FastAPI + nginx** — **ไม่มี `web.config` (IIS)** ตั้ง security headers ที่ nginx (SPA) และที่ BFF middleware (API)
+
 ```nginx
-# SPA
+# Hashed static assets — cache นานได้ (ชื่อไฟล์เปลี่ยนเมื่อ build ใหม่)
+location /assets/ {
+    root /var/www/vsmart-demo;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    add_header X-Content-Type-Options "nosniff" always;
+}
+
+# SPA (index.html / entry) — ห้าม cache เพื่อกัน Back หลัง logout เห็นข้อมูลเก่า
 location / {
     root /var/www/vsmart-demo;
     try_files $uri $uri/ /index.html;
+
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    add_header Pragma "no-cache" always;
+    add_header Expires "0" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    # SAMEORIGIN / frame-ancestors 'self' — กันเว็บอื่นฝังเรา แต่แอปฝัง frame.html (liveness) ได้
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    # Vue SPA: style unsafe-inline; แผนที่ OSM/Esri/Nominatim; AINU iframe+API
+    # แบบ A same-origin ไป BFF อยู่ใน connect-src 'self'
+    # ขึ้น AINU production แล้วเปลี่ยน host — ต้องเพิ่มโดเมนใหม่ใน CSP นี้
+    # อย่าใส่ Permissions-Policy camera=() ที่นี่ จะทำให้ liveness ขอกล้องไม่ได้
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://server.arcgisonline.com; font-src 'self' data:; connect-src 'self' https://uat.ainu.tech https://uat.nonprod-api.ainu.tech https://nominatim.openstreetmap.org; frame-src 'self' https://uat.ainu.tech; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
 }
 
 # BFF — ส่ง path /api-vsmartcare/ ไป upstream โดยไม่ strip prefix
+# CSP / Cache-Control ของ API มาจาก BFF SecurityHeadersMiddleware — ไม่ซ้ำ CSP ของ SPA ที่นี่
 location /api-vsmartcare/ {
     proxy_pass http://127.0.0.1:8000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # กัน proxy/browser cache response ของ API
+    proxy_no_cache 1;
+    proxy_cache_bypass 1;
 }
 ```
 
 ปรับ `proxy_pass` และพอร์ตให้ตรงกับที่ BFF ฟังจริง
-
 ---
 
 ## ตัวแปรแวดล้อม ต่อ service
@@ -276,6 +301,12 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 | อัปโหลด | path `UPLOAD_ROOT` เขียนได้หลังอัปโหลดหลักฐาน |
 | ThaiD | ล็อกอิน redirect กลับ callback URL ที่ลงทะเบียน ไม่ mismatch |
 | CORS | เรียก API จาก origin ของ SPA ไม่ถูกบล็อก |
+| Security headers (API) | `curl -I .../api-vsmartcare/healthz` เห็น `Cache-Control`, `X-XSS-Protection`, `Content-Security-Policy` จาก BFF |
+| Security headers (SPA) | `curl -I https://<โดเมน>/` เห็น Cache-Control no-store + CSP ของ SPA จาก nginx |
+| Logout / Back | login staff → dashboard → logout → กด Back → ไม่ควรเห็นข้อมูลส่วนบุคคลค้างจาก cache |
+| SPA CSP | หน้าโหลด JS/CSS/API ได้ — ไม่มี CSP block ใน DevTools Console |
+| แผนที่ GPS | ไทล์ OSM/Esri ขึ้น และค้น Nominatim ได้ |
+| Liveness | เปิดสแกนใบหน้าแล้วเห็น frame.html + SDK AINU ไม่ใช่จอว่าง |
 | เอกสาร API ถูกล็อก | `curl -i .../api-vsmartcare/openapi.json` ต้องได้ `303` ไปหน้า login **ห้ามได้ `200` พร้อม JSON spec** |
 | เอกสาร API ยังใช้งานได้ | `curl -u "$DOCS_USERNAME:$DOCS_PASSWORD" .../api-vsmartcare/openapi.json` ได้ `200` พร้อม spec |
 
