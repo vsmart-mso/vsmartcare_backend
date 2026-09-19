@@ -83,7 +83,7 @@ class StaffRouteAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# หน้า HTML ของเอกสาร API — ต้องโหลด CDN + inline style/script (Swagger / ReDoc / login)
+# หน้า HTML ของเอกสาร API — inline style/script + ไฟล์ JS/CSS ที่เสิร์ฟเอง (ไม่พึ่ง CDN)
 _DOCS_HTML_SUFFIXES = (
     "/docs",
     "/docs/login",
@@ -91,13 +91,12 @@ _DOCS_HTML_SUFFIXES = (
     "/redoc",
 )
 
-# FastAPI default assets: cdn.jsdelivr.net (+ Google Fonts สำหรับ ReDoc)
 _DOCS_HTML_CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-    "img-src 'self' data: https://fastapi.tiangolo.com; "
-    "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data:; "
     "connect-src 'self'; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
@@ -130,7 +129,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Pragma", "no-cache")
         response.headers.setdefault("Expires", "0")
         response.headers.setdefault("X-XSS-Protection", "1; mode=block")
-        # JSON API = CSP แน่น; หน้า docs HTML = ผ่อนให้ Swagger/ReDoc/login โหลดได้
+        # JSON API = CSP แน่น; หน้า docs HTML = ผ่อนให้ inline + ไฟล์ /docs-assets โหลดได้
         csp = _DOCS_HTML_CSP if _is_docs_html_path(request.url.path) else _API_CSP
         response.headers.setdefault("Content-Security-Policy", csp)
         if is_production():
