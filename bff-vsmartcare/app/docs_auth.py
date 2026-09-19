@@ -10,6 +10,8 @@
 
 รหัสอ่านจาก ``DOCS_USERNAME`` / ``DOCS_PASSWORD`` — ล็อกทุก environment
 localdev ใช้ค่าเริ่มต้น ``docs`` / ``docs`` ส่วน beta กับ production ถูกบังคับให้เปลี่ยนตั้งแต่ตอน start
+
+Swagger / ReDoc เสิร์ฟ JS/CSS จาก ``{prefix}/docs-assets`` ที่ใส่ใน image ตอน build ไม่ดึง CDN
 """
 
 from __future__ import annotations
@@ -23,9 +25,10 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from .docs_assets import REQUIRED_ASSETS, docs_asset_path, missing_docs_assets
 from .settings import is_deployed, settings
 
 _COOKIE_NAME = "bff_docs_session"
@@ -238,9 +241,17 @@ def _render_login(action: str, next_url: str, *, error: bool) -> str:
 
 def register_docs_routes(app: FastAPI, prefix: str) -> None:
     """ผูก route เอกสารทั้งหมด (docs / redoc / openapi.json / login / logout) เข้ากับ app."""
+    missing = missing_docs_assets()
+    if missing:
+        raise RuntimeError(
+            "docs UI assets missing: "
+            + ", ".join(missing)
+            + " (image build must fetch swagger-ui / redoc into app/static/docs)"
+        )
     guard = make_docs_guard(prefix)
     login_path = f"{prefix}/docs/login"
     docs_path = f"{prefix}/docs"
+    assets_prefix = f"{prefix}/docs-assets"
 
     def _safe_next(raw: Optional[str]) -> str:
         """กัน open redirect — ยอมรับเฉพาะ path ภายใน prefix ของ BFF เท่านั้น."""
@@ -289,11 +300,23 @@ def register_docs_routes(app: FastAPI, prefix: str) -> None:
         response.delete_cookie(_COOKIE_NAME, path=prefix)
         return response
 
+    @app.get(f"{assets_prefix}/{{name}}", include_in_schema=False)
+    def docs_asset(name: str) -> FileResponse:
+        if name not in REQUIRED_ASSETS:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        path = docs_asset_path(name)
+        if not path.is_file():
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return FileResponse(path)
+
     @app.get(docs_path, include_in_schema=False)
     def swagger_ui_html(_: None = Depends(guard)) -> HTMLResponse:
         return get_swagger_ui_html(
             openapi_url=f"{prefix}/openapi.json",
             title=f"{app.title} — Swagger UI",
+            swagger_js_url=f"{assets_prefix}/swagger-ui-bundle.js",
+            swagger_css_url=f"{assets_prefix}/swagger-ui.css",
+            swagger_favicon_url="",
         )
 
     @app.get(f"{prefix}/redoc", include_in_schema=False)
@@ -301,6 +324,9 @@ def register_docs_routes(app: FastAPI, prefix: str) -> None:
         return get_redoc_html(
             openapi_url=f"{prefix}/openapi.json",
             title=f"{app.title} — ReDoc",
+            redoc_js_url=f"{assets_prefix}/redoc.standalone.js",
+            redoc_favicon_url="",
+            with_google_fonts=False,
         )
 
     @app.get(f"{prefix}/openapi.json", include_in_schema=False)
