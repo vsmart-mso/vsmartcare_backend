@@ -47,6 +47,7 @@ from .services.staff_digest_dispatch import (
     dispatch_staff_digest,
 )
 from .case_display_schema import CaseDisplayRead
+from .docs_auth import register_docs_routes
 from .dashboard_schema import (
     DashboardCasesRead,
     DashboardDistrictsRead,
@@ -64,7 +65,7 @@ from .middleware import (
     merge_forward_headers,
 )
 from .rate_limit import RateLimitMiddleware
-from .settings import cors_origin_list, settings
+from .settings import CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, cors_origin_list, settings
 from .vsmart_compat import case_compat_from_por_kor_1, staff_evidence_url, vsmart_internal_headers
 from .welfare_case_schema import WelfareCaseCreate
 
@@ -97,7 +98,7 @@ def require_bearer_or_trusted_api_key(
 def require_internal_api_key(
     x_api_key: Optional[str] = Depends(_api_key_header),
 ) -> None:
-    """Trusted server clients only (volunteer_smart, cron)."""
+    """Trusted server clients only (volunteer_smart, cron) และ health probe."""
     from .settings import is_production
 
     expected = (settings.bff_api_password or "").strip()
@@ -174,6 +175,13 @@ _TAGS = [
     {"name": "admin", "description": "หลังบ้าน admin: login + เปิด/ปิดบริการรายจังหวัด + สร้างเคสสุ่ม"},
     {"name": "staff", "description": "Login เจ้าหน้าที่ + proxy case_for_staff/intake"},
     {"name": "ocr", "description": "OCR สมุดบัญชี (proxy → ocr-service)"},
+    {
+        "name": "liveness",
+        "description": (
+            "ด่านยืนยันตัวตนด้วยใบหน้า AINU eKYC ก่อนยื่นคำร้อง (proxy → case-service) — "
+            "รอบนี้บันทึกสถิติอย่างเดียว ยังไม่บล็อกการยื่นคำร้อง"
+        ),
+    },
     {"name": "dashboard", "description": "สรุปจำนวนคำร้องรายจังหวัด/อำเภอ สำหรับหน้า dashboard"},
     {"name": "indicators", "description": "ตัวชี้วัดเงินช่วยเหลือ พม Care — รายจังหวัดแยก 6 ประเภท / ทุกจังหวัดไม่แยกหมวด / export JSON แถวแบน dossier / province-overview สรุป 4 ตัวเลข (สค. นับที่จังหวัดแม่ตาม DWF)"},
 ]
@@ -184,9 +192,10 @@ app = FastAPI(
     title=settings.service_name,
     version="0.1.0",
     openapi_tags=_TAGS,
-    docs_url=f"{_api_prefix}/docs",
-    redoc_url=f"{_api_prefix}/redoc",
-    openapi_url=f"{_api_prefix}/openapi.json",
+    # ปิด docs ที่ FastAPI สร้างให้ แล้ว mount เองด้านล่างเพื่อใส่ Basic Auth ได้
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 router = APIRouter()
@@ -199,8 +208,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origin_list(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
 )
 
 
@@ -301,7 +310,7 @@ def custom_openapi() -> Dict[str, Any]:
                     )
                 ]
 
-    # ไม่บังคับ Bearer ทั้ง schema — public routes (health/ThaiD) เหลือ security=[]
+    # ไม่บังคับ Bearer ทั้ง schema — public routes (ThaiD) เหลือ security=[]
     schema["security"] = []
     app.openapi_schema = schema
     return app.openapi_schema
@@ -310,22 +319,40 @@ def custom_openapi() -> Dict[str, Any]:
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
+register_docs_routes(app, _api_prefix)
 
-@router.get("/", tags=["meta"], summary="สถานะ service")
+
+
+@router.get(
+    "/",
+    tags=["meta"],
+    summary="สถานะ service",
+    dependencies=_require_internal_api_key,
+)
 def root():
-    """ตอบชื่อบริการและสถานะ OK สำหรับเช็กว่า BFF ทำงานอยู่."""
+    """ตอบชื่อบริการและสถานะ OK สำหรับเช็กว่า BFF ทำงานอยู่ — ต้องส่ง X-API-Key."""
     return {"service": settings.service_name, "ok": True}
 
 
-@router.get("/healthz", tags=["meta"], summary="Liveness probe")
+@router.get(
+    "/healthz",
+    tags=["meta"],
+    summary="Liveness probe",
+    dependencies=_require_internal_api_key,
+)
 def healthz():
-    """Probe ว่า process ยังมีชีวิต (ไม่ต้องพึ่ง backend อื่น) — ใช้กับ orchestrator/k8s liveness."""
+    """Probe ว่า process ยังมีชีวิต (ไม่ต้องพึ่ง backend อื่น) — ต้องส่ง X-API-Key."""
     return {"ok": True}
 
 
-@router.get("/readyz", tags=["meta"], summary="Readiness probe")
+@router.get(
+    "/readyz",
+    tags=["meta"],
+    summary="Readiness probe",
+    dependencies=_require_internal_api_key,
+)
 def readyz():
-    """Probe ความพร้อมรับ traffic — ขยายให้เช็ก downstream ได้ถ้าต้องการ."""
+    """Probe ความพร้อมรับ traffic — ต้องส่ง X-API-Key."""
     return {"ok": True}
 
 
@@ -4292,6 +4319,81 @@ async def ocr_link_proxy(
     base = settings.ocr_service_url.rstrip("/")
     headers = _ocr_service_headers()
     return await _patch(f"{base}/v1/ocr/results/{ocr_result_id}/link", json=body, headers=headers)
+
+
+# ── liveness (proxy → case-service) ──────────────────────────────────────────
+# ต่างจาก ocr proxy ตรงที่ไม่มี service key: case-service ใช้ Bearer ของ citizen
+# ตรง ๆ เพื่อรู้ว่า attempt เป็นของใคร
+
+
+@router.post(
+    "/v1/liveness/session",
+    tags=["liveness"],
+    summary="เปิด session liveness + คืน config ให้ SDK (proxy → case-service)",
+)
+async def liveness_session_proxy(
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/session",
+        json={},
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/transaction",
+    tags=["liveness"],
+    summary="บันทึก transaction_id จาก onReady() (proxy → case-service)",
+)
+async def liveness_transaction_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/transaction",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/result",
+    tags=["liveness"],
+    summary="บันทึกผลจาก onEkycResult() (proxy → case-service)",
+)
+async def liveness_result_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/result",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
+
+
+@router.post(
+    "/v1/liveness/{reference_id}/skip",
+    tags=["liveness"],
+    summary="บันทึกว่าข้ามด่าน liveness เพราะระบบใช้ไม่ได้ (proxy → case-service)",
+)
+async def liveness_skip_proxy(
+    reference_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: str = Depends(require_citizen_bearer),
+) -> Any:
+    base = settings.case_service_url.rstrip("/")
+    return await _post(
+        f"{base}/v1/liveness/{reference_id}/skip",
+        json=body,
+        headers=_forward_auth_headers(authorization),
+    )
 
 
 class StaffLoginProxyBody(BaseModel):

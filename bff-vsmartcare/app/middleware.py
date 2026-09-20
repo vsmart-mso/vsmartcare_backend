@@ -83,6 +83,38 @@ class StaffRouteAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# หน้า HTML ของเอกสาร API — inline style/script + ไฟล์ JS/CSS ที่เสิร์ฟเอง (ไม่พึ่ง CDN)
+_DOCS_HTML_SUFFIXES = (
+    "/docs",
+    "/docs/login",
+    "/docs/logout",
+    "/redoc",
+)
+
+_DOCS_HTML_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+_API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+
+
+def _is_docs_html_path(path: str) -> bool:
+    prefix = settings.bff_api_prefix.rstrip("/")
+    if prefix and path.startswith(prefix):
+        rel = path[len(prefix) :] or "/"
+    else:
+        rel = path
+    return any(rel == suffix or rel.startswith(suffix + "/") for suffix in _DOCS_HTML_SUFFIXES)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """ME-03 — baseline security headers on BFF responses."""
 
@@ -92,6 +124,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # Cache / XSS (setdefault so routes can override)
+        response.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
+        response.headers.setdefault("Pragma", "no-cache")
+        response.headers.setdefault("Expires", "0")
+        response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+        # JSON API = CSP แน่น; หน้า docs HTML = ผ่อนให้ inline + ไฟล์ /docs-assets โหลดได้
+        csp = _DOCS_HTML_CSP if _is_docs_html_path(request.url.path) else _API_CSP
+        response.headers.setdefault("Content-Security-Policy", csp)
         if is_production():
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"

@@ -79,6 +79,7 @@ flowchart LR
 
 - [ ] รัน `case-service`, `notification-service`, `thaid-auth-service`, `bff-vsmartcare`
 - [ ] ตั้ง env ตาม [ตารางด้านล่าง](#ตัวแปรแวดล้อม-ต่อ-service) — URL ระหว่าง service ใช้ชื่อภายใน (เช่น `http://case-service:8000`) **ไม่ใช่** `localhost` ของเครื่อง host
+- [ ] ตั้ง `APP_ENV`, `DOCS_USERNAME`, `DOCS_PASSWORD` ของ BFF — ไม่ตั้ง = BFF start ไม่ขึ้น (ดู [หน้าเอกสาร API](#หน้าเอกสาร-api-docs-redoc-openapijson))
 - [ ] mount volume สำหรับ `UPLOAD_ROOT` ของ case-service
 
 ### 4. Reverse proxy + TLS
@@ -104,25 +105,50 @@ flowchart LR
 
 ## Reverse proxy (แบบ A ที่แนะนำ)
 
+ระบบนี้เป็น **FastAPI + nginx** — **ไม่มี `web.config` (IIS)** ตั้ง security headers ที่ nginx (SPA) และที่ BFF middleware (API)
+
 ```nginx
-# SPA
+# Hashed static assets — cache นานได้ (ชื่อไฟล์เปลี่ยนเมื่อ build ใหม่)
+location /assets/ {
+    root /var/www/vsmart-demo;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    add_header X-Content-Type-Options "nosniff" always;
+}
+
+# SPA (index.html / entry) — ห้าม cache เพื่อกัน Back หลัง logout เห็นข้อมูลเก่า
 location / {
     root /var/www/vsmart-demo;
     try_files $uri $uri/ /index.html;
+
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    add_header Pragma "no-cache" always;
+    add_header Expires "0" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    # SAMEORIGIN / frame-ancestors 'self' — กันเว็บอื่นฝังเรา แต่แอปฝัง frame.html (liveness) ได้
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    # Vue SPA: style unsafe-inline; แผนที่ OSM/Esri/Nominatim; AINU iframe+API
+    # แบบ A same-origin ไป BFF อยู่ใน connect-src 'self'
+    # ขึ้น AINU production แล้วเปลี่ยน host — ต้องเพิ่มโดเมนใหม่ใน CSP นี้
+    # อย่าใส่ Permissions-Policy camera=() ที่นี่ จะทำให้ liveness ขอกล้องไม่ได้
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://server.arcgisonline.com; font-src 'self' data:; connect-src 'self' https://uat.ainu.tech https://uat.nonprod-api.ainu.tech https://nominatim.openstreetmap.org; frame-src 'self' https://uat.ainu.tech; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
 }
 
 # BFF — ส่ง path /api-vsmartcare/ ไป upstream โดยไม่ strip prefix
+# CSP / Cache-Control ของ API มาจาก BFF SecurityHeadersMiddleware — ไม่ซ้ำ CSP ของ SPA ที่นี่
 location /api-vsmartcare/ {
     proxy_pass http://127.0.0.1:8000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # กัน proxy/browser cache response ของ API
+    proxy_no_cache 1;
+    proxy_cache_bypass 1;
 }
 ```
 
 ปรับ `proxy_pass` และพอร์ตให้ตรงกับที่ BFF ฟังจริง
-
 ---
 
 ## ตัวแปรแวดล้อม ต่อ service
@@ -138,12 +164,37 @@ location /api-vsmartcare/ {
 | ตัวแปร | จำเป็น | ตัวอย่าง Beta (แบบ A) | หมายเหตุ |
 |--------|--------|------------------------|----------|
 | `PORT` | จำเป็น | `8000` | พอร์ตใน container |
+| `APP_ENV` | บังคับ (beta/prod) | `beta` | ไม่ตั้ง = BFF มองว่าเป็นเครื่องนักพัฒนา แล้วยอมให้ใช้รหัสหน้า docs เริ่มต้น |
 | `BFF_API_PREFIX` | ไม่บังคับ | `/api-vsmartcare` | prefix สาธารณะของ BFF (default ในโค้ด) |
 | `CASE_SERVICE_URL` | จำเป็น | `http://case-service:8000` | URL ภายใน cluster |
 | `NOTIFICATION_SERVICE_URL` | จำเป็น | `http://notification-service:8000` | URL ภายใน cluster |
 | `THAID_AUTH_SERVICE_URL` | จำเป็น | `http://thaid-auth-service:8000` | URL ภายใน cluster |
-| `BFF_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค |
+| `BFF_CORS_ORIGINS` | แนะนำ (บังคับใน production) | `https://vsmart-demo.m-society.go.th` | origin ของ SPA คั่นจุลภาค — **ห้ามตั้ง `*`**; production ต้องเป็น origin จริง (ไม่ใช่แค่ localhost) |
 | `BFF_API_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | trusted server clients (`volunteer_smart`) — ต้องตรงกับ `STAFF_INTERNAL_API_KEY` |
+| `DOCS_USERNAME` | บังคับ (beta/prod) | `vcare-docs` | ชื่อผู้ใช้หน้าเอกสาร API — ห้ามเป็น `docs` (ค่าเริ่มต้นของ localdev) |
+| `DOCS_PASSWORD` | บังคับ (beta/prod) | ค่าลับ | รหัสผ่านหน้าเอกสาร API — **คนละตัวกับ `BFF_API_PASSWORD`** ห้ามเป็น `docs` และต้องเป็นอักขระ ASCII |
+
+#### หน้าเอกสาร API (`/docs`, `/redoc`, `/openapi.json`)
+
+ทั้งสาม path ถูกล็อกทุก environment ตามผลตรวจ pentest (Swagger เปิดสาธารณะ) — เข้าได้ 2 ทาง
+
+- **คน** เปิดเบราว์เซอร์แล้วกรอกที่หน้า login `{BFF_API_PREFIX}/docs/login` ระบบออก cookie อายุ 8 ชั่วโมง (ออกจากระบบที่ `{BFF_API_PREFIX}/docs/logout`)
+- **สคริปต์ / smoke test** ใช้ HTTP Basic ตามเดิม `curl -u "$DOCS_USERNAME:$DOCS_PASSWORD" .../openapi.json`
+
+`localdev` ใช้ค่าเริ่มต้น `docs` / `docs` ได้ แต่ **beta และ production จะ start ไม่ขึ้น** ถ้ายังใช้ค่าเริ่มต้น — log จะขึ้น
+
+```
+RuntimeError: DOCS_USERNAME and DOCS_PASSWORD must be changed from the dev defaults when APP_ENV=beta
+```
+
+สร้างรหัส (ตัดอักขระที่กวน shell/URL ออก และคง ASCII ตามข้อจำกัดของ HTTP Basic)
+
+```bash
+export DOCS_USERNAME=vcare-docs
+export DOCS_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=')"
+```
+
+เปลี่ยน `DOCS_PASSWORD` เมื่อไหร่ cookie ของทุกคนที่ login ค้างไว้จะใช้ไม่ได้ทันที (ใช้เป็นวิธีเพิกถอน session ทั้งหมด)
 
 ### case-service
 
@@ -173,7 +224,7 @@ location /api-vsmartcare/ {
 | `THAID_REDIRECT_URI` | จำเป็น | `https://vsmart-demo.m-society.go.th/api-vsmartcare/v1/auth/thaid/callback` | ต้องตรงกับที่ลงทะเบียนใน ThaiD |
 | `THAID_SCOPE` | ไม่บังคับ | ตาม default ในโค้ด | |
 | `THAID_PUBLIC_BASE_URL` | แนะนำ | `https://vsmart-demo.m-society.go.th` | ลิงก์ OAuth/mock ต้องตรง URL ที่ user เห็น |
-| `THAID_CORS_ORIGINS` | แนะนำ | `https://vsmart-demo.m-society.go.th` | |
+| `THAID_CORS_ORIGINS` | แนะนำ (บังคับใน production) | `https://vsmart-demo.m-society.go.th` | **ห้ามตั้ง `*`**; ใส่ origin ของ SPA จริงเท่านั้น |
 | `THAID_POST_LOGIN_REDIRECT` | ไม่บังคับ | URL หน้า SPA หลังล็อกอิน | ว่าง = คืน JSON |
 | `THAID_JWT_SECRET` | ไม่บังคับ | สตริงลับยาว | ว่าง = opaque token ใน memory |
 | `THAID_USE_MOCK` | จำเป็น | `false` | Beta จริงไม่ใช้ mock |
@@ -200,6 +251,18 @@ location /api-vsmartcare/ {
 
 **case-service บน Beta:** ตั้ง `NOTIFICATION_SERVICE_URL` และ `STATUS_EMAIL_ENABLED=true` เหมือนตาราง case-service ด้านบน
 
+### ocr-service
+
+อ้างอิง [`ocr-service/app/settings.py`](ocr-service/app/settings.py) และ [`ocr-service/OCR_API_DOCS.md`](ocr-service/OCR_API_DOCS.md)
+
+| ตัวแปร | จำเป็น | ตัวอย่าง Beta | หมายเหตุ |
+|--------|--------|----------------|----------|
+| `GEMINI_API_KEY` | จำเป็น | จาก secret | |
+| `OCR_API_KEY` | จำเป็น (prod) | ค่าลับเดียวกับ `OCR_SERVICE_API_KEY` ของ BFF | Bearer สำหรับ service-to-service |
+| `OCR_CORS_ORIGINS` | ไม่บังคับ | *(ว่าง)* | ว่าง = ไม่เปิด browser CORS — **เรียกผ่าน BFF**; **ห้ามตั้ง `*`** |
+
+**อย่า** publish พอร์ต `ocr-service` สู่สาธารณะ — SPA ใช้ `POST /api-vsmartcare/v1/ocr/...` ผ่าน BFF
+
 ---
 
 ## Frontend
@@ -222,6 +285,8 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 2. TLS บนโดเมนสาธารณะ
 3. ไม่ commit secret / `.env`
 4. `BFF_API_PASSWORD` = `STAFF_INTERNAL_API_KEY` (ค่าเดียวกัน) สำหรับ `volunteer_smart` — **ไม่** build ลง frontend
+5. **CORS:** ตั้ง `BFF_CORS_ORIGINS` / `THAID_CORS_ORIGINS` เป็น origin ของ SPA จริงเท่านั้น — **ห้าม `*`**; production ที่ว่างหรือ localhost-only จะไม่ start
+6. **OCR:** เรียกผ่าน BFF (`/v1/ocr/*`) — อย่า expose `ocr-service` ตรงสู่ browser; `OCR_CORS_ORIGINS` ว่างได้ (default) และห้ามตั้ง `*`
 
 ---
 
@@ -230,12 +295,20 @@ Build จาก [`frontend/`](../frontend) **ก่อน** `npm run build` (ห
 | ตรวจ | วิธี / ผลที่คาด |
 |------|----------------|
 | TLS + SPA | เปิด `https://vsmart-demo.m-society.go.th` ได้หน้าแอป ไม่ใช่หน้า nginx default |
-| BFF ผ่าน proxy | `GET https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` ได้ `{"ok":true}` |
+| BFF ผ่าน proxy | `GET https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` พร้อม header `X-API-Key: $BFF_API_PASSWORD` ได้ `{"ok":true}` — ถ้าไม่ส่ง key ต้องได้ `401` |
 | API ผ่าน BFF | เรียก lookup ใต้ `/api-vsmartcare/v1/...` ได้ (ถ้าเปิด API key ต้องส่ง `X-API-Key`) |
 | DB + migration | case-service บันทึก/อ่านข้อมูลได้ ไม่ error connection |
 | อัปโหลด | path `UPLOAD_ROOT` เขียนได้หลังอัปโหลดหลักฐาน |
 | ThaiD | ล็อกอิน redirect กลับ callback URL ที่ลงทะเบียน ไม่ mismatch |
 | CORS | เรียก API จาก origin ของ SPA ไม่ถูกบล็อก |
+| Security headers (API) | `curl -I .../api-vsmartcare/healthz` เห็น `Cache-Control`, `X-XSS-Protection`, `Content-Security-Policy` จาก BFF |
+| Security headers (SPA) | `curl -I https://<โดเมน>/` เห็น Cache-Control no-store + CSP ของ SPA จาก nginx |
+| Logout / Back | login staff → dashboard → logout → กด Back → ไม่ควรเห็นข้อมูลส่วนบุคคลค้างจาก cache |
+| SPA CSP | หน้าโหลด JS/CSS/API ได้ — ไม่มี CSP block ใน DevTools Console |
+| แผนที่ GPS | ไทล์ OSM/Esri ขึ้น และค้น Nominatim ได้ |
+| Liveness | เปิดสแกนใบหน้าแล้วเห็น frame.html + SDK AINU ไม่ใช่จอว่าง |
+| เอกสาร API ถูกล็อก | `curl -i .../api-vsmartcare/openapi.json` ต้องได้ `303` ไปหน้า login **ห้ามได้ `200` พร้อม JSON spec** |
+| เอกสาร API ยังใช้งานได้ | `curl -u "$DOCS_USERNAME:$DOCS_PASSWORD" .../api-vsmartcare/openapi.json` ได้ `200` พร้อม spec |
 
 Health ภายใน service: `/healthz`, `/readyz` (ดู [`case-service/app/main.py`](case-service/app/main.py) และ service อื่น)
 
@@ -248,7 +321,7 @@ Health ภายใน service: `/healthz`, `/readyz` (ดู [`case-service/app
 - SPA: `https://vsmart-demo.m-society.go.th`
 - BFF สาธารณะ: เช่น `https://api.vsmart-demo.m-society.go.th`
 - ตั้ง `VITE_API_URL` = URL ของ BFF
-- ตั้ง `BFF_CORS_ORIGINS` และ `THAID_CORS_ORIGINS` รวม origin ของ SPA
+- ตั้ง `BFF_CORS_ORIGINS` และ `THAID_CORS_ORIGINS` รวม origin ของ SPA (**ห้าม `*`**; ถ้ามี citizen SPA กับ staff SPA คนละ origin ใส่ทั้งสองคั่นจุลภาค)
 - `THAID_REDIRECT_URI` = URL callback สาธารณะที่ ThaiD redirect ได้ (มักอยู่ใต้โดเมน API ถ้า flow ผ่าน BFF)
 
 ### แบบ C — prefix อื่นหรือ strip ที่ proxy
@@ -298,13 +371,13 @@ docker compose -f docker-compose.yml exec case-service alembic upgrade head
 จากเครื่องที่เข้าถึงพอร์ตที่ compose map (ค่า default ใน compose):
 
 ```bash
-curl -sS http://127.0.0.1:8000/api-vsmartcare/healthz
+curl -sS -H "X-API-Key: $BFF_API_PASSWORD" http://127.0.0.1:8000/api-vsmartcare/healthz
 curl -sS http://127.0.0.1:8001/healthz
 curl -sS http://127.0.0.1:8002/healthz
 curl -sS http://127.0.0.1:8003/healthz
 ```
 
-ผู้ใช้ปลายทางผ่านโดเมน Beta มักเรียก BFF ผ่าน HTTPS/nginx เช่น `https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` และ API ใต้ `/api-vsmartcare/v1/...` — ดู [ตรวจสอบหลัง deploy](#ตรวจสอบหลัง-deploy)
+ผู้ใช้ปลายทางผ่านโดเมน Beta มักเรียก BFF ผ่าน HTTPS/nginx เช่น `https://vsmart-demo.m-society.go.th/api-vsmartcare/healthz` (ต้องส่ง `X-API-Key`) และ API ใต้ `/api-vsmartcare/v1/...` — ดู [ตรวจสอบหลัง deploy](#ตรวจสอบหลัง-deploy)
 
 ### Frontend (build บนเครื่อง CI หรือเซิร์ฟเวอร์ build)
 

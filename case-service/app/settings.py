@@ -117,6 +117,17 @@ class Settings(BaseSettings):
     )
     staff_internal_api_key: str = Field(default="", validation_alias="STAFF_INTERNAL_API_KEY")
 
+    #: --- AINU eKYC Web SDK (ด่าน liveness ก่อนยื่นคำร้อง) ---
+    #: จ่ายให้ frontend ผ่าน POST /v1/liveness/session เฉพาะ citizen ที่ผ่าน require_citizen แล้ว
+    #: SDK ของ AINU บังคับให้ secret ไปโผล่ที่เบราว์เซอร์อยู่ดี การจ่ายจาก backend
+    #: ไม่ได้ทำให้ปลอดภัยจากผู้ใช้ แต่กันไม่ให้ถูก bake ลง static bundle ที่ใครก็โหลดได้
+    #: และหมุน key ได้โดยไม่ต้อง rebuild frontend
+    #: ⚠️ อย่าใส่ค่าเหล่านี้ใน docker-compose แบบ ${VAR:-} เพราะค่าว่างจะทับ env_file
+    ainu_account_id: str = Field(default="", validation_alias="AINU_ACCOUNT_ID")
+    ainu_account_secret: str = Field(default="", validation_alias="AINU_ACCOUNT_SECRET")
+    ainu_flow_id: str = Field(default="", validation_alias="AINU_FLOW_ID")
+    ainu_language: str = Field(default="TH", validation_alias="AINU_LANGUAGE")
+
 
 settings = Settings()
 

@@ -166,6 +166,15 @@ class WelfareCaseCreate(BaseModel):
         1,
         description="FK current_status.id — เช่น 1 = รอรับเรื่อง",
     )
+    liveness_reference_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "reference_id จาก POST /v1/liveness/session — ใช้ผูกผลยืนยันตัวตนเข้ากับคำร้อง "
+            "ไม่ส่งมาก็ยื่นคำร้องได้ตามปกติ (รอบนี้ยังไม่ gate) แต่จะถูกบันทึกเป็น "
+            "liveness_attempts แถวใหม่ status=skipped skip_reason=NO_ATTEMPT"
+        ),
+    )
 
 
 class WelfareApplicantUpdate(BaseModel):

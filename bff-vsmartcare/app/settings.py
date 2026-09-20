@@ -12,6 +12,11 @@ _ENV_FILES: tuple[Path, ...] = tuple(p for p in _ENV_CANDIDATES if p.is_file())
 
 _DEV_PLACEHOLDER_PASSWORD = "1234567890"
 
+# รหัสเริ่มต้นของหน้าเอกสาร ใช้ได้เฉพาะเครื่องนักพัฒนา (localdev) — หน้า docs ถูกล็อกทุก environment
+# beta / production ต้องเปลี่ยนค่าเหล่านี้ ไม่งั้น validate_docs_credentials() จะไม่ให้ start
+_DEV_DOCS_USERNAME = "docs"
+_DEV_DOCS_PASSWORD = "docs"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -33,6 +38,16 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("BFF_API_PASSWORD"),
         description="รหัสสำหรับ trusted server clients (volunteer_smart) — ไม่ฝังใน browser",
+    )
+    docs_username: str = Field(
+        default=_DEV_DOCS_USERNAME,
+        validation_alias=AliasChoices("DOCS_USERNAME"),
+        description="Username หน้าเอกสาร Swagger/ReDoc ของ BFF (ล็อกทุก env; beta/production ต้องเปลี่ยนจากค่าเริ่มต้น) — คนละบทบาทกับ BFF_API_PASSWORD",
+    )
+    docs_password: str = Field(
+        default=_DEV_DOCS_PASSWORD,
+        validation_alias=AliasChoices("DOCS_PASSWORD"),
+        description="Password หน้าเอกสาร Swagger/ReDoc ของ BFF (ล็อกทุก env; beta/production ต้องเปลี่ยนจากค่าเริ่มต้น) — ห้ามใช้ค่าเดียวกับ BFF_API_PASSWORD",
     )
 
     # Docker Compose ตั้ง CASE_SERVICE_URL=http://case-service:8000 — รัน BFF บน host ใช้ http://localhost:8001 (พอร์ต map จาก compose)
@@ -111,6 +126,15 @@ def is_production() -> bool:
     return settings.app_env.strip().lower() in {"production", "prod"}
 
 
+def is_deployed() -> bool:
+    """environment ที่ deploy จริง — ทีมใช้ ``beta`` กับ ``production`` (``prod`` เป็น alias).
+
+    เป็น whitelist ไม่ใช่รายชื่อทั้งหมด — ค่าอื่นเช่น ``localdev`` ถือเป็นเครื่องนักพัฒนา
+    ใช้คุมสองอย่าง: บังคับเปลี่ยนรหัสหน้าเอกสารจากค่าเริ่มต้น และตั้ง flag Secure ให้ cookie
+    """
+    return settings.app_env.strip().lower() in {"beta", "production", "prod"}
+
+
 def internal_api_key() -> str:
     """Key BFF injects when forwarding to case-service (STAFF_INTERNAL_API_KEY or BFF_API_PASSWORD)."""
     explicit = (settings.staff_internal_api_key or "").strip()
@@ -119,7 +143,55 @@ def internal_api_key() -> str:
     return (settings.bff_api_password or "").strip()
 
 
+def validate_docs_credentials() -> None:
+    """ตรวจรหัสหน้าเอกสาร — บังคับทั้ง beta และ production (localdev ใช้ค่าเริ่มต้นได้)."""
+    if not is_deployed():
+        return
+    env = settings.app_env.strip().lower()
+    if not settings.docs_username.strip() or not settings.docs_password.strip():
+        raise RuntimeError(
+            f"DOCS_USERNAME and DOCS_PASSWORD must be set when APP_ENV={env} "
+            "(they gate the Swagger/ReDoc/openapi.json pages)"
+        )
+    # env ว่างจะถูกมองข้าม (env_ignore_empty) แล้วตกกลับมาใช้ค่า dev — เช็คค่า dev จึงครอบเคส "ไม่ได้ตั้ง" ด้วย
+    if (
+        settings.docs_username.strip() == _DEV_DOCS_USERNAME
+        or settings.docs_password.strip() == _DEV_DOCS_PASSWORD
+    ):
+        raise RuntimeError(
+            f"DOCS_USERNAME and DOCS_PASSWORD must be changed from the dev defaults when APP_ENV={env} "
+            "(they gate the Swagger/ReDoc/openapi.json pages)"
+        )
+    # HTTP Basic (RFC 7617) ส่ง credential เป็น base64 ของ ASCII — FastAPI decode ด้วย ascii
+    # ถ้ารหัสมีอักขระนอก ASCII จะ login ไม่ผ่านตลอดกาล ต้องดักตั้งแต่ตอน start ไม่ใช่ปล่อยไปเจอ 401 ตอน deploy
+    for _name, _value in (("DOCS_USERNAME", settings.docs_username), ("DOCS_PASSWORD", settings.docs_password)):
+        if not _value.isascii():
+            raise RuntimeError(f"{_name} must contain ASCII characters only (HTTP Basic limitation)")
+
+
+_LOCALHOST_ORIGIN_MARKERS = (
+    "://localhost",
+    "://127.0.0.1",
+    "://[::1]",
+)
+
+
+def _is_localhost_origin(origin: str) -> bool:
+    lower = origin.strip().lower()
+    return any(m in lower for m in _LOCALHOST_ORIGIN_MARKERS)
+
+
+def _parse_cors_origins(raw: str) -> List[str]:
+    parsed = [o.strip() for o in raw.split(",") if o.strip()]
+    if any(o == "*" for o in parsed):
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must not contain '*' — set explicit SPA origin(s) only"
+        )
+    return parsed
+
+
 def validate_production_settings() -> None:
+    validate_docs_credentials()
     if not is_production():
         return
     pwd = (settings.bff_api_password or "").strip()
@@ -129,6 +201,20 @@ def validate_production_settings() -> None:
         )
     if not internal_api_key():
         raise RuntimeError("STAFF_INTERNAL_API_KEY or BFF_API_PASSWORD required in production")
+    raw = settings.bff_cors_origins.strip()
+    if not raw:
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must be set in production to the real SPA origin(s)"
+        )
+    origins = _parse_cors_origins(raw)
+    if not origins:
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS must be set in production to the real SPA origin(s)"
+        )
+    if all(_is_localhost_origin(o) for o in origins):
+        raise RuntimeError(
+            "BFF_CORS_ORIGINS in production must include non-localhost SPA origin(s)"
+        )
 
 
 _DEV_CORS_ORIGINS: List[str] = [
@@ -138,12 +224,21 @@ _DEV_CORS_ORIGINS: List[str] = [
     "http://127.0.0.1:3000",
 ]
 
+# Explicit method/header allowlists — avoid allow_methods/headers=["*"] with credentials.
+CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+CORS_ALLOW_HEADERS: List[str] = [
+    "Authorization",
+    "Content-Type",
+    "X-API-Key",
+    "Accept",
+]
+
 
 def cors_origin_list() -> List[str]:
     raw = settings.bff_cors_origins.strip()
     if not raw:
         return list(_DEV_CORS_ORIGINS)
-    parsed = [o.strip() for o in raw.split(",") if o.strip()]
+    parsed = _parse_cors_origins(raw)
     return parsed if parsed else list(_DEV_CORS_ORIGINS)
 
 

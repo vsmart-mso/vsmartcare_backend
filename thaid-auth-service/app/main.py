@@ -30,7 +30,7 @@ from .dev_mock.profile import (
     mock_profile_preview_fields,
     strip_internal_profile_keys,
 )
-from .settings import cors_origin_list, settings
+from .settings import CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, cors_origin_list, settings, validate_production_cors
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +56,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origin_list(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
 )
 
 
@@ -81,6 +81,7 @@ def _validate_production_config() -> None:
         missing.append("THAID_USE_MOCK must be false")
     if missing:
         raise RuntimeError(f"Production config incomplete: {', '.join(missing)}")
+    validate_production_cors()
 
 
 MOCK_OAUTH_CODE = "mock-dev-authorization-code"
@@ -631,6 +632,7 @@ async def callback(request: Request, state: str, code: Optional[str] = None) -> 
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
+        logger.exception("thaid_token_or_userinfo_failed: %s: %s", type(exc).__name__, exc)
         raise HTTPException(status_code=502, detail="thaid_token_or_userinfo_failed") from exc
 
     # ตรวจสิทธิ์จังหวัด (TASK-v-care-12062026-01) — ปิด → ไม่ออก token, แจ้ง error กลับ

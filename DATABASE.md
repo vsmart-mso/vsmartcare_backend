@@ -55,7 +55,14 @@
 | `0076_persons_province_id` | `persons.province_id` — submit/login gate อ่านคอลัมน์นี้ตรง ๆ |
 | `0077_welfare_review_comment_citizen_confirmation` | `citizen_confirmed_at`, `citizen_confirmation_type` |
 | `0078_attachment_cash_proof` | `attachment_types` id 13–15 (หลักฐานเงินสด/เช็ค) |
-| `0079_case_help_beneficiaries` | ตาราง `case_help_beneficiaries` (**head**) |
+| `0079_case_help_beneficiaries` | ตาราง `case_help_beneficiaries` |
+| `0080_send_data_audit_log` | ตาราง `send_data_audit_log` |
+| `0081_liveness_attempts` | ตาราง `liveness_attempts` — ด่านยืนยันตัวตนด้วยใบหน้า AINU eKYC (**head**) |
+
+> ⚠️ `0081` ตั้งใจไม่มี guard `has_table()` — DB บางเครื่องมีตาราง `liveness_attempts` ค้างอยู่จาก
+> branch `liveness-service` (schema เก่า คนละหน้าตา) โดยที่ `alembic_version` ยังเป็น `0080`
+> ถ้ามี guard จะข้ามการสร้างแล้ว stamp เป็น `0081` ได้ schema เก่าโดยไม่มีใครรู้ แล้วไปพังตอน runtime
+> เจอ `relation "liveness_attempts" already exists` ให้ `DROP TABLE liveness_attempts;` แล้ว upgrade ใหม่
 
 ## Entity Relationship Diagram
 
@@ -84,6 +91,8 @@ erDiagram
     applicants ||--o{ case_diagnosis : "applicant_id"
     applicants ||--o{ satisfaction_surveys : "applicant_id"
     applicants ||--o{ send_data : "applicant_id"
+    applicants ||--o{ liveness_attempts : "applicant_id (SET NULL)"
+    persons ||--o{ liveness_attempts : "persons_id"
 
     household_members }o--|| prefix_type : "prefix_id"
     household_members }o--o| household_member_relation_types : "relation_to_applicant_id"
@@ -235,6 +244,7 @@ erDiagram
 | MSO | `type_send`, `send_data`, `more_mso` |
 | Eligibility | `screening_logs` (`hardship_status_ids` JSON), `welfare_request_consents` |
 | OCR | `ocr_results` |
+| Liveness | `liveness_attempts` — ผลด่านยืนยันตัวตนด้วยใบหน้า (AINU eKYC) ก่อนยื่นคำร้อง |
 | Geo | `province`, `districts`, `sub_districts`, `postcode`, `sub_districts_postcode` |
 | Lookups | `prefix_type`, `current_status`, `bank_name`, `request_types`, `household_member_relation_types`, `hardship_status_types`, `occupation_types`, … — seed ครบใน [DATADICT.md](./DATADICT.md#lookup--master-data) |
 | Satisfaction | `satisfaction_surveys` (`system_usage` \| `aid_received`) |

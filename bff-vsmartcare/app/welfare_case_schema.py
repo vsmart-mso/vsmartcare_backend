@@ -116,3 +116,13 @@ class WelfareCaseCreate(BaseModel):
         1,
         description="FK current_status.id — เช่น 1 = รอรับเรื่อง",
     )
+    #: ต้องประกาศที่นี่ด้วย ไม่ใช่แค่ใน case-service — create_case ทำ model_dump()
+    #: ก่อนส่งต่อ ฟิลด์ที่ schema นี้ไม่รู้จักจะถูกตัดทิ้งเงียบ ๆ ไปไม่ถึง case-service
+    liveness_reference_id: str | None = Field(
+        None,
+        max_length=64,
+        description=(
+            "reference_id จาก POST /v1/liveness/session — ผูกผลยืนยันตัวตนเข้ากับคำร้อง "
+            "ไม่ส่งมาก็ยื่นได้ตามปกติ (ยังไม่ gate) แต่จะได้แถว skipped/NO_ATTEMPT"
+        ),
+    )

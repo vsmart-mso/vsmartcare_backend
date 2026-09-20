@@ -41,6 +41,7 @@ from .lookup import (
     TypeMoney,
     TypeMoneyCategory,
 )
+from .liveness_attempt import LivenessAttempt
 from .ocr_result import OcrResult
 from .payment import ApproveCase, FilePayment, WelfareDdaRef, WelfarePayment
 from .person import Person
@@ -89,6 +90,7 @@ __all__ = [
     "KtbRecipientCategory",
     "MaritalStatusType",
     "MoreMso",
+    "LivenessAttempt",
     "OcrResult",
     "PaymentMethod",
     "Person",

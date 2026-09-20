@@ -23,6 +23,13 @@
 #
 #   BFF_API_PASSWORD=                    → ว่างได้ใน dev (ไม่บังคับ X-API-Key)
 #
+# ── BFF (apps/service/bff-vsmartcare/.env) ──────────────────────────────────
+# คัดลอกจาก bff-vsmartcare/env.example — Compose โหลดผ่าน env_file
+#   APP_ENV=localdev
+#   DOCS_USERNAME=...   (หน้า /docs — คนละตัวกับ BFF_API_PASSWORD)
+#   DOCS_PASSWORD=...
+#   BFF_API_PASSWORD=   (ว่างได้ใน localdev; production ต้องตั้ง)
+#
 # ── Frontend (apps/frontend/.env) ───────────────────────────────────────────
 #
 #   VITE_API_URL=http://localhost:8000/api-vsmartcare
@@ -79,6 +86,18 @@ THAID_JWT_SECRET=dev-thaid-jwt-secret-change-in-production
 #   OCR_SERVICE_API_KEY= (dev ว่างได้; ถ้าตั้ง BFF อ่านจากไฟล์นี้ด้วยผ่าน compose)
 # อย่าใส่ GEMINI_API_KEY ใน docker-compose environment แบบ ${VAR:-}
 #   เพราะค่าว่างจะทับ env_file
+
+# case-service — ด่าน liveness (AINU eKYC) ใส่ใน case-service/.env
+#   AINU_ACCOUNT_ID=ekycsdk-dga-pmcare
+#   AINU_ACCOUNT_SECRET=  (ไฟล์ DGA-PCA001_credential_พม.xlsx ช่อง Web SDK — ห้าม commit)
+#   AINU_FLOW_ID=DGA-PMCARE-001
+#   AINU_LANGUAGE=TH
+#   ไม่ตั้ง 3 ตัวแรก = POST /v1/liveness/session ตอบ 503 liveness_not_configured
+#   (frontend ข้ามด่านแล้วยื่นคำร้องได้ตามปกติ — รอบนี้ยังไม่ gate)
+# อย่าใส่ AINU_ACCOUNT_SECRET ใน docker-compose environment แบบ ${VAR:-}
+#   เพราะค่าว่างจะทับ env_file (เหมือนกรณี GEMINI_API_KEY)
+# beta ใช้ credential UAT (uat.ainu.tech) และต้องรันหลังมี HTTPS cert จริง
+#   ไม่งั้นกล้องบนมือถือไม่ทำงาน
 
 POSTGRES_PASSWORD=
 

@@ -14,7 +14,7 @@
 | [บทความและอนุมัติ](#8-บทความและอนุมัติ) | `article` · `cover_document_batch` · `approve_case` |
 | [เบิกจ่าย](#9-เบิกจ่าย) | `welfare_dda_ref` · `welfare_payment` · `file_payment` |
 | [MSO](#10-mso) | `more_mso` · `type_send` · `send_data` |
-| [สิทธิ์ / OCR / สำรวจ](#11-สิทธิ์--ocr--สำรวจ) | `screening_logs` · `welfare_request_consents` · `ocr_results` · `satisfaction_surveys` |
+| [สิทธิ์ / OCR / สำรวจ](#11-สิทธิ์--ocr--สำรวจ) | `screening_logs` · `welfare_request_consents` · `ocr_results` · `liveness_attempts` · `satisfaction_surveys` |
 | [ภูมิศาสตร์](#12-ภูมิศาสตร์) | `province` · `districts` · `sub_districts` · `postcode` · `sub_districts_postcode` |
 | [Admin / Staff](#13-admin--staff) | `admin_users` · `province_access_config` · `staff_users` · `security_audit_log` |
 | [Lookup / Master data](#14-lookup--master-data) | ตาราง master ทั้งหมด + ค่า seed |
@@ -846,6 +846,60 @@ Master ระเบียบ/ประกาศ — `id` ไม่ autoincrement
 | `fuzzy_score` | float | NO | | default `0` |
 | `created_at` | timestamptz | NO | | |
 | `updated_at` | timestamptz | NO | | |
+
+<div style="page-break-before: always;"></div>
+
+### ตาราง liveness_attempts
+
+ผลด่านยืนยันตัวตนด้วยใบหน้า (AINU eKYC) ก่อนยื่นคำร้อง — **แถวเกิดตอนเปิด session ไม่ใช่ตอนยื่นคำร้อง**
+จึงมีแถวของคนที่สแกนไม่ผ่านแล้วเลิกกลางคันด้วย · คำร้อง 1 ใบมีได้หลายแถว (สแกนซ้ำได้ไม่จำกัด)
+
+⚠️ **ยังไม่ใช่ security control** — ผลเดินทางผ่านเบราว์เซอร์ผู้ใช้ แก้ด้วย DevTools ได้
+รอบนี้บันทึกสถิติอย่างเดียว ไม่บล็อกการยื่นคำร้อง
+
+| คอลัมน์ | ชนิด | Null | Key | คำอธิบาย |
+|---------|------|------|-----|----------|
+| `id` | int | NO | PK | |
+| `persons_id` | int | NO | FK → `persons.id` CASCADE, IX | เจ้าของการสแกน — รู้ตั้งแต่เปิด session |
+| `reference_id` | varchar(64) | NO | UK | uuid4 ที่ **backend สร้าง** ส่งให้ AINU ผ่าน `start()` |
+| `transaction_id` | varchar(128) | YES | | รหัสธุรกรรมที่ **AINU สร้าง** จาก `onReady()` — ใช้อ้างอิงเวลาถาม AINU |
+| `status` | varchar(16) | NO | | default `pending` · `pending` / `completed` / `failed` / `skipped` / `pending_DOPA` |
+| `liveness_reason` | varchar(64) | YES | | จาก `liveness.reason` — `PASS` `FAIL` `TIMEOUT` `FACE_NOT_FOUND` `CAMERA_ACCESS_DENIED` `SYSTEM_ERROR` |
+| `fail_reason` | varchar(64) | YES | | จาก `failReason` — **AINU เป็นคนบอก** `EKYC_ERROR_0xx` `SESSION_TIMEOUT` `CANT_START_EKYC` |
+| `skip_reason` | varchar(64) | YES | | **เราเป็นคนตัดสิน** ดูตารางด้านล่าง |
+| `description` | varchar(512) | YES | | ข้อความอธิบายจาก AINU — ไม่แสดงต่อผู้ใช้โดยตรง |
+| `sdk_version` | varchar(64) | YES | | ใช้ตรวจย้อนหลังเมื่อพฤติกรรมเปลี่ยนโดยไม่ได้แก้โค้ด |
+| `device` | varchar(255) | YES | | จาก `deviceInfo` — **มีเฉพาะแถวที่ AINU ตอบกลับมา** แถว `pending`/`skipped` เป็น `null` เสมอ |
+| `raw_payload` | json | YES | | payload จาก `onEkycResult()` **ตัดภาพ base64 ออกแล้ว** (แทนด้วย `<stripped>`) · `signature`/`keyId`/`metadata` เก็บครบ · **ห้าม expose ผ่าน API · ห้าม log ทั้งก้อน** |
+| `applicant_id` | int | YES | FK → `applicants.id` SET NULL, IX | เติมตอนยื่นคำร้องสำเร็จ · `IS NOT NULL` = ถูกใช้ไปแล้ว |
+| `created_at` | timestamptz | NO | | default `now()` |
+| `completed_at` | timestamptz | YES | | จาก `completedAt` ใน payload |
+
+**ค่า `status`**
+
+| ค่า | หมายถึง | `raw_payload` |
+|---|---|---|
+| `pending` | เปิด session แล้วแต่ยังไม่มีผล — รวมคนที่เลิกกลางคัน | ไม่มี |
+| `completed` | สแกนผ่าน | มี |
+| `failed` | สแกนไม่ผ่าน หรือ payload อ่านไม่ออก | มี |
+| `skipped` | ระบบยืนยันตัวตนใช้ไม่ได้ / ไม่มีการสแกน — ปล่อยให้ยื่นคำร้องต่อ | ไม่มี |
+| `pending_DOPA` | ค่าจาก AINU เมื่อ workflow มี dopa — flow ปัจจุบันไม่ควรเจอ | มี |
+
+**ค่า `skip_reason`** — สองตัวท้ายเซิร์ฟเวอร์เขียนเอง frontend ส่งมาไม่ได้ (ตอบ 422)
+
+| ค่า | เกิดเมื่อ |
+|---|---|
+| `SDK_LOAD_ERROR` | ไฟล์ SDK โหลดไม่ขึ้น (`window.AinuEkyc` เป็น `undefined`) |
+| `NOT_SECURE_CONTEXT` | ไม่ได้เปิดผ่าน HTTPS กล้องใช้ไม่ได้ |
+| `PROVIDER_UNAVAILABLE` | เซิร์ฟเวอร์ AINU มีปัญหา หรือ backend ตอบ 503 `liveness_not_configured` |
+| `AUTH_ERROR` | credential หรือ IP ถูกปฏิเสธ (403) |
+| `USER_SKIPPED` | ผู้ใช้กดข้ามเอง |
+| **`NO_ATTEMPT`** | ยื่นคำร้องโดยไม่แนบ `liveness_reference_id` หรือแนบค่าที่ไม่ถูกต้อง/ของคนอื่น |
+| **`REPLAYED`** | เอา `reference_id` ที่ผูกกับคำร้องอื่นไปแล้วมายื่นซ้ำ |
+| **`NOT_CONFIGURED`** | `POST /v1/liveness/session` ตอบ 503 เพราะ **ฝั่งเราตั้ง `AINU_*` ไม่ครบ** — แยกจาก `PROVIDER_UNAVAILABLE` ที่แปลว่าระบบ AINU เองมีปัญหา |
+
+> **ทุก applicant มีแถวอย่างน้อย 1 แถวเสมอ** เพราะ `POST /v1/cases` สร้างแถว `NO_ATTEMPT` ให้เอง
+> เมื่อไม่มีอะไรแนบมา → คำร้องที่ไม่มีแถวเลยคือความผิดปกติที่ต้องไปสืบ ไม่ใช่เรื่องปกติ
 
 <div style="page-break-before: always;"></div>
 
