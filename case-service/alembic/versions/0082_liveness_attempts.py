@@ -20,8 +20,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0081_liveness_attempts"
-down_revision: str | Sequence[str] | None = "0080_send_data_audit_log"
+revision: str = "0082_liveness_attempts"
+down_revision: str | Sequence[str] | None = "0081_approve_case_approval_superseded_at"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
