@@ -177,6 +177,7 @@ class IndicatorExportCaseItem(BaseModel):
     account_number: str | None = None
     account_name: str | None = None
     bank_branch: str | None = None
+    transaction_date: str | None = None
     sw_user_sdshv: str | None = None
     sw_name: str | None = None
     sw_position: str | None = None
