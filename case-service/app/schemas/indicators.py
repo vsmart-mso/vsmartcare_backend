@@ -344,6 +344,13 @@ class IndicatorExportCaseItem(BaseModel):
     account_number: str | None = None
     account_name: str | None = None
     bank_branch: str | None = None
+    transaction_date: str | None = Field(
+        None,
+        description=(
+            "วันที่ทำรายการที่การเงินเลือก จาก welfare_payment.transaction_date "
+            "รูปแบบ 5 ก.พ. 2569"
+        ),
+    )
 
     # --- 10. นักสังคม ---
     sw_user_sdshv: str | None = None
