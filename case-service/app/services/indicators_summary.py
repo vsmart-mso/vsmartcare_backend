@@ -594,11 +594,15 @@ def _latest_forward_send_subquery():
 
 
 def _latest_disburse_payment_subquery():
-    """แถว welfare_payment ล่าสุดต่อ applicant → user_sdshv ผู้เบิกจ่าย."""
+    """แถว welfare_payment ล่าสุดต่อ applicant (id DESC) → user_sdshv ผู้เบิกจ่าย.
+
+    มี transaction_date ของแถวนั้นด้วย แต่ไม่กรองวันที่ — แถวที่เลือกเป็นผู้เบิกจ่ายไม่เปลี่ยน.
+    """
     return (
         select(
             WelfarePayment.applicant_id.label("applicant_id"),
             WelfarePayment.user_sdshv.label("user_sdshv"),
+            WelfarePayment.transaction_date.label("transaction_date"),
             func.row_number()
             .over(
                 partition_by=WelfarePayment.applicant_id,
@@ -607,6 +611,56 @@ def _latest_disburse_payment_subquery():
             .label("rn"),
         )
         .subquery()
+    )
+
+
+def _latest_dated_payment_subquery():
+    """แถวล่าสุดต่อ applicant ที่ transaction_date ไม่เป็น null (fallback วันที่ทำรายการ)."""
+    return (
+        select(
+            WelfarePayment.applicant_id.label("applicant_id"),
+            WelfarePayment.transaction_date.label("transaction_date"),
+            func.row_number()
+            .over(
+                partition_by=WelfarePayment.applicant_id,
+                order_by=[WelfarePayment.id.desc()],
+            )
+            .label("rn"),
+        )
+        .where(WelfarePayment.transaction_date.is_not(None))
+        .subquery()
+    )
+
+
+def _export_payment_sources():
+    """ผู้เบิกจ่ายจากแถวล่าสุด และวันที่ทำรายการ (coalesce กับแถวล่าสุดที่มีวันที่)."""
+    disburse_sq = _latest_disburse_payment_subquery()
+    dated_sq = _latest_dated_payment_subquery()
+    transaction_date = func.coalesce(
+        disburse_sq.c.transaction_date,
+        dated_sq.c.transaction_date,
+    )
+    return disburse_sq, dated_sq, transaction_date
+
+
+def _select_export_payment_dates():
+    """แถวผู้เบิกจ่ายล่าสุดพร้อมวันที่ทำรายการ — ใช้ตรวจกฎเลือกวันที่ของ export."""
+    disburse_sq, dated_sq, transaction_date = _export_payment_sources()
+    return (
+        select(
+            disburse_sq.c.applicant_id.label("applicant_id"),
+            disburse_sq.c.user_sdshv.label("user_sdshv"),
+            transaction_date.label("transaction_date"),
+        )
+        .select_from(disburse_sq)
+        .outerjoin(
+            dated_sq,
+            and_(
+                dated_sq.c.applicant_id == disburse_sq.c.applicant_id,
+                dated_sq.c.rn == 1,
+            ),
+        )
+        .where(disburse_sq.c.rn == 1)
     )
 
 
@@ -1365,7 +1419,7 @@ async def fetch_indicators_export(
     economic_sq = _export_economic_subquery()
     diagnosis_sq = _latest_diagnosis_subquery()
     forward_sq = _latest_forward_send_subquery()
-    disburse_sq = _latest_disburse_payment_subquery()
+    disburse_sq, dated_payment_sq, export_transaction_date = _export_payment_sources()
     income_agg_sq = _export_income_sources_agg_subquery()
     dependency_agg_sq = _export_dependency_agg_subquery()
     household_agg_sq = _export_household_members_agg_subquery()
@@ -1487,6 +1541,7 @@ async def fetch_indicators_export(
         account_number_col.label("account_number"),
         CasePayment.account_name.label("account_name"),
         bank_branch_col.label("bank_branch"),
+        export_transaction_date.label("transaction_date"),
         CaseHandling.sw_user_sdshv.label("sw_user_sdshv"),
         diagnosis_sq.c.owner_name.label("sw_name"),
         diagnosis_sq.c.owner_position.label("sw_position"),
@@ -1614,6 +1669,13 @@ async def fetch_indicators_export(
             and_(
                 disburse_sq.c.applicant_id == Applicant.id,
                 disburse_sq.c.rn == 1,
+            ),
+        )
+        .outerjoin(
+            dated_payment_sq,
+            and_(
+                dated_payment_sq.c.applicant_id == Applicant.id,
+                dated_payment_sq.c.rn == 1,
             ),
         )
         .outerjoin(
@@ -1791,6 +1853,7 @@ async def fetch_indicators_export(
                 account_number=row.account_number,
                 account_name=row.account_name,
                 bank_branch=row.bank_branch,
+                transaction_date=format_thai_date(row.transaction_date),
                 sw_user_sdshv=row.sw_user_sdshv,
                 sw_name=row.sw_name,
                 sw_position=row.sw_position,
